@@ -1,0 +1,502 @@
+###########################################
+Survey
+@article{liu2024survey,
+  title={A survey on hallucination in large vision-language models},
+  author={Liu, Hanchao and Xue, Wenyuan and Chen, Yifei and Chen, Dapeng and Zhao, Xiutian and Wang, Ke and Hou, Liping and Li, Rongjun and Peng, Wei},
+  journal={arXiv preprint arXiv:2402.00253},
+  year={2024}
+}
+
+###########################################
+# foundation model
+@inproceedings{blip2,
+  title={Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models},
+  author={Li, Junnan and Li, Dongxu and Savarese, Silvio and Hoi, Steven},
+  booktitle={International conference on machine learning},
+  pages={19730--19742},
+  year={2023},
+  organization={PMLR}
+}
+
+@inproceedings{instructblip,
+title={Instruct{BLIP}: Towards General-purpose Vision-Language Models with Instruction Tuning},
+author={Wenliang Dai and Junnan Li and Dongxu Li and Anthony Tiong and Junqi Zhao and Weisheng Wang and Boyang Li and Pascale Fung and Steven Hoi},
+booktitle={Thirty-seventh Conference on Neural Information Processing Systems},
+year={2023},
+url={https://openreview.net/forum?id=vvoWPYqZJA}
+}
+
+@article{qwen,
+  title={Qwen-vl: A frontier large vision-language model with versatile abilities},
+  author={Bai, Jinze and Bai, Shuai and Yang, Shusheng and Wang, Shijie and Tan, Sinan and Wang, Peng and Lin, Junyang and Zhou, Chang and Zhou, Jingren},
+  journal={arXiv preprint arXiv:2308.12966},
+  year={2023}
+}
+
+@article{shikra,
+  title={Shikra: Unleashing multimodal llm's referential dialogue magic},
+  author={Chen, Keqin and Zhang, Zhao and Zeng, Weili and Zhang, Richong and Zhu, Feng and Zhao, Rui},
+  journal={arXiv preprint arXiv:2306.15195},
+  year={2023}
+}
+
+@article{minigpt4,
+  title={Minigpt-4: Enhancing vision-language understanding with advanced large language models},
+  author={Zhu, Deyao and Chen, Jun and Shen, Xiaoqian and Li, Xiang and Elhoseiny, Mohamed},
+  journal={arXiv preprint arXiv:2304.10592},
+  year={2023}
+}
+
+@article{llava,
+  title={Visual instruction tuning},
+  author={Liu, Haotian and Li, Chunyuan and Wu, Qingyang and Lee, Yong Jae},
+  journal={Advances in neural information processing systems},
+  volume={36},
+  year={2024}
+}
+
+@inproceedings{li2023blip,
+  title={Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models},
+  author={Li, Junnan and Li, Dongxu and Savarese, Silvio and Hoi, Steven},
+  booktitle={International conference on machine learning},
+  pages={19730--19742},
+  year={2023},
+  organization={PMLR}
+}
+
+####################################################################
+# application 
+@article{Llava-interactive,
+  title={Llava-interactive: An all-in-one demo for image chat, segmentation, generation and editing},
+  author={Chen, Wei-Ge and Spiridonova, Irina and Yang, Jianwei and Gao, Jianfeng and Li, Chunyuan},
+  journal={arXiv preprint arXiv:2311.00571},
+  year={2023}
+}
+
+@article{lin2023video,
+  title={Video-llava: Learning united visual representation by alignment before projection},
+  author={Lin, Bin and Zhu, Bin and Ye, Yang and Ning, Munan and Jin, Peng and Yuan, Li},
+  journal={arXiv preprint arXiv:2311.10122},
+  year={2023}
+}
+
+@article{yang2024gpt4tools,
+  title={Gpt4tools: Teaching large language model to use tools via self-instruction},
+  author={Yang, Rui and Song, Lin and Li, Yanwei and Zhao, Sijie and Ge, Yixiao and Li, Xiu and Shan, Ying},
+  journal={Advances in Neural Information Processing Systems},
+  volume={36},
+  year={2024}
+}
+
+@inproceedings{lai2024lisa,
+  title={Lisa: Reasoning segmentation via large language model},
+  author={Lai, Xin and Tian, Zhuotao and Chen, Yukang and Li, Yanwei and Yuan, Yuhui and Liu, Shu and Jia, Jiaya},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={9579--9589},
+  year={2024}
+}
+
+
+#######################################################################
+# method
+@inproceedings{li-etal-2023-evaluating,
+    title = "Evaluating Object Hallucination in Large Vision-Language Models",
+    author = "Li, Yifan  and
+      Du, Yifan  and
+      Zhou, Kun  and
+      Wang, Jinpeng  and
+      Zhao, Xin  and
+      Wen, Ji-Rong",
+    editor = "Bouamor, Houda  and
+      Pino, Juan  and
+      Bali, Kalika",
+    booktitle = "Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing",
+    month = dec,
+    year = "2023",
+    address = "Singapore",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2023.emnlp-main.20",
+    doi = "10.18653/v1/2023.emnlp-main.20",
+    pages = "292--305",
+    abstract = "Inspired by the superior language abilities of large language models (LLM), large vision-language models (LVLM) have been recently proposed by integrating powerful LLMs for improving the performance on complex multimodal tasks. Despite the promising progress on LVLMs, we find that they suffer from object hallucinations, i.e., they tend to generate objects inconsistent with the target images in the descriptions. To investigate it, this work presents the first systematic study on object hallucination of LVLMs. We conduct the evaluation experiments on several representative LVLMs, and show that they mostly suffer from severe object hallucination issues. We further discuss that the visual instructions may influence the hallucination, and find that: objects that frequently appear in the visual instructions or co-occur with the image objects are obviously prone to be hallucinated by LVLMs. Besides, we further design a polling-based query method called POPE for better evaluation of object hallucination. Experiment results show that our POPE can evaluate object hallucination in a more stable and flexible way.",
+}
+
+@article{li2022contrastive,
+  title={Contrastive decoding: Open-ended text generation as optimization},
+  author={Li, Xiang Lisa and Holtzman, Ari and Fried, Daniel and Liang, Percy and Eisner, Jason and Hashimoto, Tatsunori and Zettlemoyer, Luke and Lewis, Mike},
+  journal={arXiv preprint arXiv:2210.15097},
+  year={2022}
+}
+@article{shi2023trusting,
+  title={Trusting your evidence: Hallucinate less with context-aware decoding},
+  author={Shi, Weijia and Han, Xiaochuang and Lewis, Mike and Tsvetkov, Yulia and Zettlemoyer, Luke and Yih, Scott Wen-tau},
+  journal={arXiv preprint arXiv:2305.14739},
+  year={2023}
+}
+
+@article{woo2024don,
+  title={Don't Miss the Forest for the Trees: Attentional Vision Calibration for Large Vision Language Models},
+  author={Woo, Sangmin and Kim, Donguk and Jang, Jaehyuk and Choi, Yubin and Kim, Changick},
+  journal={arXiv preprint arXiv:2405.17820},
+  year={2024}
+}
+
+@article{hurst2024gpt,
+  title={Gpt-4o system card},
+  author={Hurst, Aaron and Lerer, Adam and Goucher, Adam P and Perelman, Adam and Ramesh, Aditya and Clark, Aidan and Ostrow, AJ and Welihinda, Akila and Hayes, Alan and Radford, Alec and others},
+  journal={arXiv preprint arXiv:2410.21276},
+  year={2024}
+}
+
+@inproceedings{dola,
+  title={DoLa: Decoding by Contrasting Layers Improves Factuality in Large Language Models},
+  author={Yung-Sung Chuang and Yujia Xie and Hongyin Luo and Yoon Kim and James R. Glass and Pengcheng He},
+  booktitle={The Twelfth International Conference on Learning Representations},
+  year={2024},
+  url={https://openreview.net/forum?id=Th6NyL07na}
+}
+
+@article{zhou2023analyzing,
+  title={Analyzing and mitigating object hallucination in large vision-language models},
+  author={Zhou, Yiyang and Cui, Chenhang and Yoon, Jaehong and Zhang, Linjun and Deng, Zhun and Finn, Chelsea and Bansal, Mohit and Yao, Huaxiu},
+  journal={arXiv preprint arXiv:2310.00754},
+  year={2023}
+}
+
+@inproceedings{liu2023mitigating,
+  title={Mitigating hallucination in large multi-modal models via robust instruction tuning},
+  author={Liu, Fuxiao and Lin, Kevin and Li, Linjie and Wang, Jianfeng and Yacoob, Yaser and Wang, Lijuan},
+  booktitle={The Twelfth International Conference on Learning Representations},
+  year={2023}
+}
+
+@article{sun2023aligning,
+  title={Aligning large multimodal models with factually augmented rlhf},
+  author={Sun, Zhiqing and Shen, Sheng and Cao, Shengcao and Liu, Haotian and Li, Chunyuan and Shen, Yikang and Gan, Chuang and Gui, Liang-Yan and Wang, Yu-Xiong and Yang, Yiming and others},
+  journal={arXiv preprint arXiv:2309.14525},
+  year={2023}
+}
+
+@inproceedings{yu2024hallucidoctor,
+  title={Hallucidoctor: Mitigating hallucinatory toxicity in visual instruction data},
+  author={Yu, Qifan and Li, Juncheng and Wei, Longhui and Pang, Liang and Ye, Wentao and Qin, Bosheng and Tang, Siliang and Tian, Qi and Zhuang, Yueting},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={12944--12953},
+  year={2024}
+}
+
+@article{zhao2023beyond,
+  title={Beyond hallucinations: Enhancing lvlms through hallucination-aware direct preference optimization},
+  author={Zhao, Zhiyuan and Wang, Bin and Ouyang, Linke and Dong, Xiaoyi and Wang, Jiaqi and He, Conghui},
+  journal={arXiv preprint arXiv:2311.16839},
+  year={2023}
+}
+
+@inproceedings{yu2024rlhf,
+  title={Rlhf-v: Towards trustworthy mllms via behavior alignment from fine-grained correctional human feedback},
+  author={Yu, Tianyu and Yao, Yuan and Zhang, Haoye and He, Taiwen and Han, Yifeng and Cui, Ganqu and Hu, Jinyi and Liu, Zhiyuan and Zheng, Hai-Tao and Sun, Maosong and others},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={13807--13816},
+  year={2024}
+}
+
+@inproceedings{favero2024multi,
+  title={Multi-modal hallucination control by visual information grounding},
+  author={Favero, Alessandro and Zancato, Luca and Trager, Matthew and Choudhary, Siddharth and Perera, Pramuditha and Achille, Alessandro and Swaminathan, Ashwin and Soatto, Stefano},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={14303--14312},
+  year={2024}
+}
+
+@inproceedings{tong2024eyes,
+  title={Eyes wide shut? exploring the visual shortcomings of multimodal llms},
+  author={Tong, Shengbang and Liu, Zhuang and Zhai, Yuexiang and Ma, Yi and LeCun, Yann and Xie, Saining},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={9568--9578},
+  year={2024}
+}
+
+@misc{liu2024llavanext,
+    title={LLaVA-NeXT: Improved reasoning, OCR, and world knowledge},
+    url={https://llava-vl.github.io/blog/2024-01-30-llava-next/},
+    author={Liu, Haotian and Li, Chunyuan and Li, Yuheng and Li, Bo and Zhang, Yuanhan and Shen, Sheng and Lee, Yong Jae},
+    month={January},
+    year={2024}
+}
+
+@inproceedings{llava15,
+  title={Improved baselines with visual instruction tuning},
+  author={Liu, Haotian and Li, Chunyuan and Li, Yuheng and Lee, Yong Jae},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={26296--26306},
+  year={2024}
+}
+
+@article{shi2024eagle,
+  title={Eagle: Exploring the design space for multimodal llms with mixture of encoders},
+  author={Shi, Min and Liu, Fuxiao and Wang, Shihao and Liao, Shijia and Radhakrishnan, Subhashree and Huang, De-An and Yin, Hongxu and Sapra, Karan and Yacoob, Yaser and Shi, Humphrey and others},
+  journal={arXiv preprint arXiv:2408.15998},
+  year={2024}
+}
+
+@inproceedings{jiang2024hallucination,
+  title={Hallucination augmented contrastive learning for multimodal large language model},
+  author={Jiang, Chaoya and Xu, Haiyang and Dong, Mengfan and Chen, Jiaxing and Ye, Wei and Yan, Ming and Ye, Qinghao and Zhang, Ji and Huang, Fei and Zhang, Shikun},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={27036--27046},
+  year={2024}
+}
+
+@inproceedings{opera,
+  title={Opera: Alleviating hallucination in multi-modal large language models via over-trust penalty and retrospection-allocation},
+  author={Huang, Qidong and Dong, Xiaoyi and Zhang, Pan and Wang, Bin and He, Conghui and Wang, Jiaqi and Lin, Dahua and Zhang, Weiming and Yu, Nenghai},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={13418--13427},
+  year={2024}
+}
+
+@article{chen2024halc,
+  title={Halc: Object hallucination reduction via adaptive focal-contrast decoding},
+  author={Chen, Zhaorun and Zhao, Zhuokai and Luo, Hongyin and Yao, Huaxiu and Li, Bo and Zhou, Jiawei},
+  journal={arXiv preprint arXiv:2403.00425},
+  year={2024}
+}
+
+@article{pai,
+  title={Paying more attention to image: A training-free method for alleviating hallucination in lvlms},
+  author={Liu, Shi and Zheng, Kecheng and Chen, Wei},
+  journal={arXiv preprint arXiv:2407.21771},
+  year={2024}
+}
+
+@inproceedings{vcd,
+  title={Mitigating object hallucinations in large vision-language models through visual contrastive decoding},
+  author={Leng, Sicong and Zhang, Hang and Chen, Guanzheng and Li, Xin and Lu, Shijian and Miao, Chunyan and Bing, Lidong},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={13872--13882},
+  year={2024}
+}
+
+@article{yin2023woodpecker,
+  title={Woodpecker: Hallucination correction for multimodal large language models},
+  author={Yin, Shukang and Fu, Chaoyou and Zhao, Sirui and Xu, Tong and Wang, Hao and Sui, Dianbo and Shen, Yunhang and Li, Ke and Sun, Xing and Chen, Enhong},
+  journal={arXiv preprint arXiv:2310.16045},
+  year={2023}
+}
+
+@misc{logitlen,
+  author    = {Adam Gurney},
+  title     = {Interpreting GPT: The Logit Lens},
+  year      = {2023},
+  url       = {https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens},
+  note      = {Accessed: 2024-10-22},
+  howpublished = {\url{https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens}},
+  month     = {October},
+  day       = {15}
+}
+
+@article{yue2024less,
+  title={Less is more: Mitigating multimodal hallucination from an eos decision perspective},
+  author={Yue, Zihao and Zhang, Liang and Jin, Qin},
+  journal={arXiv preprint arXiv:2402.14545},
+  year={2024}
+}
+
+@article{li2019visualbert,
+  title={Visualbert: A simple and performant baseline for vision and language},
+  author={Li, Liunian Harold and Yatskar, Mark and Yin, Da and Hsieh, Cho-Jui and Chang, Kai-Wei},
+  journal={arXiv preprint arXiv:1908.03557},
+  year={2019}
+}
+
+@inproceedings{radford2021learning,
+  title={Learning transferable visual models from natural language supervision},
+  author={Radford, Alec and Kim, Jong Wook and Hallacy, Chris and Ramesh, Aditya and Goh, Gabriel and Agarwal, Sandhini and Sastry, Girish and Askell, Amanda and Mishkin, Pamela and Clark, Jack and others},
+  booktitle={International conference on machine learning},
+  pages={8748--8763},
+  year={2021},
+  organization={PMLR}
+}
+
+@article{touvron2023llama,
+  title={Llama: Open and efficient foundation language models},
+  author={Touvron, Hugo and Lavril, Thibaut and Izacard, Gautier and Martinet, Xavier and Lachaux, Marie-Anne and Lacroix, Timoth{\'e}e and Rozi{\`e}re, Baptiste and Goyal, Naman and Hambro, Eric and Azhar, Faisal and others},
+  journal={arXiv preprint arXiv:2302.13971},
+  year={2023}
+}
+
+@misc{vicuna2023,
+    title = {Vicuna: An Open-Source Chatbot Impressing GPT-4 with 90\%* ChatGPT Quality},
+    url = {https://lmsys.org/blog/2023-03-30-vicuna/},
+    author = {Chiang, Wei-Lin and Li, Zhuohan and Lin, Zi and Sheng, Ying and Wu, Zhanghao and Zhang, Hao and Zheng, Lianmin and Zhuang, Siyuan and Zhuang, Yonghao and Gonzalez, Joseph E. and Stoica, Ion and Xing, Eric P.},
+    month = {March},
+    year = {2023}
+}
+
+@article{alayrac2022flamingo,
+  title={Flamingo: a visual language model for few-shot learning},
+  author={Alayrac, Jean-Baptiste and Donahue, Jeff and Luc, Pauline and Miech, Antoine and Barr, Iain and Hasson, Yana and Lenc, Karel and Mensch, Arthur and Millican, Katherine and Reynolds, Malcolm and others},
+  journal={Advances in neural information processing systems},
+  volume={35},
+  pages={23716--23736},
+  year={2022}
+}
+
+@article{driess2023palm,
+  title={Palm-e: An embodied multimodal language model},
+  author={Driess, Danny and Xia, Fei and Sajjadi, Mehdi SM and Lynch, Corey and Chowdhery, Aakanksha and Ichter, Brian and Wahid, Ayzaan and Tompson, Jonathan and Vuong, Quan and Yu, Tianhe and others},
+  journal={arXiv preprint arXiv:2303.03378},
+  year={2023}
+}
+
+@article{bai2024hallucination,
+  title={Hallucination of multimodal large language models: A survey},
+  author={Bai, Zechen and Wang, Pichao and Xiao, Tianjun and He, Tong and Han, Zongbo and Zhang, Zheng and Shou, Mike Zheng},
+  journal={arXiv preprint arXiv:2404.18930},
+  year={2024}
+}
+
+
+@article{elhage2021mathematical,
+  title={A mathematical framework for transformer circuits},
+  author={Elhage, Nelson and Nanda, Neel and Olsson, Catherine and Henighan, Tom and Joseph, Nicholas and Mann, Ben and Askell, Amanda and Bai, Yuntao and Chen, Anna and Conerly, Tom and others},
+  journal={Transformer Circuits Thread},
+  volume={1},
+  pages={1},
+  year={2021}
+}
+
+@inproceedings{geva-etal-2021-transformer,
+    title = "Transformer Feed-Forward Layers Are Key-Value Memories",
+    author = "Geva, Mor  and
+      Schuster, Roei  and
+      Berant, Jonathan  and
+      Levy, Omer",
+    editor = "Moens, Marie-Francine  and
+      Huang, Xuanjing  and
+      Specia, Lucia  and
+      Yih, Scott Wen-tau",
+    booktitle = "Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing",
+    month = nov,
+    year = "2021",
+    address = "Online and Punta Cana, Dominican Republic",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2021.emnlp-main.446",
+    doi = "10.18653/v1/2021.emnlp-main.446",
+    pages = "5484--5495",
+    abstract = "Feed-forward layers constitute two-thirds of a transformer model{'}s parameters, yet their role in the network remains under-explored. We show that feed-forward layers in transformer-based language models operate as key-value memories, where each key correlates with textual patterns in the training examples, and each value induces a distribution over the output vocabulary. Our experiments show that the learned patterns are human-interpretable, and that lower layers tend to capture shallow patterns, while upper layers learn more semantic ones. The values complement the keys{'} input patterns by inducing output distributions that concentrate probability mass on tokens likely to appear immediately after each pattern, particularly in the upper layers. Finally, we demonstrate that the output of a feed-forward layer is a composition of its memories, which is subsequently refined throughout the model{'}s layers via residual connections to produce the final output distribution.",
+}
+
+@inproceedings{dai-etal-2022-knowledge,
+    title = "Knowledge Neurons in Pretrained Transformers",
+    author = "Dai, Damai  and
+      Dong, Li  and
+      Hao, Yaru  and
+      Sui, Zhifang  and
+      Chang, Baobao  and
+      Wei, Furu",
+    editor = "Muresan, Smaranda  and
+      Nakov, Preslav  and
+      Villavicencio, Aline",
+    booktitle = "Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)",
+    month = may,
+    year = "2022",
+    address = "Dublin, Ireland",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2022.acl-long.581",
+    doi = "10.18653/v1/2022.acl-long.581",
+    pages = "8493--8502",
+    abstract = "Large-scale pretrained language models are surprisingly good at recalling factual knowledge presented in the training corpus. In this paper, we present preliminary studies on how factual knowledge is stored in pretrained Transformers by introducing the concept of knowledge neurons. Specifically, we examine the fill-in-the-blank cloze task for BERT. Given a relational fact, we propose a knowledge attribution method to identify the neurons that express the fact. We find that the activation of such knowledge neurons is positively correlated to the expression of their corresponding facts. In our case studies, we attempt to leverage knowledge neurons to edit (such as update, and erase) specific factual knowledge without fine-tuning. Our results shed light on understanding the storage of knowledge within pretrained Transformers.",
+}
+
+# activation engineering ###################################################
+
+@misc{turner2023activation,
+      title={Activation Addition: Steering Language Models Without Optimization}, 
+      author={Alexander Matt Turner and Lisa Thiergart and David Udell and Gavin Leech and Ulisse Mini and Monte MacDiarmid},
+      year={2023},
+      eprint={2308.10248},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+
+@misc{zou2023representation,
+      title={Representation Engineering: A Top-Down Approach to AI Transparency}, 
+      author={Andy Zou and Long Phan and Sarah Chen and James Campbell and Phillip Guo and Richard Ren and Alexander Pan and Xuwang Yin and Mantas Mazeika and Ann-Kathrin Dombrowski and Shashwat Goel and Nathaniel Li and Michael J. Byun and Zifan Wang and Alex Mallen and Steven Basart and Sanmi Koyejo and Dawn Song and Matt Fredrikson and J. Zico Kolter and Dan Hendrycks},
+      year={2023},
+      eprint={2310.01405},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
+
+@misc{liu2024incontext,
+      title={In-context Vectors: Making In Context Learning More Effective and Controllable Through Latent Space Steering}, 
+      author={Sheng Liu and Haotian Ye and Lei Xing and James Zou},
+      year={2024},
+      eprint={2311.06668},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
+
+@article{li2024implicit,
+  title={Implicit In-context Learning},
+  author={Li, Zhuowei and Xu, Zihao and Han, Ligong and Gao, Yunhe and Wen, Song and Liu, Di and Wang, Hao and Metaxas, Dimitris N},
+  journal={arXiv preprint arXiv:2405.14660},
+  year={2024}
+}
+
+@article{liu2024reducing,
+  title={Reducing hallucinations in vision-language models via latent space steering},
+  author={Liu, Sheng and Ye, Haotian and Xing, Lei and Zou, James},
+  journal={arXiv preprint arXiv:2410.15778},
+  year={2024}
+}
+
+############################################################################
+# Benchmark
+@article{rohrbach2018object,
+  title={Object hallucination in image captioning},
+  author={Rohrbach, Anna and Hendricks, Lisa Anne and Burns, Kaylee and Darrell, Trevor and Saenko, Kate},
+  journal={arXiv preprint arXiv:1809.02156},
+  year={2018}
+}
+
+@inproceedings{lin2014microsoft,
+  title={Microsoft coco: Common objects in context},
+  author={Lin, Tsung-Yi and Maire, Michael and Belongie, Serge and Hays, James and Perona, Pietro and Ramanan, Deva and Doll{\'a}r, Piotr and Zitnick, C Lawrence},
+  booktitle={Computer Vision--ECCV 2014: 13th European Conference, Zurich, Switzerland, September 6-12, 2014, Proceedings, Part V 13},
+  pages={740--755},
+  year={2014},
+  organization={Springer}
+}
+
+@article{fu2023mme,
+  title={MME: A Comprehensive Evaluation Benchmark for Multimodal Large Language Models},
+  author={Fu, Chaoyou and Chen, Peixian and Shen, Yunhang and Qin, Yulei and Zhang, Mengdan and Lin, Xu and Yang, Jinrui and Zheng, Xiawu and Li, Ke and Sun, Xing and others},
+  journal={arXiv preprint arXiv:2306.13394},
+  year={2023}
+}
+###########################################################################
+@inproceedings{wang-etal-2023-label,
+    title = "Label Words are Anchors: An Information Flow Perspective for Understanding In-Context Learning",
+    author = "Wang, Lean  and
+      Li, Lei  and
+      Dai, Damai  and
+      Chen, Deli  and
+      Zhou, Hao  and
+      Meng, Fandong  and
+      Zhou, Jie  and
+      Sun, Xu",
+    editor = "Bouamor, Houda  and
+      Pino, Juan  and
+      Bali, Kalika",
+    booktitle = "Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing",
+    month = dec,
+    year = "2023",
+    address = "Singapore",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2023.emnlp-main.609",
+    doi = "10.18653/v1/2023.emnlp-main.609",
+    pages = "9840--9855",
+    abstract = "In-context learning (ICL) emerges as a promising capability of large language models (LLMs) by providing them with demonstration examples to perform diverse tasks. However, the underlying mechanism of how LLMs learn from the provided context remains under-explored. In this paper, we investigate the working mechanism of ICL through an information flow lens. Our findings reveal that label words in the demonstration examples function as anchors: (1) semantic information aggregates into label word representations during the shallow computation layers{'} processing; (2) the consolidated information in label words serves as a reference for LLMs{'} final predictions. Based on these insights, we introduce an anchor re-weighting method to improve ICL performance, a demonstration compression technique to expedite inference, and an analysis framework for diagnosing ICL errors in GPT2-XL. The promising applications of our findings again validate the uncovered ICL working mechanism and pave the way for future studies.",
+}

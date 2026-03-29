@@ -1,0 +1,355 @@
+\begin{thebibliography}{46}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Bai et~al.(2023)Bai, Bai, Yang, Wang, Tan, Wang, Lin, Zhou, and
+  Zhou]{qwen}
+Bai, J., Bai, S., Yang, S., Wang, S., Tan, S., Wang, P., Lin, J., Zhou, C., and
+  Zhou, J.
+\newblock Qwen-vl: A frontier large vision-language model with versatile
+  abilities.
+\newblock \emph{arXiv preprint arXiv:2308.12966}, 2023.
+
+\bibitem[Bai et~al.(2024)Bai, Wang, Xiao, He, Han, Zhang, and
+  Shou]{bai2024hallucination}
+Bai, Z., Wang, P., Xiao, T., He, T., Han, Z., Zhang, Z., and Shou, M.~Z.
+\newblock Hallucination of multimodal large language models: A survey.
+\newblock \emph{arXiv preprint arXiv:2404.18930}, 2024.
+
+\bibitem[Chen et~al.(2023)Chen, Zhang, Zeng, Zhang, Zhu, and Zhao]{shikra}
+Chen, K., Zhang, Z., Zeng, W., Zhang, R., Zhu, F., and Zhao, R.
+\newblock Shikra: Unleashing multimodal llm's referential dialogue magic.
+\newblock \emph{arXiv preprint arXiv:2306.15195}, 2023.
+
+\bibitem[Chen et~al.(2024)Chen, Zhao, Luo, Yao, Li, and Zhou]{chen2024halc}
+Chen, Z., Zhao, Z., Luo, H., Yao, H., Li, B., and Zhou, J.
+\newblock Halc: Object hallucination reduction via adaptive focal-contrast
+  decoding.
+\newblock \emph{arXiv preprint arXiv:2403.00425}, 2024.
+
+\bibitem[Chuang et~al.(2024)Chuang, Xie, Luo, Kim, Glass, and He]{dola}
+Chuang, Y.-S., Xie, Y., Luo, H., Kim, Y., Glass, J.~R., and He, P.
+\newblock Dola: Decoding by contrasting layers improves factuality in large
+  language models.
+\newblock In \emph{The Twelfth International Conference on Learning
+  Representations}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=Th6NyL07na}.
+
+\bibitem[Dai et~al.(2022)Dai, Dong, Hao, Sui, Chang, and
+  Wei]{dai-etal-2022-knowledge}
+Dai, D., Dong, L., Hao, Y., Sui, Z., Chang, B., and Wei, F.
+\newblock Knowledge neurons in pretrained transformers.
+\newblock In Muresan, S., Nakov, P., and Villavicencio, A. (eds.),
+  \emph{Proceedings of the 60th Annual Meeting of the Association for
+  Computational Linguistics (Volume 1: Long Papers)}, pp.\  8493--8502, Dublin,
+  Ireland, May 2022. Association for Computational Linguistics.
+\newblock \doi{10.18653/v1/2022.acl-long.581}.
+\newblock URL \url{https://aclanthology.org/2022.acl-long.581}.
+
+\bibitem[Dai et~al.(2023)Dai, Li, Li, Tiong, Zhao, Wang, Li, Fung, and
+  Hoi]{instructblip}
+Dai, W., Li, J., Li, D., Tiong, A., Zhao, J., Wang, W., Li, B., Fung, P., and
+  Hoi, S.
+\newblock Instruct{BLIP}: Towards general-purpose vision-language models with
+  instruction tuning.
+\newblock In \emph{Thirty-seventh Conference on Neural Information Processing
+  Systems}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=vvoWPYqZJA}.
+
+\bibitem[Elhage et~al.(2021)Elhage, Nanda, Olsson, Henighan, Joseph, Mann,
+  Askell, Bai, Chen, Conerly, et~al.]{elhage2021mathematical}
+Elhage, N., Nanda, N., Olsson, C., Henighan, T., Joseph, N., Mann, B., Askell,
+  A., Bai, Y., Chen, A., Conerly, T., et~al.
+\newblock A mathematical framework for transformer circuits.
+\newblock \emph{Transformer Circuits Thread}, 1:\penalty0 1, 2021.
+
+\bibitem[Favero et~al.(2024)Favero, Zancato, Trager, Choudhary, Perera,
+  Achille, Swaminathan, and Soatto]{favero2024multi}
+Favero, A., Zancato, L., Trager, M., Choudhary, S., Perera, P., Achille, A.,
+  Swaminathan, A., and Soatto, S.
+\newblock Multi-modal hallucination control by visual information grounding.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  14303--14312, 2024.
+
+\bibitem[Fu et~al.(2023)Fu, Chen, Shen, Qin, Zhang, Lin, Yang, Zheng, Li, Sun,
+  et~al.]{fu2023mme}
+Fu, C., Chen, P., Shen, Y., Qin, Y., Zhang, M., Lin, X., Yang, J., Zheng, X.,
+  Li, K., Sun, X., et~al.
+\newblock Mme: A comprehensive evaluation benchmark for multimodal large
+  language models.
+\newblock \emph{arXiv preprint arXiv:2306.13394}, 2023.
+
+\bibitem[Geva et~al.(2021)Geva, Schuster, Berant, and
+  Levy]{geva-etal-2021-transformer}
+Geva, M., Schuster, R., Berant, J., and Levy, O.
+\newblock Transformer feed-forward layers are key-value memories.
+\newblock In Moens, M.-F., Huang, X., Specia, L., and Yih, S. W.-t. (eds.),
+  \emph{Proceedings of the 2021 Conference on Empirical Methods in Natural
+  Language Processing}, pp.\  5484--5495, Online and Punta Cana, Dominican
+  Republic, November 2021. Association for Computational Linguistics.
+\newblock \doi{10.18653/v1/2021.emnlp-main.446}.
+\newblock URL \url{https://aclanthology.org/2021.emnlp-main.446}.
+
+\bibitem[Gurney(2023)]{logitlen}
+Gurney, A.
+\newblock Interpreting gpt: The logit lens.
+\newblock
+  \url{https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens},
+  October 2023.
+\newblock URL
+  \url{https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens}.
+\newblock Accessed: 2024-10-22.
+
+\bibitem[Huang et~al.(2024)Huang, Dong, Zhang, Wang, He, Wang, Lin, Zhang, and
+  Yu]{opera}
+Huang, Q., Dong, X., Zhang, P., Wang, B., He, C., Wang, J., Lin, D., Zhang, W.,
+  and Yu, N.
+\newblock Opera: Alleviating hallucination in multi-modal large language models
+  via over-trust penalty and retrospection-allocation.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  13418--13427, 2024.
+
+\bibitem[Hurst et~al.(2024)Hurst, Lerer, Goucher, Perelman, Ramesh, Clark,
+  Ostrow, Welihinda, Hayes, Radford, et~al.]{hurst2024gpt}
+Hurst, A., Lerer, A., Goucher, A.~P., Perelman, A., Ramesh, A., Clark, A.,
+  Ostrow, A., Welihinda, A., Hayes, A., Radford, A., et~al.
+\newblock Gpt-4o system card.
+\newblock \emph{arXiv preprint arXiv:2410.21276}, 2024.
+
+\bibitem[Jiang et~al.(2024)Jiang, Xu, Dong, Chen, Ye, Yan, Ye, Zhang, Huang,
+  and Zhang]{jiang2024hallucination}
+Jiang, C., Xu, H., Dong, M., Chen, J., Ye, W., Yan, M., Ye, Q., Zhang, J.,
+  Huang, F., and Zhang, S.
+\newblock Hallucination augmented contrastive learning for multimodal large
+  language model.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  27036--27046, 2024.
+
+\bibitem[Lai et~al.(2024)Lai, Tian, Chen, Li, Yuan, Liu, and Jia]{lai2024lisa}
+Lai, X., Tian, Z., Chen, Y., Li, Y., Yuan, Y., Liu, S., and Jia, J.
+\newblock Lisa: Reasoning segmentation via large language model.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  9579--9589, 2024.
+
+\bibitem[Leng et~al.(2024)Leng, Zhang, Chen, Li, Lu, Miao, and Bing]{vcd}
+Leng, S., Zhang, H., Chen, G., Li, X., Lu, S., Miao, C., and Bing, L.
+\newblock Mitigating object hallucinations in large vision-language models
+  through visual contrastive decoding.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  13872--13882, 2024.
+
+\bibitem[Li et~al.(2023{\natexlab{a}})Li, Li, Savarese, and Hoi]{li2023blip}
+Li, J., Li, D., Savarese, S., and Hoi, S.
+\newblock Blip-2: Bootstrapping language-image pre-training with frozen image
+  encoders and large language models.
+\newblock In \emph{International conference on machine learning}, pp.\
+  19730--19742. PMLR, 2023{\natexlab{a}}.
+
+\bibitem[Li et~al.(2022)Li, Holtzman, Fried, Liang, Eisner, Hashimoto,
+  Zettlemoyer, and Lewis]{li2022contrastive}
+Li, X.~L., Holtzman, A., Fried, D., Liang, P., Eisner, J., Hashimoto, T.,
+  Zettlemoyer, L., and Lewis, M.
+\newblock Contrastive decoding: Open-ended text generation as optimization.
+\newblock \emph{arXiv preprint arXiv:2210.15097}, 2022.
+
+\bibitem[Li et~al.(2023{\natexlab{b}})Li, Du, Zhou, Wang, Zhao, and
+  Wen]{li-etal-2023-evaluating}
+Li, Y., Du, Y., Zhou, K., Wang, J., Zhao, X., and Wen, J.-R.
+\newblock Evaluating object hallucination in large vision-language models.
+\newblock In Bouamor, H., Pino, J., and Bali, K. (eds.), \emph{Proceedings of
+  the 2023 Conference on Empirical Methods in Natural Language Processing},
+  pp.\  292--305, Singapore, December 2023{\natexlab{b}}. Association for
+  Computational Linguistics.
+\newblock \doi{10.18653/v1/2023.emnlp-main.20}.
+\newblock URL \url{https://aclanthology.org/2023.emnlp-main.20}.
+
+\bibitem[Li et~al.(2024)Li, Xu, Han, Gao, Wen, Liu, Wang, and
+  Metaxas]{li2024implicit}
+Li, Z., Xu, Z., Han, L., Gao, Y., Wen, S., Liu, D., Wang, H., and Metaxas,
+  D.~N.
+\newblock Implicit in-context learning.
+\newblock \emph{arXiv preprint arXiv:2405.14660}, 2024.
+
+\bibitem[Lin et~al.(2023)Lin, Zhu, Ye, Ning, Jin, and Yuan]{lin2023video}
+Lin, B., Zhu, B., Ye, Y., Ning, M., Jin, P., and Yuan, L.
+\newblock Video-llava: Learning united visual representation by alignment
+  before projection.
+\newblock \emph{arXiv preprint arXiv:2311.10122}, 2023.
+
+\bibitem[Lin et~al.(2014)Lin, Maire, Belongie, Hays, Perona, Ramanan,
+  Doll{\'a}r, and Zitnick]{lin2014microsoft}
+Lin, T.-Y., Maire, M., Belongie, S., Hays, J., Perona, P., Ramanan, D.,
+  Doll{\'a}r, P., and Zitnick, C.~L.
+\newblock Microsoft coco: Common objects in context.
+\newblock In \emph{Computer Vision--ECCV 2014: 13th European Conference,
+  Zurich, Switzerland, September 6-12, 2014, Proceedings, Part V 13}, pp.\
+  740--755. Springer, 2014.
+
+\bibitem[Liu et~al.(2023)Liu, Lin, Li, Wang, Yacoob, and
+  Wang]{liu2023mitigating}
+Liu, F., Lin, K., Li, L., Wang, J., Yacoob, Y., and Wang, L.
+\newblock Mitigating hallucination in large multi-modal models via robust
+  instruction tuning.
+\newblock In \emph{The Twelfth International Conference on Learning
+  Representations}, 2023.
+
+\bibitem[Liu et~al.(2024{\natexlab{a}})Liu, Li, Li, and Lee]{llava15}
+Liu, H., Li, C., Li, Y., and Lee, Y.~J.
+\newblock Improved baselines with visual instruction tuning.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  26296--26306, 2024{\natexlab{a}}.
+
+\bibitem[Liu et~al.(2024{\natexlab{b}})Liu, Li, Li, Li, Zhang, Shen, and
+  Lee]{liu2024llavanext}
+Liu, H., Li, C., Li, Y., Li, B., Zhang, Y., Shen, S., and Lee, Y.~J.
+\newblock Llava-next: Improved reasoning, ocr, and world knowledge, January
+  2024{\natexlab{b}}.
+\newblock URL \url{https://llava-vl.github.io/blog/2024-01-30-llava-next/}.
+
+\bibitem[Liu et~al.(2024{\natexlab{c}})Liu, Li, Wu, and Lee]{llava}
+Liu, H., Li, C., Wu, Q., and Lee, Y.~J.
+\newblock Visual instruction tuning.
+\newblock \emph{Advances in neural information processing systems}, 36,
+  2024{\natexlab{c}}.
+
+\bibitem[Liu et~al.(2024{\natexlab{d}})Liu, Xue, Chen, Chen, Zhao, Wang, Hou,
+  Li, and Peng]{liu2024survey}
+Liu, H., Xue, W., Chen, Y., Chen, D., Zhao, X., Wang, K., Hou, L., Li, R., and
+  Peng, W.
+\newblock A survey on hallucination in large vision-language models.
+\newblock \emph{arXiv preprint arXiv:2402.00253}, 2024{\natexlab{d}}.
+
+\bibitem[Liu et~al.(2024{\natexlab{e}})Liu, Ye, Xing, and
+  Zou]{liu2024incontext}
+Liu, S., Ye, H., Xing, L., and Zou, J.
+\newblock In-context vectors: Making in context learning more effective and
+  controllable through latent space steering, 2024{\natexlab{e}}.
+
+\bibitem[Liu et~al.(2024{\natexlab{f}})Liu, Ye, Xing, and Zou]{liu2024reducing}
+Liu, S., Ye, H., Xing, L., and Zou, J.
+\newblock Reducing hallucinations in vision-language models via latent space
+  steering.
+\newblock \emph{arXiv preprint arXiv:2410.15778}, 2024{\natexlab{f}}.
+
+\bibitem[Liu et~al.(2024{\natexlab{g}})Liu, Zheng, and Chen]{pai}
+Liu, S., Zheng, K., and Chen, W.
+\newblock Paying more attention to image: A training-free method for
+  alleviating hallucination in lvlms.
+\newblock \emph{arXiv preprint arXiv:2407.21771}, 2024{\natexlab{g}}.
+
+\bibitem[Rohrbach et~al.(2018)Rohrbach, Hendricks, Burns, Darrell, and
+  Saenko]{rohrbach2018object}
+Rohrbach, A., Hendricks, L.~A., Burns, K., Darrell, T., and Saenko, K.
+\newblock Object hallucination in image captioning.
+\newblock \emph{arXiv preprint arXiv:1809.02156}, 2018.
+
+\bibitem[Shi et~al.(2024)Shi, Liu, Wang, Liao, Radhakrishnan, Huang, Yin,
+  Sapra, Yacoob, Shi, et~al.]{shi2024eagle}
+Shi, M., Liu, F., Wang, S., Liao, S., Radhakrishnan, S., Huang, D.-A., Yin, H.,
+  Sapra, K., Yacoob, Y., Shi, H., et~al.
+\newblock Eagle: Exploring the design space for multimodal llms with mixture of
+  encoders.
+\newblock \emph{arXiv preprint arXiv:2408.15998}, 2024.
+
+\bibitem[Shi et~al.(2023)Shi, Han, Lewis, Tsvetkov, Zettlemoyer, and
+  Yih]{shi2023trusting}
+Shi, W., Han, X., Lewis, M., Tsvetkov, Y., Zettlemoyer, L., and Yih, S. W.-t.
+\newblock Trusting your evidence: Hallucinate less with context-aware decoding.
+\newblock \emph{arXiv preprint arXiv:2305.14739}, 2023.
+
+\bibitem[Sun et~al.(2023)Sun, Shen, Cao, Liu, Li, Shen, Gan, Gui, Wang, Yang,
+  et~al.]{sun2023aligning}
+Sun, Z., Shen, S., Cao, S., Liu, H., Li, C., Shen, Y., Gan, C., Gui, L.-Y.,
+  Wang, Y.-X., Yang, Y., et~al.
+\newblock Aligning large multimodal models with factually augmented rlhf.
+\newblock \emph{arXiv preprint arXiv:2309.14525}, 2023.
+
+\bibitem[Tong et~al.(2024)Tong, Liu, Zhai, Ma, LeCun, and Xie]{tong2024eyes}
+Tong, S., Liu, Z., Zhai, Y., Ma, Y., LeCun, Y., and Xie, S.
+\newblock Eyes wide shut? exploring the visual shortcomings of multimodal llms.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  9568--9578, 2024.
+
+\bibitem[Turner et~al.(2023)Turner, Thiergart, Udell, Leech, Mini, and
+  MacDiarmid]{turner2023activation}
+Turner, A.~M., Thiergart, L., Udell, D., Leech, G., Mini, U., and MacDiarmid,
+  M.
+\newblock Activation addition: Steering language models without optimization,
+  2023.
+
+\bibitem[Wang et~al.(2023)Wang, Li, Dai, Chen, Zhou, Meng, Zhou, and
+  Sun]{wang-etal-2023-label}
+Wang, L., Li, L., Dai, D., Chen, D., Zhou, H., Meng, F., Zhou, J., and Sun, X.
+\newblock Label words are anchors: An information flow perspective for
+  understanding in-context learning.
+\newblock In Bouamor, H., Pino, J., and Bali, K. (eds.), \emph{Proceedings of
+  the 2023 Conference on Empirical Methods in Natural Language Processing},
+  pp.\  9840--9855, Singapore, December 2023. Association for Computational
+  Linguistics.
+\newblock \doi{10.18653/v1/2023.emnlp-main.609}.
+\newblock URL \url{https://aclanthology.org/2023.emnlp-main.609}.
+
+\bibitem[Woo et~al.(2024)Woo, Kim, Jang, Choi, and Kim]{woo2024don}
+Woo, S., Kim, D., Jang, J., Choi, Y., and Kim, C.
+\newblock Don't miss the forest for the trees: Attentional vision calibration
+  for large vision language models.
+\newblock \emph{arXiv preprint arXiv:2405.17820}, 2024.
+
+\bibitem[Yang et~al.(2024)Yang, Song, Li, Zhao, Ge, Li, and
+  Shan]{yang2024gpt4tools}
+Yang, R., Song, L., Li, Y., Zhao, S., Ge, Y., Li, X., and Shan, Y.
+\newblock Gpt4tools: Teaching large language model to use tools via
+  self-instruction.
+\newblock \emph{Advances in Neural Information Processing Systems}, 36, 2024.
+
+\bibitem[Yin et~al.(2023)Yin, Fu, Zhao, Xu, Wang, Sui, Shen, Li, Sun, and
+  Chen]{yin2023woodpecker}
+Yin, S., Fu, C., Zhao, S., Xu, T., Wang, H., Sui, D., Shen, Y., Li, K., Sun,
+  X., and Chen, E.
+\newblock Woodpecker: Hallucination correction for multimodal large language
+  models.
+\newblock \emph{arXiv preprint arXiv:2310.16045}, 2023.
+
+\bibitem[Yu et~al.(2024)Yu, Li, Wei, Pang, Ye, Qin, Tang, Tian, and
+  Zhuang]{yu2024hallucidoctor}
+Yu, Q., Li, J., Wei, L., Pang, L., Ye, W., Qin, B., Tang, S., Tian, Q., and
+  Zhuang, Y.
+\newblock Hallucidoctor: Mitigating hallucinatory toxicity in visual
+  instruction data.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision
+  and Pattern Recognition}, pp.\  12944--12953, 2024.
+
+\bibitem[Yue et~al.(2024)Yue, Zhang, and Jin]{yue2024less}
+Yue, Z., Zhang, L., and Jin, Q.
+\newblock Less is more: Mitigating multimodal hallucination from an eos
+  decision perspective.
+\newblock \emph{arXiv preprint arXiv:2402.14545}, 2024.
+
+\bibitem[Zhou et~al.(2023)Zhou, Cui, Yoon, Zhang, Deng, Finn, Bansal, and
+  Yao]{zhou2023analyzing}
+Zhou, Y., Cui, C., Yoon, J., Zhang, L., Deng, Z., Finn, C., Bansal, M., and
+  Yao, H.
+\newblock Analyzing and mitigating object hallucination in large
+  vision-language models.
+\newblock \emph{arXiv preprint arXiv:2310.00754}, 2023.
+
+\bibitem[Zhu et~al.(2023)Zhu, Chen, Shen, Li, and Elhoseiny]{minigpt4}
+Zhu, D., Chen, J., Shen, X., Li, X., and Elhoseiny, M.
+\newblock Minigpt-4: Enhancing vision-language understanding with advanced
+  large language models.
+\newblock \emph{arXiv preprint arXiv:2304.10592}, 2023.
+
+\bibitem[Zou et~al.(2023)Zou, Phan, Chen, Campbell, Guo, Ren, Pan, Yin,
+  Mazeika, Dombrowski, Goel, Li, Byun, Wang, Mallen, Basart, Koyejo, Song,
+  Fredrikson, Kolter, and Hendrycks]{zou2023representation}
+Zou, A., Phan, L., Chen, S., Campbell, J., Guo, P., Ren, R., Pan, A., Yin, X.,
+  Mazeika, M., Dombrowski, A.-K., Goel, S., Li, N., Byun, M.~J., Wang, Z.,
+  Mallen, A., Basart, S., Koyejo, S., Song, D., Fredrikson, M., Kolter, J.~Z.,
+  and Hendrycks, D.
+\newblock Representation engineering: A top-down approach to ai transparency,
+  2023.
+
+\end{thebibliography}
