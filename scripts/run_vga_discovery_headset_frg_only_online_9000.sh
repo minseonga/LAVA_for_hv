@@ -51,6 +51,10 @@ LATE_START="${LATE_START:-16}"
 LATE_END="${LATE_END:-24}"
 PROBE_POSITION_MODE="${PROBE_POSITION_MODE:-baseline_yesno_offline_fullseq}"
 PROBE_BRANCH_SOURCE="${PROBE_BRANCH_SOURCE:-baseline_output}"
+PROBE_BRANCH_JSONL="${PROBE_BRANCH_JSONL:-}"
+PROBE_BRANCH_CSV="${PROBE_BRANCH_CSV:-}"
+PROBE_BRANCH_ID_COL="${PROBE_BRANCH_ID_COL:-question_id}"
+PROBE_BRANCH_TEXT_COL="${PROBE_BRANCH_TEXT_COL:-output}"
 PROBE_PREVIEW_MAX_NEW_TOKENS="${PROBE_PREVIEW_MAX_NEW_TOKENS:-3}"
 PROBE_PREVIEW_REUSE_BASELINE="${PROBE_PREVIEW_REUSE_BASELINE:-true}"
 PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST="${PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST:-true}"
@@ -59,6 +63,16 @@ MAX_SAMPLES="${MAX_SAMPLES:--1}"
 
 mkdir -p "$OUT_DIR"
 cd "$CAL_ROOT"
+
+EXTRA_ARGS=()
+if [[ -n "$PROBE_BRANCH_JSONL" ]]; then
+  EXTRA_ARGS+=(--probe_branch_jsonl "$PROBE_BRANCH_JSONL")
+fi
+if [[ -n "$PROBE_BRANCH_CSV" ]]; then
+  EXTRA_ARGS+=(--probe_branch_csv "$PROBE_BRANCH_CSV")
+  EXTRA_ARGS+=(--probe_branch_id_col "$PROBE_BRANCH_ID_COL")
+  EXTRA_ARGS+=(--probe_branch_text_col "$PROBE_BRANCH_TEXT_COL")
+fi
 
 python scripts/run_pnp_hard_veto_online.py \
   --backend vga \
@@ -95,7 +109,8 @@ python scripts/run_pnp_hard_veto_online.py \
   --max_samples "$MAX_SAMPLES" \
   --gt_csv "$GT_CSV" \
   --gt_id_col id \
-  --gt_label_col answer
+  --gt_label_col answer \
+  "${EXTRA_ARGS[@]}"
 
 echo "[done] $OUT_DIR"
 echo "[saved] $OUT_DIR/summary.json"

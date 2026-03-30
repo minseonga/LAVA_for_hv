@@ -20,6 +20,14 @@ from pnp_controller.core.controller import run_offline_hard_veto
 from pnp_controller.core.schemas import HardVetoConfig, ThresholdCalibrationConfig
 
 
+def sample_id(sample: Dict[str, Any]) -> str:
+    for key in ("question_id", "id", "qid", "image_id"):
+        v = sample.get(key, None)
+        if v is not None and str(v).strip() != "":
+            return str(v)
+    return ""
+
+
 def parse_yes_no(text: str) -> str:
     s = (text or "").strip()
     first = s.split(".", 1)[0].replace(",", " ")
@@ -38,6 +46,44 @@ def load_jsonl(path: str) -> List[Dict[str, Any]]:
                 continue
             out.append(json.loads(t))
     return out
+
+
+def load_branch_rows_jsonl(path: str) -> Dict[str, Dict[str, Any]]:
+    rows = load_jsonl(path)
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        sid = sample_id(row)
+        if sid != "":
+            out[sid] = row
+    return out
+
+
+def load_branch_rows_csv(path: str, id_col: str, text_col: str) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    with open(path, "r", encoding="utf-8") as f:
+        rd = csv.DictReader(f)
+        for row in rd:
+            sid = str(row.get(id_col, "")).strip()
+            txt = str(row.get(text_col, "")).strip()
+            if sid == "" or txt == "":
+                continue
+            out[sid] = {"question_id": sid, "output": txt}
+    return out
+
+
+def load_probe_branch_rows(args) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    if str(args.probe_branch_jsonl).strip():
+        path = os.path.abspath(args.probe_branch_jsonl)
+        return load_branch_rows_jsonl(path), {"mode": "jsonl", "path": path}
+    if str(args.probe_branch_csv).strip():
+        path = os.path.abspath(args.probe_branch_csv)
+        return load_branch_rows_csv(path, id_col=args.probe_branch_id_col, text_col=args.probe_branch_text_col), {
+            "mode": "csv",
+            "path": path,
+            "id_col": str(args.probe_branch_id_col),
+            "text_col": str(args.probe_branch_text_col),
+        }
+    return {}, {"mode": "none"}
 
 
 def load_gt_csv(path_csv: str, id_col: str, label_col: str) -> Dict[str, str]:
@@ -212,6 +258,10 @@ def main() -> None:
         default="preview",
         choices=["preview", "baseline_output"],
     )
+    ap.add_argument("--probe_branch_jsonl", type=str, default="")
+    ap.add_argument("--probe_branch_csv", type=str, default="")
+    ap.add_argument("--probe_branch_id_col", type=str, default="question_id")
+    ap.add_argument("--probe_branch_text_col", type=str, default="output")
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
@@ -225,6 +275,7 @@ def main() -> None:
 
     os.makedirs(args.out_dir, exist_ok=True)
     tau_frg, tau_gmi, tau_info = resolve_thresholds(args)
+    probe_branch_rows, probe_branch_info = load_probe_branch_rows(args)
 
     adapter = VGAOnlineAdapter(
         VGAOnlineConfig(
@@ -268,12 +319,33 @@ def main() -> None:
         samples = samples[: int(args.max_samples)]
 
     preds: List[Dict[str, Any]] = []
+    probe_branch_preds: List[Dict[str, Any]] = []
     route_rows: List[Dict[str, Any]] = []
     for sample in tqdm(samples, total=len(samples), desc="pnp-online", dynamic_ncols=True):
+        sid = sample_id(sample)
         baseline_pred = None
-        if str(args.probe_branch_source).strip().lower() == "baseline_output":
+        probe_branch_origin = "adapter_internal"
+        external_branch_row = probe_branch_rows.get(sid, None)
+        if external_branch_row is not None:
+            branch_text = str(external_branch_row.get("output", "")).strip()
+            if branch_text == "":
+                raise RuntimeError(f"External probe branch row for sample {sid} is missing output text.")
+            probe = adapter.probe(sample, branch_text=branch_text)
+            baseline_pred = adapter._build_prediction_row(
+                sample=sample,
+                prepared=probe.extras["prepared"],
+                output_text=branch_text,
+                use_add=False,
+            )
+            baseline_pred["branch_source"] = "external_probe_branch"
+            probe_branch_preds.append(baseline_pred)
+            probe_branch_origin = "external_probe_branch"
+        elif str(args.probe_branch_source).strip().lower() == "baseline_output":
             baseline_pred = adapter.predict_base_direct(sample)
+            baseline_pred["branch_source"] = "live_baseline_output"
+            probe_branch_preds.append(dict(baseline_pred))
             probe = adapter.probe(sample, branch_text=str(baseline_pred.get("output", "")))
+            probe_branch_origin = "live_baseline_output"
         else:
             probe = adapter.probe(sample)
         veto = bool((probe.frg >= tau_frg) or (probe.gmi >= tau_gmi))
@@ -301,6 +373,7 @@ def main() -> None:
                 "probe_feature_mode": str(extras.get("probe_feature_mode", "")),
                 "probe_position_mode": str(extras.get("probe_position_mode", "")),
                 "probe_branch_source": str(extras.get("probe_branch_source", "")),
+                "probe_branch_origin": probe_branch_origin,
                 "probe_source": str(extras.get("probe_source", "")),
                 "probe_impl": str(extras.get("probe_impl", "")),
                 "tau_frg": float(tau_frg),
@@ -316,6 +389,7 @@ def main() -> None:
                 "baseline_preview_fallback": int(bool(extras.get("baseline_preview_fallback", False))),
                 "baseline_preview_reusable": int(bool(extras.get("baseline_preview_reusable", False))),
                 "baseline_preview_text": str(extras.get("baseline_preview_text", "")),
+                "probe_branch_text": str(extras.get("probe_branch_text", "")),
                 "late_head_vis_ratio_mean": float(extras.get("attn_stats", {}).get("late_head_vis_ratio_mean", 0.0)),
                 "late_head_vis_ratio_topkmean": float(extras.get("attn_stats", {}).get("late_head_vis_ratio_topkmean", 0.0)),
                 "frg_shared_mean": float(extras.get("attn_stats", {}).get("frg_shared_mean", 0.0)),
@@ -332,6 +406,13 @@ def main() -> None:
     with open(pred_jsonl, "w", encoding="utf-8") as f:
         for row in preds:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    branch_pred_jsonl = ""
+    if probe_branch_preds:
+        branch_pred_jsonl = os.path.join(args.out_dir, "pred_probe_branch.jsonl")
+        with open(branch_pred_jsonl, "w", encoding="utf-8") as f:
+            for row in probe_branch_preds:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     route_csv = os.path.join(args.out_dir, "route_log.csv")
     if route_rows:
@@ -357,6 +438,7 @@ def main() -> None:
             "headset_json": os.path.abspath(args.headset_json) if str(args.headset_json).strip() else "",
             "probe_position_mode": args.probe_position_mode,
             "probe_branch_source": args.probe_branch_source,
+            "probe_branch_input": probe_branch_info,
             "probe_preview_max_new_tokens": int(args.probe_preview_max_new_tokens),
             "probe_preview_reuse_baseline": bool(args.probe_preview_reuse_baseline),
             "probe_preview_fallback_to_prompt_last": bool(args.probe_preview_fallback_to_prompt_last),
@@ -376,6 +458,7 @@ def main() -> None:
         "outputs": {
             "pred_jsonl": pred_jsonl,
             "route_csv": route_csv,
+            "probe_branch_pred_jsonl": branch_pred_jsonl,
         },
     }
 
@@ -389,6 +472,8 @@ def main() -> None:
 
     print("[saved]", pred_jsonl)
     print("[saved]", route_csv)
+    if branch_pred_jsonl:
+        print("[saved]", branch_pred_jsonl)
     print("[saved]", summary_json)
     if "metrics" in summary:
         print(
