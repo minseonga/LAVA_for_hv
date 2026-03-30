@@ -198,6 +198,10 @@ def main() -> None:
     ap.add_argument("--aggregate_topk", type=int, default=5)
     ap.add_argument("--aggregate_lambda", type=float, default=1.0)
     ap.add_argument("--headset_json", type=str, default="")
+    ap.add_argument("--probe_position_mode", type=str, default="prompt_last", choices=["prompt_last", "baseline_yesno_preview"])
+    ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
+    ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
+    ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--use_gmi", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--max_samples", type=int, default=-1)
 
@@ -236,6 +240,10 @@ def main() -> None:
             aggregate_topk=args.aggregate_topk,
             aggregate_lambda=args.aggregate_lambda,
             headset_json=args.headset_json,
+            probe_position_mode=args.probe_position_mode,
+            probe_preview_max_new_tokens=args.probe_preview_max_new_tokens,
+            probe_preview_reuse_baseline=bool(args.probe_preview_reuse_baseline),
+            probe_preview_fallback_to_prompt_last=bool(args.probe_preview_fallback_to_prompt_last),
             use_gmi=bool(args.use_gmi),
             seed=args.seed,
         )
@@ -272,12 +280,20 @@ def main() -> None:
                 "frg": float(probe.frg),
                 "gmi": float(probe.gmi),
                 "probe_feature_mode": str(extras.get("probe_feature_mode", "")),
+                "probe_position_mode": str(extras.get("probe_position_mode", "")),
+                "probe_source": str(extras.get("probe_source", "")),
                 "tau_frg": float(tau_frg),
                 "tau_gmi": float(tau_gmi),
                 "g_top5_mass": float(extras.get("g_top5_mass", 0.0)),
                 "guidance_mode": extras.get("guidance_mode", ""),
                 "image_start": int(extras.get("image_start", -1)),
                 "image_end": int(extras.get("image_end", -1)),
+                "probe_anchor": str(extras.get("probe_anchor", "")),
+                "probe_anchor_token_idx": int(extras.get("probe_anchor_token_idx", -1)),
+                "baseline_preview_found_anchor": int(bool(extras.get("baseline_preview_found_anchor", False))),
+                "baseline_preview_fallback": int(bool(extras.get("baseline_preview_fallback", False))),
+                "baseline_preview_reusable": int(bool(extras.get("baseline_preview_reusable", False))),
+                "baseline_preview_text": str(extras.get("baseline_preview_text", "")),
                 "late_head_vis_ratio_mean": float(extras.get("attn_stats", {}).get("late_head_vis_ratio_mean", 0.0)),
                 "late_head_vis_ratio_topkmean": float(extras.get("attn_stats", {}).get("late_head_vis_ratio_topkmean", 0.0)),
                 "frg_shared_mean": float(extras.get("attn_stats", {}).get("frg_shared_mean", 0.0)),
@@ -317,6 +333,10 @@ def main() -> None:
             "aggregate_topk": int(args.aggregate_topk),
             "aggregate_lambda": float(args.aggregate_lambda),
             "headset_json": os.path.abspath(args.headset_json) if str(args.headset_json).strip() else "",
+            "probe_position_mode": args.probe_position_mode,
+            "probe_preview_max_new_tokens": int(args.probe_preview_max_new_tokens),
+            "probe_preview_reuse_baseline": bool(args.probe_preview_reuse_baseline),
+            "probe_preview_fallback_to_prompt_last": bool(args.probe_preview_fallback_to_prompt_last),
             "use_gmi": bool(args.use_gmi),
             "max_samples": int(args.max_samples),
         },

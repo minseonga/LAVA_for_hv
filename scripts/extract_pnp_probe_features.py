@@ -79,6 +79,10 @@ def main() -> None:
     ap.add_argument("--aggregate_topk", type=int, default=5)
     ap.add_argument("--aggregate_lambda", type=float, default=1.0)
     ap.add_argument("--headset_json", type=str, default="")
+    ap.add_argument("--probe_position_mode", type=str, default="prompt_last", choices=["prompt_last", "baseline_yesno_preview"])
+    ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
+    ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
+    ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max_samples", type=int, default=-1)
     args = ap.parse_args()
@@ -111,6 +115,10 @@ def main() -> None:
             aggregate_topk=args.aggregate_topk,
             aggregate_lambda=args.aggregate_lambda,
             headset_json=args.headset_json,
+            probe_position_mode=args.probe_position_mode,
+            probe_preview_max_new_tokens=args.probe_preview_max_new_tokens,
+            probe_preview_reuse_baseline=bool(args.probe_preview_reuse_baseline),
+            probe_preview_fallback_to_prompt_last=bool(args.probe_preview_fallback_to_prompt_last),
             seed=args.seed,
         )
     )
@@ -157,6 +165,10 @@ def main() -> None:
             "late_start": int(args.late_start),
             "late_end": int(args.late_end),
             "headset_json": os.path.abspath(args.headset_json) if str(args.headset_json).strip() else "",
+            "probe_position_mode": args.probe_position_mode,
+            "probe_preview_max_new_tokens": int(args.probe_preview_max_new_tokens),
+            "probe_preview_reuse_baseline": bool(args.probe_preview_reuse_baseline),
+            "probe_preview_fallback_to_prompt_last": bool(args.probe_preview_fallback_to_prompt_last),
             "max_samples": int(args.max_samples),
         },
         "counts": {"n_rows": int(len(rows))},

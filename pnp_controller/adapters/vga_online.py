@@ -50,6 +50,10 @@ class VGAOnlineConfig:
     aggregate_topk: int = 5
     aggregate_lambda: float = 1.0
     headset_json: str = ""
+    probe_position_mode: str = "prompt_last"
+    probe_preview_max_new_tokens: int = 3
+    probe_preview_reuse_baseline: bool = True
+    probe_preview_fallback_to_prompt_last: bool = True
     use_gmi: bool = True  # Set False to skip GMI (use FRG-only veto)
     seed: int = 42
 
@@ -235,45 +239,116 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         vl_guidance = entropy / torch.clamp(entropy.sum(), min=1e-8)
         return vl_guidance.to(vis_logits.dtype), "entropy_fallback"
 
-    def probe(self, sample: Any) -> ProbeState:
-        prepared = self._prepare_sample(sample)
-        input_ids = prepared["input_ids"]
-        image_tensor = prepared["image_tensor"]
+    def _normalize_yes_no_anchor(self, text: str) -> Optional[str]:
+        s = str(text or "").strip().lower()
+        if s == "":
+            return None
+        first = s.split(".", 1)[0].replace(",", " ").replace("\n", " ")
+        words = [w.strip().strip("!?;:") for w in first.split() if w.strip() != ""]
+        if "no" in words or "not" in words:
+            return "no"
+        if "yes" in words:
+            return "yes"
+        return None
 
+    def _locate_phrase_token_start(self, token_ids: List[int], phrase: str) -> Optional[int]:
+        seq = [int(x) for x in token_ids]
+        if not seq or str(phrase or "").strip() == "":
+            return None
+
+        cand_ids: List[List[int]] = []
+        seen = set()
+        for raw in (str(phrase), " " + str(phrase)):
+            ids = [int(x) for x in self.tokenizer(raw, add_special_tokens=False).input_ids]
+            if not ids:
+                continue
+            key = tuple(ids)
+            if key in seen:
+                continue
+            seen.add(key)
+            cand_ids.append(ids)
+
+        for ids in cand_ids:
+            width = int(len(ids))
+            for start in range(0, max(0, len(seq) - width + 1)):
+                if seq[start:start + width] == ids:
+                    return int(start)
+
+        for idx, tid in enumerate(seq):
+            piece = self.tokenizer.decode([int(tid)], skip_special_tokens=True).strip().lower()
+            if piece == str(phrase):
+                return int(idx)
+        return None
+
+    def _decode_generated_text(self, output_ids: torch.Tensor, stop_str: str) -> str:
+        output_text = self.tokenizer.batch_decode(output_ids[:, 1:], skip_special_tokens=True)[0]
+        output_text = output_text.split("ASSISTANT:")[-1].strip()
+        if output_text.endswith(stop_str):
+            output_text = output_text[:-len(stop_str)]
+        return output_text.strip()
+
+    def _build_prediction_row(
+        self,
+        sample: Dict[str, Any],
+        prepared: Dict[str, Any],
+        output_text: str,
+        use_add: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "question_id": sample.get("question_id", sample.get("id", sample.get("qid", prepared["sample_id"]))),
+            "question": prepared["question"],
+            "output": str(output_text).strip(),
+            "label": sample.get("label", sample.get("answer", None)),
+            "prompt": prepared["prompt"],
+            "model_id": self.model_name,
+            "image": prepared["image_file"],
+            "image_id": sample.get("image_id", None),
+            "route_mode": "method" if use_add else "baseline",
+        }
+
+    def _run_prompt_prefill(
+        self,
+        input_ids: torch.Tensor,
+        image_tensor: torch.Tensor,
+    ) -> Any:
+        return self.model(
+            input_ids[:, :-1],
+            images=image_tensor.unsqueeze(0),
+            use_cache=True,
+            return_dict=True,
+        )
+
+    def _run_cached_probe_step(
+        self,
+        token_ids: torch.Tensor,
+        past_key_values: Any,
+    ) -> Any:
         with torch.inference_mode():
-            prefill = self.model(
-                input_ids[:, :-1],
-                images=image_tensor.unsqueeze(0),
-                use_cache=True,
-                return_dict=True,
-            )
-            logits = prefill.logits
-            vis_logits = F.softmax(logits[0, 35:611, :], dim=-1).float()
-            vl_guidance, guidance_mode = self._compute_vl_guidance(vis_logits, prepared["object_list"])
-
-            probe_last = self.model(
-                input_ids[:, -1:],
-                attention_mask=torch.ones((1, 1), dtype=torch.long, device=self.device),
-                past_key_values=prefill.past_key_values,
+            return self.model(
+                token_ids,
+                attention_mask=torch.ones((1, int(token_ids.size(1))), dtype=torch.long, device=self.device),
+                past_key_values=past_key_values,
                 use_cache=True,
                 output_attentions=True,
                 return_dict=True,
             )
 
-        image_start, image_end = image_span_from_prompt_input_ids(
-            input_ids=input_ids,
-            image_token_index=int(self.IMAGE_TOKEN_INDEX),
-            image_token_count=int(vis_logits.size(0)),
-        )
-        g_top5_mass = topk_mass(vl_guidance.to(torch.float32), k=5)
+    def _compute_probe_metrics(
+        self,
+        attentions: Any,
+        image_start: int,
+        image_end: int,
+        guidance: torch.Tensor,
+        g_top5_mass: float,
+    ) -> Tuple[float, float, Dict[str, Any]]:
         if str(self.cfg.probe_feature_mode) == "aggregate":
             agg_stats = compute_aggregate_probe_scores(
-                attentions=probe_last.attentions,
+                attentions=attentions,
                 image_start=image_start,
                 image_end=image_end,
                 late_start=int(self.cfg.late_start),
                 late_end=int(self.cfg.late_end),
-                guidance=vl_guidance.to(torch.float32),
+                guidance=guidance.to(torch.float32),
                 topk=int(self.cfg.aggregate_topk),
                 mismatch_lambda=float(self.cfg.aggregate_lambda),
             )
@@ -299,28 +374,141 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                 "e_agg_combo": float(agg_stats["e_agg_combo"]),
                 "topk_guidance_coverage": float(agg_stats["topk_guidance_coverage"]),
             }
-        else:
-            attn_stats = compute_head_attn_vis_ratio_last_row(
-                attentions=probe_last.attentions,
-                image_start=image_start,
-                image_end=image_end,
-                late_start=int(self.cfg.late_start),
-                late_end=int(self.cfg.late_end),
-                faithful_heads_by_layer=self.faithful_heads_by_layer,
-                harmful_heads_by_layer=self.harmful_heads_by_layer,
-            )
-            frg = float(attn_stats["faithful_minus_global_attn"])
-            if bool(self.cfg.use_gmi):
-                gmi = float(
-                    combine_gmi_with_guidance_mass(
-                        faithful_head_attn_mean=float(attn_stats["faithful_head_attn_mean"]),
-                        harmful_head_attn_mean=float(attn_stats["harmful_head_attn_mean"]),
-                        g_top5_mass=float(g_top5_mass),
-                    )
+            return frg, gmi, attn_stats
+
+        attn_stats = compute_head_attn_vis_ratio_last_row(
+            attentions=attentions,
+            image_start=image_start,
+            image_end=image_end,
+            late_start=int(self.cfg.late_start),
+            late_end=int(self.cfg.late_end),
+            faithful_heads_by_layer=self.faithful_heads_by_layer,
+            harmful_heads_by_layer=self.harmful_heads_by_layer,
+        )
+        frg = float(attn_stats["faithful_minus_global_attn"])
+        if bool(self.cfg.use_gmi):
+            gmi = float(
+                combine_gmi_with_guidance_mass(
+                    faithful_head_attn_mean=float(attn_stats["faithful_head_attn_mean"]),
+                    harmful_head_attn_mean=float(attn_stats["harmful_head_attn_mean"]),
+                    g_top5_mass=float(g_top5_mass),
                 )
-            else:
-                # FRG-only mode: skip GMI (no harmful heads needed)
-                gmi = 0.0
+            )
+        else:
+            gmi = 0.0
+        return frg, gmi, attn_stats
+
+    def _probe_prompt_last(
+        self,
+        input_ids: torch.Tensor,
+        prefill: Any,
+        image_start: int,
+        image_end: int,
+        guidance: torch.Tensor,
+        g_top5_mass: float,
+    ) -> Tuple[float, float, Dict[str, Any], Dict[str, Any]]:
+        probe_last = self._run_cached_probe_step(input_ids[:, -1:], prefill.past_key_values)
+        frg, gmi, attn_stats = self._compute_probe_metrics(
+            attentions=probe_last.attentions,
+            image_start=image_start,
+            image_end=image_end,
+            guidance=guidance,
+            g_top5_mass=g_top5_mass,
+        )
+        debug = {
+            "probe_source": "prompt_last",
+            "probe_anchor": "",
+            "probe_anchor_token_idx": -1,
+            "baseline_preview_text": "",
+            "baseline_preview_reusable": False,
+            "baseline_preview_found_anchor": False,
+            "baseline_preview_fallback": False,
+        }
+        return frg, gmi, attn_stats, debug
+
+    def _run_baseline_preview(
+        self,
+        prepared: Dict[str, Any],
+        common_gen_kwargs: Dict[str, Any],
+    ) -> Tuple[List[int], str]:
+        preview_kwargs = dict(common_gen_kwargs)
+        preview_kwargs["use_add"] = False
+        preview_kwargs["max_new_tokens"] = max(1, int(self.cfg.probe_preview_max_new_tokens))
+        with torch.inference_mode():
+            output_ids = self.model.generate(
+                prepared["input_ids"][:, -1:],
+                **preview_kwargs,
+            )
+        preview_ids = [int(x) for x in output_ids[0, 1:].tolist()]
+        preview_text = self._decode_generated_text(output_ids, prepared["stop_str"])
+        return preview_ids, preview_text
+
+    def _probe_baseline_yesno_preview(
+        self,
+        prepared: Dict[str, Any],
+        input_ids: torch.Tensor,
+        prefill: Any,
+        image_start: int,
+        image_end: int,
+        guidance: torch.Tensor,
+        g_top5_mass: float,
+        common_gen_kwargs: Dict[str, Any],
+    ) -> Tuple[Optional[float], Optional[float], Dict[str, Any], Dict[str, Any]]:
+        first_step = self._run_cached_probe_step(input_ids[:, -1:], prefill.past_key_values)
+        preview_ids, preview_text = self._run_baseline_preview(prepared, common_gen_kwargs)
+        anchor_phrase = self._normalize_yes_no_anchor(preview_text)
+        anchor_idx = self._locate_phrase_token_start(preview_ids, anchor_phrase) if anchor_phrase is not None else None
+        debug = {
+            "probe_source": "baseline_yesno_preview",
+            "probe_anchor": str(anchor_phrase or ""),
+            "probe_anchor_token_idx": int(anchor_idx) if anchor_idx is not None else -1,
+            "baseline_preview_text": str(preview_text or ""),
+            "baseline_preview_reusable": bool(
+                bool(self.cfg.probe_preview_reuse_baseline)
+                and str(preview_text or "").strip() != ""
+                and anchor_phrase is not None
+            ),
+            "baseline_preview_found_anchor": bool(anchor_idx is not None),
+            "baseline_preview_fallback": False,
+        }
+        if anchor_idx is None:
+            debug["baseline_preview_fallback"] = True
+            return None, None, {}, debug
+
+        decision_attentions = first_step.attentions
+        past_key_values = first_step.past_key_values
+        for idx in range(int(anchor_idx)):
+            token_tensor = torch.tensor([[int(preview_ids[idx])]], dtype=torch.long, device=self.device)
+            step = self._run_cached_probe_step(token_tensor, past_key_values)
+            past_key_values = step.past_key_values
+            decision_attentions = step.attentions
+
+        frg, gmi, attn_stats = self._compute_probe_metrics(
+            attentions=decision_attentions,
+            image_start=image_start,
+            image_end=image_end,
+            guidance=guidance,
+            g_top5_mass=g_top5_mass,
+        )
+        return frg, gmi, attn_stats, debug
+
+    def probe(self, sample: Any) -> ProbeState:
+        prepared = self._prepare_sample(sample)
+        input_ids = prepared["input_ids"]
+        image_tensor = prepared["image_tensor"]
+
+        with torch.inference_mode():
+            prefill = self._run_prompt_prefill(input_ids=input_ids, image_tensor=image_tensor)
+            logits = prefill.logits
+            vis_logits = F.softmax(logits[0, 35:611, :], dim=-1).float()
+            vl_guidance, guidance_mode = self._compute_vl_guidance(vis_logits, prepared["object_list"])
+
+        image_start, image_end = image_span_from_prompt_input_ids(
+            input_ids=input_ids,
+            image_token_index=int(self.IMAGE_TOKEN_INDEX),
+            image_token_count=int(vis_logits.size(0)),
+        )
+        g_top5_mass = topk_mass(vl_guidance.to(torch.float32), k=5)
 
         common_gen_kwargs = dict(
             images=image_tensor.unsqueeze(0),
@@ -338,16 +526,53 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             max_new_tokens=int(self.cfg.max_gen_len),
             use_cache=True,
         )
+        probe_mode = str(self.cfg.probe_position_mode or "prompt_last").strip().lower()
+        if probe_mode == "baseline_yesno_preview":
+            frg, gmi, attn_stats, probe_debug = self._probe_baseline_yesno_preview(
+                prepared=prepared,
+                input_ids=input_ids,
+                prefill=prefill,
+                image_start=image_start,
+                image_end=image_end,
+                guidance=vl_guidance,
+                g_top5_mass=float(g_top5_mass),
+                common_gen_kwargs=common_gen_kwargs,
+            )
+            if frg is None or gmi is None:
+                if bool(self.cfg.probe_preview_fallback_to_prompt_last):
+                    frg, gmi, attn_stats, prompt_debug = self._probe_prompt_last(
+                        input_ids=input_ids,
+                        prefill=prefill,
+                        image_start=image_start,
+                        image_end=image_end,
+                        guidance=vl_guidance,
+                        g_top5_mass=float(g_top5_mass),
+                    )
+                    probe_debug["probe_source"] = "baseline_yesno_preview->prompt_last_fallback"
+                    probe_debug["baseline_preview_fallback"] = True
+                else:
+                    raise RuntimeError("baseline_yesno_preview probe could not find yes/no anchor and fallback is disabled.")
+        else:
+            frg, gmi, attn_stats, probe_debug = self._probe_prompt_last(
+                input_ids=input_ids,
+                prefill=prefill,
+                image_start=image_start,
+                image_end=image_end,
+                guidance=vl_guidance,
+                g_top5_mass=float(g_top5_mass),
+            )
         extras = {
             "prepared": prepared,
             "common_gen_kwargs": common_gen_kwargs,
             "probe_feature_mode": str(self.cfg.probe_feature_mode),
+            "probe_position_mode": str(self.cfg.probe_position_mode),
             "guidance_mode": guidance_mode,
             "g_top5_mass": float(g_top5_mass),
             "image_start": int(image_start),
             "image_end": int(image_end),
             "attn_stats": attn_stats,
         }
+        extras.update(probe_debug)
         return ProbeState(sample_id=prepared["sample_id"], frg=frg, gmi=gmi, extras=extras)
 
     def _generate(self, sample: Dict[str, Any], probe_state: ProbeState, use_add: bool) -> Dict[str, Any]:
@@ -362,27 +587,17 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                 **gen_kwargs,
             )
 
-        output_text = self.tokenizer.batch_decode(output_ids[:, 1:], skip_special_tokens=True)[0]
-        output_text = output_text.split("ASSISTANT:")[-1].strip()
-        stop_str = prepared["stop_str"]
-        if output_text.endswith(stop_str):
-            output_text = output_text[:-len(stop_str)]
-        output_text = output_text.strip()
-        return {
-            "question_id": sample.get("question_id", sample.get("id", sample.get("qid", prepared["sample_id"]))),
-            "question": prepared["question"],
-            "output": output_text,
-            "label": sample.get("label", sample.get("answer", None)),
-            "prompt": prepared["prompt"],
-            "model_id": self.model_name,
-            "image": prepared["image_file"],
-            "image_id": sample.get("image_id", None),
-            "route_mode": "method" if use_add else "baseline",
-        }
+        output_text = self._decode_generated_text(output_ids, prepared["stop_str"])
+        return self._build_prediction_row(sample=sample, prepared=prepared, output_text=output_text, use_add=use_add)
 
     def predict_base(self, sample: Any, probe_state: ProbeState | None = None) -> Any:
         if probe_state is None:
             probe_state = self.probe(sample)
+        extras = probe_state.extras if probe_state is not None else {}
+        prepared = extras.get("prepared", {})
+        preview_text = str(extras.get("baseline_preview_text", "")).strip()
+        if bool(extras.get("baseline_preview_reusable", False)) and preview_text != "" and isinstance(prepared, dict):
+            return self._build_prediction_row(sample=sample, prepared=prepared, output_text=preview_text, use_add=False)
         return self._generate(sample=sample, probe_state=probe_state, use_add=False)
 
     def predict_method(self, sample: Any, probe_state: ProbeState | None = None) -> Any:

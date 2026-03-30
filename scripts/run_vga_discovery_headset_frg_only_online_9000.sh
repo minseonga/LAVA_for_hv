@@ -29,6 +29,10 @@ HEAD_BALANCING="${HEAD_BALANCING:-simg}"
 ATTN_NORM="${ATTN_NORM:-false}"
 LATE_START="${LATE_START:-16}"
 LATE_END="${LATE_END:-24}"
+PROBE_POSITION_MODE="${PROBE_POSITION_MODE:-baseline_yesno_preview}"
+PROBE_PREVIEW_MAX_NEW_TOKENS="${PROBE_PREVIEW_MAX_NEW_TOKENS:-3}"
+PROBE_PREVIEW_REUSE_BASELINE="${PROBE_PREVIEW_REUSE_BASELINE:-true}"
+PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST="${PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST:-true}"
 SEED="${SEED:-42}"
 MAX_SAMPLES="${MAX_SAMPLES:--1}"
 
@@ -59,6 +63,10 @@ python scripts/run_pnp_hard_veto_online.py \
   --late_start "$LATE_START" \
   --late_end "$LATE_END" \
   --probe_feature_mode static_headset \
+  --probe_position_mode "$PROBE_POSITION_MODE" \
+  --probe_preview_max_new_tokens "$PROBE_PREVIEW_MAX_NEW_TOKENS" \
+  --probe_preview_reuse_baseline "$PROBE_PREVIEW_REUSE_BASELINE" \
+  --probe_preview_fallback_to_prompt_last "$PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST" \
   --headset_json "$HEADSET_JSON" \
   --use_gmi false \
   --seed "$SEED" \
