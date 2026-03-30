@@ -420,6 +420,27 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                 return_dict=True,
             )
 
+    def _run_full_attention_probe(
+        self,
+        mm_embeds: torch.Tensor,
+        attn_mask: torch.Tensor,
+        pos_ids: Optional[torch.Tensor],
+    ) -> Any:
+        kwargs = dict(
+            inputs_embeds=mm_embeds,
+            attention_mask=attn_mask,
+            use_cache=False,
+            output_attentions=True,
+            return_dict=True,
+        )
+        if pos_ids is not None:
+            try:
+                return self.model(position_ids=pos_ids, **kwargs)
+            except TypeError as exc:
+                if "position_ids" not in str(exc):
+                    raise
+        return self.model(**kwargs)
+
     def _compute_probe_metrics(
         self,
         attentions: Any,
@@ -702,13 +723,10 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
 
             vision_pos = torch.where(labels_exp == int(self.IGNORE_INDEX))[0]
             text_pos = torch.where(labels_exp != int(self.IGNORE_INDEX))[0]
-            out = self.model(
-                inputs_embeds=mm_embeds_e,
-                attention_mask=attn_mask_e,
-                position_ids=pos_ids_e,
-                use_cache=False,
-                output_attentions=True,
-                return_dict=True,
+            out = self._run_full_attention_probe(
+                mm_embeds=mm_embeds_e,
+                attn_mask=attn_mask_e,
+                pos_ids=pos_ids_e,
             )
 
         decision_pos = int(dec_pos[int(anchor_idx)].item())
