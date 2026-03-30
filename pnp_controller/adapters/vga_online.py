@@ -426,6 +426,9 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         attn_mask: torch.Tensor,
         pos_ids: Optional[torch.Tensor],
     ) -> Any:
+        backbone = self.model.get_model() if hasattr(self.model, "get_model") else getattr(self.model, "model", None)
+        if backbone is None:
+            raise RuntimeError("Could not resolve language-model backbone for full attention probe.")
         kwargs = dict(
             inputs_embeds=mm_embeds,
             attention_mask=attn_mask,
@@ -435,11 +438,11 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         )
         if pos_ids is not None:
             try:
-                return self.model(position_ids=pos_ids, **kwargs)
+                return backbone(position_ids=pos_ids, **kwargs)
             except TypeError as exc:
                 if "position_ids" not in str(exc):
                     raise
-        return self.model(**kwargs)
+        return backbone(**kwargs)
 
     def _compute_probe_metrics(
         self,
