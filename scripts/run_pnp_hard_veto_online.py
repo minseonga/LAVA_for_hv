@@ -8,6 +8,8 @@ import os
 import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from tqdm import tqdm
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -255,7 +257,7 @@ def main() -> None:
 
     preds: List[Dict[str, Any]] = []
     route_rows: List[Dict[str, Any]] = []
-    for sample in samples:
+    for sample in tqdm(samples, total=len(samples), desc="pnp-online", dynamic_ncols=True):
         probe = adapter.probe(sample)
         veto = bool((probe.frg >= tau_frg) or (probe.gmi >= tau_gmi))
         if veto:
