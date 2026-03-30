@@ -35,7 +35,7 @@ MAX_SAMPLES="${MAX_SAMPLES:--1}"
 mkdir -p "$OUT_DIR"
 cd "$CAL_ROOT"
 
-"$PY_BIN" scripts/run_pnp_hard_veto_online.py \
+python scripts/run_pnp_hard_veto_online.py \
   --backend vga \
   --vga_root "$VGA_ROOT" \
   --model_path "$MODEL_PATH" \

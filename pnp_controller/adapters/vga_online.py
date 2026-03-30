@@ -70,6 +70,19 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         if self.vga_root not in sys.path:
             sys.path.insert(0, self.vga_root)
 
+        # VGA_origin still imports several private bloom/opt helpers that were
+        # removed in newer transformers releases. We never use those codepaths
+        # here, so provide no-op shims before importing llava from VGA_origin.
+        _noop = lambda *a, **kw: a[0] if a else None
+        import transformers.models.bloom.modeling_bloom as _bloom_mod  # type: ignore
+        for _fn in ("_expand_mask", "_make_causal_mask"):
+            if not hasattr(_bloom_mod, _fn):
+                setattr(_bloom_mod, _fn, _noop)
+        import transformers.models.opt.modeling_opt as _opt_mod  # type: ignore
+        for _fn in ("_expand_mask", "_make_causal_mask"):
+            if not hasattr(_opt_mod, _fn):
+                setattr(_opt_mod, _fn, _noop)
+
         from transformers import set_seed  # type: ignore
         from llava.constants import (  # type: ignore
             DEFAULT_IMAGE_TOKEN,
