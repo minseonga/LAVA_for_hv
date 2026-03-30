@@ -200,7 +200,12 @@ def main() -> None:
     ap.add_argument("--aggregate_topk", type=int, default=5)
     ap.add_argument("--aggregate_lambda", type=float, default=1.0)
     ap.add_argument("--headset_json", type=str, default="")
-    ap.add_argument("--probe_position_mode", type=str, default="prompt_last", choices=["prompt_last", "baseline_yesno_preview"])
+    ap.add_argument(
+        "--probe_position_mode",
+        type=str,
+        default="prompt_last",
+        choices=["prompt_last", "baseline_yesno_preview", "baseline_yesno_offline_fullseq"],
+    )
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
@@ -292,6 +297,7 @@ def main() -> None:
                 "image_end": int(extras.get("image_end", -1)),
                 "probe_anchor": str(extras.get("probe_anchor", "")),
                 "probe_anchor_token_idx": int(extras.get("probe_anchor_token_idx", -1)),
+                "probe_decision_pos": int(extras.get("probe_decision_pos", -1)),
                 "baseline_preview_found_anchor": int(bool(extras.get("baseline_preview_found_anchor", False))),
                 "baseline_preview_fallback": int(bool(extras.get("baseline_preview_fallback", False))),
                 "baseline_preview_reusable": int(bool(extras.get("baseline_preview_reusable", False))),

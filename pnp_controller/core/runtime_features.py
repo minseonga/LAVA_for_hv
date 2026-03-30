@@ -139,6 +139,79 @@ def compute_head_attn_vis_ratio_last_row(
     }
 
 
+def compute_head_attn_vis_ratio_at_row(
+    attentions: Sequence[torch.Tensor],
+    decision_pos: int,
+    vision_positions: torch.Tensor,
+    text_positions: torch.Tensor,
+    late_start: int,
+    late_end: int,
+    faithful_heads_by_layer: Mapping[int, Sequence[int]],
+    harmful_heads_by_layer: Mapping[int, Sequence[int]],
+    eps: float = 1e-6,
+) -> Dict[str, float]:
+    faithful_heads_by_layer = normalize_head_map(faithful_heads_by_layer)
+    harmful_heads_by_layer = normalize_head_map(harmful_heads_by_layer)
+
+    global_vals: List[float] = []
+    faithful_vals: List[float] = []
+    harmful_vals: List[float] = []
+
+    per_layer: Dict[str, Dict[str, float]] = {}
+    for layer_idx, attn in enumerate(attentions):
+        if layer_idx < int(late_start) or layer_idx > int(late_end):
+            continue
+        if attn is None:
+            continue
+        if attn.dim() != 4 or int(attn.size(0)) != 1:
+            raise ValueError(f"Expected attention tensor [1,H,Q,K], got {tuple(attn.shape)} at layer {layer_idx}")
+
+        att = attn[0].to(torch.float32)
+        if decision_pos < 0 or decision_pos >= int(att.size(1)):
+            raise ValueError(
+                f"Decision position {int(decision_pos)} exceeds query length {int(att.size(1))} at layer {layer_idx}"
+            )
+        row = att[:, int(decision_pos), :]
+        vis_sum = row[:, vision_positions].sum(dim=-1)
+        if text_positions.numel() > 0:
+            txt_sum = row[:, text_positions].sum(dim=-1)
+        else:
+            txt_sum = torch.zeros_like(vis_sum)
+        vis_ratio = vis_sum / torch.clamp(vis_sum + txt_sum, min=float(eps))
+        vis_ratio_list = [float(x.item()) for x in vis_ratio]
+        global_vals.extend(vis_ratio_list)
+
+        faithful_heads = faithful_heads_by_layer.get(int(layer_idx), [])
+        harmful_heads = harmful_heads_by_layer.get(int(layer_idx), [])
+        for h in faithful_heads:
+            if 0 <= int(h) < len(vis_ratio_list):
+                faithful_vals.append(vis_ratio_list[int(h)])
+        for h in harmful_heads:
+            if 0 <= int(h) < len(vis_ratio_list):
+                harmful_vals.append(vis_ratio_list[int(h)])
+
+        per_layer[str(layer_idx)] = {
+            "global_mean": _mean(vis_ratio_list),
+            "faithful_mean": _mean(vis_ratio_list[int(h)] for h in faithful_heads if 0 <= int(h) < len(vis_ratio_list)),
+            "harmful_mean": _mean(vis_ratio_list[int(h)] for h in harmful_heads if 0 <= int(h) < len(vis_ratio_list)),
+        }
+
+    faithful_mean = _mean(faithful_vals)
+    harmful_mean = _mean(harmful_vals)
+    global_mean = _mean(global_vals)
+    return {
+        "faithful_head_attn_mean": faithful_mean,
+        "harmful_head_attn_mean": harmful_mean,
+        "global_late_head_attn_mean": global_mean,
+        "faithful_minus_global_attn": float(faithful_mean - global_mean),
+        "guidance_mismatch_score": float((harmful_mean - faithful_mean)),
+        "n_global_points": float(len(global_vals)),
+        "n_faithful_points": float(len(faithful_vals)),
+        "n_harmful_points": float(len(harmful_vals)),
+        "per_layer": per_layer,
+    }
+
+
 def combine_gmi_with_guidance_mass(
     faithful_head_attn_mean: float,
     harmful_head_attn_mean: float,
@@ -193,6 +266,75 @@ def compute_mean_image_attention_distribution_last_row(
         }
 
     k_img = max(0, int(image_end) - int(image_start))
+    if alpha_rows:
+        alpha_mean = torch.cat(alpha_rows, dim=0).mean(dim=0)
+    elif k_img > 0:
+        alpha_mean = torch.full((k_img,), 1.0 / float(k_img), dtype=torch.float32)
+    else:
+        alpha_mean = torch.zeros((0,), dtype=torch.float32)
+
+    if alpha_mean.numel() > 0:
+        alpha_mean = alpha_mean / torch.clamp(alpha_mean.sum(), min=float(eps))
+
+    return {
+        "alpha_img_mean": alpha_mean,
+        "late_head_vis_ratio_mean": _mean(vis_ratio_vals),
+        "late_head_vis_ratio_topkmean": _topk_mean(vis_ratio_vals, k_ratio=0.2),
+        "late_head_count": float(len(vis_ratio_vals)),
+        "per_layer": per_layer,
+    }
+
+
+def compute_mean_image_attention_distribution_at_row(
+    attentions: Sequence[torch.Tensor],
+    decision_pos: int,
+    vision_positions: torch.Tensor,
+    text_positions: torch.Tensor,
+    late_start: int,
+    late_end: int,
+    eps: float = 1e-6,
+) -> Dict[str, object]:
+    alpha_rows: List[torch.Tensor] = []
+    vis_ratio_vals: List[float] = []
+    per_layer: Dict[str, Dict[str, float]] = {}
+
+    for layer_idx, attn in enumerate(attentions):
+        if layer_idx < int(late_start) or layer_idx > int(late_end):
+            continue
+        if attn is None:
+            continue
+        if attn.dim() != 4 or int(attn.size(0)) != 1:
+            raise ValueError(f"Expected attention tensor [1,H,Q,K], got {tuple(attn.shape)} at layer {layer_idx}")
+
+        att = attn[0].to(torch.float32)
+        if decision_pos < 0 or decision_pos >= int(att.size(1)):
+            raise ValueError(
+                f"Decision position {int(decision_pos)} exceeds query length {int(att.size(1))} at layer {layer_idx}"
+            )
+        row = att[:, int(decision_pos), :]
+        img = row[:, vision_positions]
+        img_mass = img.sum(dim=-1)
+        if text_positions.numel() > 0:
+            txt_mass = row[:, text_positions].sum(dim=-1)
+        else:
+            txt_mass = torch.zeros_like(img_mass)
+        total_mass = img_mass + txt_mass
+        vis_ratio = img_mass / torch.clamp(total_mass, min=float(eps))
+        vis_ratio_list = [float(x.item()) for x in vis_ratio]
+        vis_ratio_vals.extend(vis_ratio_list)
+
+        valid = img_mass > float(eps)
+        n_valid = int(valid.sum().item())
+        if n_valid > 0:
+            alpha_img = img[valid] / torch.clamp(img_mass[valid].unsqueeze(-1), min=float(eps))
+            alpha_rows.append(alpha_img)
+        per_layer[str(layer_idx)] = {
+            "global_mean_vis_ratio": _mean(vis_ratio_list),
+            "valid_head_fraction": float(n_valid / max(1, int(img.size(0)))),
+            "n_valid_heads": float(n_valid),
+        }
+
+    k_img = int(vision_positions.numel())
     if alpha_rows:
         alpha_mean = torch.cat(alpha_rows, dim=0).mean(dim=0)
     elif k_img > 0:
@@ -283,6 +425,56 @@ def compute_aggregate_probe_scores(
         attentions=attentions,
         image_start=image_start,
         image_end=image_end,
+        late_start=late_start,
+        late_end=late_end,
+        eps=eps,
+    )
+    alpha_img_mean = agg["alpha_img_mean"]
+    guidance = guidance.to(torch.float32).flatten()
+    if alpha_img_mean.numel() != guidance.numel():
+        raise ValueError(
+            f"Guidance/image attention size mismatch: {int(alpha_img_mean.numel())} vs {int(guidance.numel())}"
+        )
+    if guidance.numel() > 0:
+        guidance = guidance / torch.clamp(guidance.sum(), min=float(eps))
+
+    c_agg_cos = cosine_mismatch(alpha_img_mean, guidance, eps=eps)
+    c_agg_ip = inner_product_risk(alpha_img_mean, guidance, eps=eps)
+    topk_cov = topk_guidance_coverage(alpha_img_mean, guidance, k=topk)
+    e_agg_js = js_divergence(alpha_img_mean, guidance, eps=eps)
+    e_agg_combo = float(c_agg_cos + float(mismatch_lambda) * (1.0 - topk_cov))
+    frg_shared_mean = float(1.0 - float(agg["late_head_vis_ratio_mean"]))
+    frg_shared_topk = float(1.0 - float(agg["late_head_vis_ratio_topkmean"]))
+
+    return {
+        **agg,
+        "frg_shared_mean": float(frg_shared_mean),
+        "frg_shared_topk": float(frg_shared_topk),
+        "c_agg_cos": float(c_agg_cos),
+        "c_agg_ip": float(c_agg_ip),
+        "e_agg_js": float(e_agg_js),
+        "e_agg_combo": float(e_agg_combo),
+        "topk_guidance_coverage": float(topk_cov),
+    }
+
+
+def compute_aggregate_probe_scores_at_row(
+    attentions: Sequence[torch.Tensor],
+    decision_pos: int,
+    vision_positions: torch.Tensor,
+    text_positions: torch.Tensor,
+    late_start: int,
+    late_end: int,
+    guidance: torch.Tensor,
+    topk: int = 5,
+    mismatch_lambda: float = 1.0,
+    eps: float = 1e-6,
+) -> Dict[str, object]:
+    agg = compute_mean_image_attention_distribution_at_row(
+        attentions=attentions,
+        decision_pos=decision_pos,
+        vision_positions=vision_positions,
+        text_positions=text_positions,
         late_start=late_start,
         late_end=late_end,
         eps=eps,

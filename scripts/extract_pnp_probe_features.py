@@ -79,7 +79,12 @@ def main() -> None:
     ap.add_argument("--aggregate_topk", type=int, default=5)
     ap.add_argument("--aggregate_lambda", type=float, default=1.0)
     ap.add_argument("--headset_json", type=str, default="")
-    ap.add_argument("--probe_position_mode", type=str, default="prompt_last", choices=["prompt_last", "baseline_yesno_preview"])
+    ap.add_argument(
+        "--probe_position_mode",
+        type=str,
+        default="prompt_last",
+        choices=["prompt_last", "baseline_yesno_preview", "baseline_yesno_offline_fullseq"],
+    )
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)

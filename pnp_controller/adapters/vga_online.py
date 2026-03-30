@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import sys
@@ -13,8 +14,10 @@ from PIL import Image
 
 from pnp_controller.core.runtime_features import (
     compute_aggregate_probe_scores,
+    compute_aggregate_probe_scores_at_row,
     combine_gmi_with_guidance_mass,
     compute_head_attn_vis_ratio_last_row,
+    compute_head_attn_vis_ratio_at_row,
     image_span_from_prompt_input_ids,
     topk_mass,
 )
@@ -92,6 +95,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             DEFAULT_IMAGE_TOKEN,
             DEFAULT_IM_END_TOKEN,
             DEFAULT_IM_START_TOKEN,
+            IGNORE_INDEX,
             IMAGE_TOKEN_INDEX,
         )
         from llava.conversation import SeparatorStyle, conv_templates  # type: ignore
@@ -106,6 +110,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         self.DEFAULT_IMAGE_TOKEN = DEFAULT_IMAGE_TOKEN
         self.DEFAULT_IM_START_TOKEN = DEFAULT_IM_START_TOKEN
         self.DEFAULT_IM_END_TOKEN = DEFAULT_IM_END_TOKEN
+        self.IGNORE_INDEX = IGNORE_INDEX
         self.IMAGE_TOKEN_INDEX = IMAGE_TOKEN_INDEX
         self.SeparatorStyle = SeparatorStyle
         self.conv_templates = conv_templates
@@ -208,6 +213,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             "sample_id": self._sample_id(sample),
             "question": question,
             "image_file": image_file,
+            "image_size": image.size,
             "prompt": prompt,
             "stop_str": stop_str,
             "input_ids": input_ids,
@@ -250,6 +256,23 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         if "yes" in words:
             return "yes"
         return None
+
+    def _choose_cont_ids(self, text: str) -> List[int]:
+        raw = str(text or "")
+        if raw.strip() == "":
+            return []
+        cands = [raw, " " + raw]
+        best: List[int] = []
+        best_score = -1.0
+        target = " ".join(raw.strip().lower().split())
+        for s in cands:
+            ids = [int(x) for x in self.tokenizer(s, add_special_tokens=False).input_ids]
+            dec = self.tokenizer.decode(ids, skip_special_tokens=True)
+            score = difflib.SequenceMatcher(None, target, " ".join(dec.strip().lower().split())).ratio()
+            if score > best_score:
+                best = ids
+                best_score = float(score)
+        return best
 
     def _locate_phrase_token_start(self, token_ids: List[int], phrase: str) -> Optional[int]:
         seq = [int(x) for x in token_ids]
@@ -318,6 +341,28 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             return_dict=True,
         )
 
+    def _find_cont_label_positions(self, labels_expanded: torch.Tensor, cont_ids: List[int]) -> Optional[torch.Tensor]:
+        if labels_expanded.ndim != 1:
+            return None
+        tlen = int(len(cont_ids))
+        if tlen <= 0:
+            return None
+        valid_pos = torch.where(labels_expanded != int(self.IGNORE_INDEX))[0]
+        if int(valid_pos.numel()) < tlen:
+            return None
+
+        tail_pos = valid_pos[-tlen:]
+        tail_ids = labels_expanded[tail_pos].tolist()
+        if [int(x) for x in tail_ids] == [int(x) for x in cont_ids]:
+            return tail_pos
+
+        valid_ids = labels_expanded[valid_pos].tolist()
+        target = [int(x) for x in cont_ids]
+        for start in range(0, int(len(valid_ids) - tlen + 1)):
+            if [int(x) for x in valid_ids[start : start + tlen]] == target:
+                return valid_pos[start : start + tlen]
+        return None
+
     def _run_cached_probe_step(
         self,
         token_ids: torch.Tensor,
@@ -380,6 +425,74 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             attentions=attentions,
             image_start=image_start,
             image_end=image_end,
+            late_start=int(self.cfg.late_start),
+            late_end=int(self.cfg.late_end),
+            faithful_heads_by_layer=self.faithful_heads_by_layer,
+            harmful_heads_by_layer=self.harmful_heads_by_layer,
+        )
+        frg = float(attn_stats["faithful_minus_global_attn"])
+        if bool(self.cfg.use_gmi):
+            gmi = float(
+                combine_gmi_with_guidance_mass(
+                    faithful_head_attn_mean=float(attn_stats["faithful_head_attn_mean"]),
+                    harmful_head_attn_mean=float(attn_stats["harmful_head_attn_mean"]),
+                    g_top5_mass=float(g_top5_mass),
+                )
+            )
+        else:
+            gmi = 0.0
+        return frg, gmi, attn_stats
+
+    def _compute_probe_metrics_at_decision_row(
+        self,
+        attentions: Any,
+        decision_pos: int,
+        vision_positions: torch.Tensor,
+        text_positions: torch.Tensor,
+        guidance: torch.Tensor,
+        g_top5_mass: float,
+    ) -> Tuple[float, float, Dict[str, Any]]:
+        if str(self.cfg.probe_feature_mode) == "aggregate":
+            agg_stats = compute_aggregate_probe_scores_at_row(
+                attentions=attentions,
+                decision_pos=int(decision_pos),
+                vision_positions=vision_positions,
+                text_positions=text_positions,
+                late_start=int(self.cfg.late_start),
+                late_end=int(self.cfg.late_end),
+                guidance=guidance.to(torch.float32),
+                topk=int(self.cfg.aggregate_topk),
+                mismatch_lambda=float(self.cfg.aggregate_lambda),
+            )
+            frg_key = str(self.cfg.aggregate_frg_metric)
+            gmi_key = str(self.cfg.aggregate_gmi_metric)
+            if frg_key not in agg_stats:
+                raise KeyError(f"Unknown aggregate FRG metric: {frg_key}")
+            if gmi_key not in agg_stats:
+                raise KeyError(f"Unknown aggregate GMI metric: {gmi_key}")
+            frg = float(agg_stats[frg_key])
+            gmi = float(agg_stats[gmi_key])
+            attn_stats = {
+                "aggregate_mode": True,
+                "alpha_img_mean": agg_stats["alpha_img_mean"].tolist(),
+                "late_head_vis_ratio_mean": float(agg_stats["late_head_vis_ratio_mean"]),
+                "late_head_vis_ratio_topkmean": float(agg_stats["late_head_vis_ratio_topkmean"]),
+                "late_head_count": float(agg_stats["late_head_count"]),
+                "frg_shared_mean": float(agg_stats["frg_shared_mean"]),
+                "frg_shared_topk": float(agg_stats["frg_shared_topk"]),
+                "c_agg_cos": float(agg_stats["c_agg_cos"]),
+                "c_agg_ip": float(agg_stats["c_agg_ip"]),
+                "e_agg_js": float(agg_stats["e_agg_js"]),
+                "e_agg_combo": float(agg_stats["e_agg_combo"]),
+                "topk_guidance_coverage": float(agg_stats["topk_guidance_coverage"]),
+            }
+            return frg, gmi, attn_stats
+
+        attn_stats = compute_head_attn_vis_ratio_at_row(
+            attentions=attentions,
+            decision_pos=int(decision_pos),
+            vision_positions=vision_positions,
+            text_positions=text_positions,
             late_start=int(self.cfg.late_start),
             late_end=int(self.cfg.late_end),
             faithful_heads_by_layer=self.faithful_heads_by_layer,
@@ -492,6 +605,90 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         )
         return frg, gmi, attn_stats, debug
 
+    def _probe_baseline_yesno_offline_fullseq(
+        self,
+        prepared: Dict[str, Any],
+        input_ids: torch.Tensor,
+        guidance: torch.Tensor,
+        g_top5_mass: float,
+        common_gen_kwargs: Dict[str, Any],
+    ) -> Tuple[Optional[float], Optional[float], Dict[str, Any], Dict[str, Any]]:
+        preview_ids, preview_text = self._run_baseline_preview(prepared, common_gen_kwargs)
+        anchor_phrase = self._normalize_yes_no_anchor(preview_text)
+        cont_ids = self._choose_cont_ids(preview_text)
+        anchor_idx = self._locate_phrase_token_start(cont_ids, anchor_phrase) if anchor_phrase is not None else None
+        preview_reusable = bool(
+            bool(self.cfg.probe_preview_reuse_baseline)
+            and len(preview_ids) >= int(self.cfg.max_gen_len)
+            and str(preview_text or "").strip() != ""
+        )
+        debug = {
+            "probe_source": "baseline_yesno_offline_fullseq",
+            "probe_anchor": str(anchor_phrase or ""),
+            "probe_anchor_token_idx": int(anchor_idx) if anchor_idx is not None else -1,
+            "baseline_preview_text": str(preview_text or ""),
+            "baseline_preview_reusable": preview_reusable,
+            "baseline_preview_found_anchor": bool(anchor_idx is not None),
+            "baseline_preview_fallback": False,
+        }
+        if anchor_phrase is None or not cont_ids:
+            debug["baseline_preview_fallback"] = True
+            return None, None, {}, debug
+        if anchor_idx is None:
+            anchor_idx = 0
+            debug["probe_anchor_token_idx"] = 0
+
+        cont_t = torch.tensor([cont_ids], dtype=torch.long, device=self.device)
+        full_ids = torch.cat([input_ids, cont_t], dim=1)
+
+        with torch.inference_mode():
+            base_attn = torch.ones_like(full_ids, dtype=torch.long, device=self.device)
+            _, pos_ids_e, attn_mask_e, _, mm_embeds_e, labels_e = self.model.prepare_inputs_labels_for_multimodal(
+                full_ids,
+                None,
+                base_attn,
+                None,
+                full_ids,
+                prepared["image_tensor"].unsqueeze(0),
+                [prepared["image_size"]],
+            )
+            if mm_embeds_e is None or labels_e is None:
+                debug["baseline_preview_fallback"] = True
+                return None, None, {}, debug
+
+            labels_exp = labels_e[0]
+            cont_label_pos = self._find_cont_label_positions(labels_exp, cont_ids)
+            if cont_label_pos is None or int(cont_label_pos.numel()) != int(len(cont_ids)):
+                debug["baseline_preview_fallback"] = True
+                return None, None, {}, debug
+            dec_pos = cont_label_pos - 1
+            if int(dec_pos.min().item()) < 0:
+                debug["baseline_preview_fallback"] = True
+                return None, None, {}, debug
+
+            vision_pos = torch.where(labels_exp == int(self.IGNORE_INDEX))[0]
+            text_pos = torch.where(labels_exp != int(self.IGNORE_INDEX))[0]
+            out = self.model(
+                inputs_embeds=mm_embeds_e,
+                attention_mask=attn_mask_e,
+                position_ids=pos_ids_e,
+                use_cache=False,
+                output_attentions=True,
+                return_dict=True,
+            )
+
+        decision_pos = int(dec_pos[int(anchor_idx)].item())
+        debug["probe_decision_pos"] = int(decision_pos)
+        frg, gmi, attn_stats = self._compute_probe_metrics_at_decision_row(
+            attentions=out.attentions,
+            decision_pos=decision_pos,
+            vision_positions=vision_pos,
+            text_positions=text_pos,
+            guidance=guidance,
+            g_top5_mass=g_top5_mass,
+        )
+        return frg, gmi, attn_stats, debug
+
     def probe(self, sample: Any) -> ProbeState:
         prepared = self._prepare_sample(sample)
         input_ids = prepared["input_ids"]
@@ -552,6 +749,28 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                     probe_debug["baseline_preview_fallback"] = True
                 else:
                     raise RuntimeError("baseline_yesno_preview probe could not find yes/no anchor and fallback is disabled.")
+        elif probe_mode == "baseline_yesno_offline_fullseq":
+            frg, gmi, attn_stats, probe_debug = self._probe_baseline_yesno_offline_fullseq(
+                prepared=prepared,
+                input_ids=input_ids,
+                guidance=vl_guidance,
+                g_top5_mass=float(g_top5_mass),
+                common_gen_kwargs=common_gen_kwargs,
+            )
+            if frg is None or gmi is None:
+                if bool(self.cfg.probe_preview_fallback_to_prompt_last):
+                    frg, gmi, attn_stats, prompt_debug = self._probe_prompt_last(
+                        input_ids=input_ids,
+                        prefill=prefill,
+                        image_start=image_start,
+                        image_end=image_end,
+                        guidance=vl_guidance,
+                        g_top5_mass=float(g_top5_mass),
+                    )
+                    probe_debug["probe_source"] = "baseline_yesno_offline_fullseq->prompt_last_fallback"
+                    probe_debug["baseline_preview_fallback"] = True
+                else:
+                    raise RuntimeError("baseline_yesno_offline_fullseq probe failed and fallback is disabled.")
         else:
             frg, gmi, attn_stats, probe_debug = self._probe_prompt_last(
                 input_ids=input_ids,
