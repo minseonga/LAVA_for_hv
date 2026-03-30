@@ -341,6 +341,48 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             return_dict=True,
         )
 
+    def _prepare_multimodal_expanded_sequence(
+        self,
+        full_ids: torch.Tensor,
+        image_tensor: torch.Tensor,
+        image_size: Tuple[int, int],
+    ) -> Tuple[Optional[torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor]:
+        base_attn = torch.ones_like(full_ids, dtype=torch.long, device=self.device)
+        fn = self.model.prepare_inputs_labels_for_multimodal
+        try:
+            packed = fn(
+                full_ids,
+                None,
+                base_attn,
+                None,
+                full_ids,
+                image_tensor.unsqueeze(0),
+                [image_size],
+            )
+        except TypeError as new_sig_exc:
+            try:
+                packed = fn(
+                    full_ids,
+                    base_attn,
+                    None,
+                    full_ids,
+                    image_tensor.unsqueeze(0),
+                )
+            except TypeError:
+                raise new_sig_exc
+            if not isinstance(packed, tuple) or len(packed) != 5:
+                raise RuntimeError("Unexpected legacy prepare_inputs_labels_for_multimodal return shape.")
+            _, attn_mask_e, _, mm_embeds_e, labels_e = packed
+            pos_ids_e = None
+        else:
+            if not isinstance(packed, tuple) or len(packed) != 6:
+                raise RuntimeError("Unexpected prepare_inputs_labels_for_multimodal return shape.")
+            _, pos_ids_e, attn_mask_e, _, mm_embeds_e, labels_e = packed
+
+        if mm_embeds_e is None or labels_e is None or attn_mask_e is None:
+            raise RuntimeError("prepare_inputs_labels_for_multimodal did not return expected multimodal tensors.")
+        return pos_ids_e, attn_mask_e, mm_embeds_e, labels_e
+
     def _find_cont_label_positions(self, labels_expanded: torch.Tensor, cont_ids: List[int]) -> Optional[torch.Tensor]:
         if labels_expanded.ndim != 1:
             return None
@@ -642,19 +684,11 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         full_ids = torch.cat([input_ids, cont_t], dim=1)
 
         with torch.inference_mode():
-            base_attn = torch.ones_like(full_ids, dtype=torch.long, device=self.device)
-            _, pos_ids_e, attn_mask_e, _, mm_embeds_e, labels_e = self.model.prepare_inputs_labels_for_multimodal(
-                full_ids,
-                None,
-                base_attn,
-                None,
-                full_ids,
-                prepared["image_tensor"].unsqueeze(0),
-                [prepared["image_size"]],
+            pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
+                full_ids=full_ids,
+                image_tensor=prepared["image_tensor"],
+                image_size=prepared["image_size"],
             )
-            if mm_embeds_e is None or labels_e is None:
-                debug["baseline_preview_fallback"] = True
-                return None, None, {}, debug
 
             labels_exp = labels_e[0]
             cont_label_pos = self._find_cont_label_positions(labels_exp, cont_ids)
