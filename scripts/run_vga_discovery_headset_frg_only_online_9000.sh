@@ -2,7 +2,6 @@
 set -euo pipefail
 
 CAL_ROOT="${CAL_ROOT:-/home/kms/LLaVA_calibration}"
-PY_BIN="${PY_BIN:-/home/kms/miniconda3/envs/vocot/bin/python}"
 VGA_ROOT="${VGA_ROOT:-/home/kms/VGA_origin}"
 
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
@@ -10,8 +9,29 @@ IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
 QUESTION_FILE="${QUESTION_FILE:-$CAL_ROOT/experiments/pope_full_9000/pope_9000_q_with_object.jsonl}"
 GT_CSV="${GT_CSV:-$CAL_ROOT/experiments/pope_full_9000/pope_9000_gt.csv}"
 HEADSET_JSON="${HEADSET_JSON:-$CAL_ROOT/experiments/pope_discovery/discovery_headset.json}"
-CONTROLLER_SUMMARY_JSON="${CONTROLLER_SUMMARY_JSON:-$CAL_ROOT/experiments/pope_discovery/tau_c_calibration_adversarial/controller/summary.json}"
 OUT_DIR="${OUT_DIR:-$CAL_ROOT/experiments/pope_full_9000/vga_discovery_headset_frg_only_online_9000}"
+
+ONLINE_PROBE_CONTROLLER_SUMMARY_JSON="$CAL_ROOT/experiments/pope_discovery/tau_c_calibration_adversarial/controller_online_probe/summary.json"
+OFFLINE_CONTROLLER_SUMMARY_JSON="$CAL_ROOT/experiments/pope_discovery/tau_c_calibration_adversarial/controller/summary.json"
+TAU_SOURCE="${TAU_SOURCE:-online_probe}"
+if [[ -z "${CONTROLLER_SUMMARY_JSON:-}" ]]; then
+  case "$TAU_SOURCE" in
+    offline)
+      CONTROLLER_SUMMARY_JSON="$OFFLINE_CONTROLLER_SUMMARY_JSON"
+      ;;
+    online_probe)
+      if [[ -f "$ONLINE_PROBE_CONTROLLER_SUMMARY_JSON" ]]; then
+        CONTROLLER_SUMMARY_JSON="$ONLINE_PROBE_CONTROLLER_SUMMARY_JSON"
+      else
+        CONTROLLER_SUMMARY_JSON="$OFFLINE_CONTROLLER_SUMMARY_JSON"
+      fi
+      ;;
+    *)
+      echo "[error] unsupported TAU_SOURCE=$TAU_SOURCE (expected offline or online_probe)" >&2
+      exit 1
+      ;;
+  esac
+fi
 
 CONV_MODE="${CONV_MODE:-llava_v1}"
 DEVICE="${DEVICE:-cuda}"
@@ -30,6 +50,7 @@ ATTN_NORM="${ATTN_NORM:-false}"
 LATE_START="${LATE_START:-16}"
 LATE_END="${LATE_END:-24}"
 PROBE_POSITION_MODE="${PROBE_POSITION_MODE:-baseline_yesno_offline_fullseq}"
+PROBE_BRANCH_SOURCE="${PROBE_BRANCH_SOURCE:-baseline_output}"
 PROBE_PREVIEW_MAX_NEW_TOKENS="${PROBE_PREVIEW_MAX_NEW_TOKENS:-3}"
 PROBE_PREVIEW_REUSE_BASELINE="${PROBE_PREVIEW_REUSE_BASELINE:-true}"
 PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST="${PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST:-true}"
@@ -64,6 +85,7 @@ python scripts/run_pnp_hard_veto_online.py \
   --late_end "$LATE_END" \
   --probe_feature_mode static_headset \
   --probe_position_mode "$PROBE_POSITION_MODE" \
+  --probe_branch_source "$PROBE_BRANCH_SOURCE" \
   --probe_preview_max_new_tokens "$PROBE_PREVIEW_MAX_NEW_TOKENS" \
   --probe_preview_reuse_baseline "$PROBE_PREVIEW_REUSE_BASELINE" \
   --probe_preview_fallback_to_prompt_last "$PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST" \

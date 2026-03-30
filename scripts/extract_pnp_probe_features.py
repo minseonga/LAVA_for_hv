@@ -26,6 +26,17 @@ def load_jsonl(path: str) -> List[Dict[str, Any]]:
     return out
 
 
+def build_branch_text_map(path: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for row in load_jsonl(path):
+        sid = row.get("question_id", row.get("id", row.get("qid", None)))
+        if sid is None:
+            continue
+        text = str(row.get("output", row.get("text", ""))).strip()
+        out[str(sid)] = text
+    return out
+
+
 def write_csv(path: str, rows: List[Dict[str, Any]]) -> None:
     if not rows:
         with open(path, "w", encoding="utf-8") as f:
@@ -85,6 +96,13 @@ def main() -> None:
         default="prompt_last",
         choices=["prompt_last", "baseline_yesno_preview", "baseline_yesno_offline_fullseq"],
     )
+    ap.add_argument(
+        "--probe_branch_source",
+        type=str,
+        default="preview",
+        choices=["preview", "baseline_output", "baseline_jsonl"],
+    )
+    ap.add_argument("--branch_text_jsonl", type=str, default="")
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
@@ -121,6 +139,7 @@ def main() -> None:
             aggregate_lambda=args.aggregate_lambda,
             headset_json=args.headset_json,
             probe_position_mode=args.probe_position_mode,
+            probe_branch_source=args.probe_branch_source,
             probe_preview_max_new_tokens=args.probe_preview_max_new_tokens,
             probe_preview_reuse_baseline=bool(args.probe_preview_reuse_baseline),
             probe_preview_fallback_to_prompt_last=bool(args.probe_preview_fallback_to_prompt_last),
@@ -131,10 +150,23 @@ def main() -> None:
     samples = load_jsonl(args.question_file)
     if int(args.max_samples) > 0:
         samples = samples[: int(args.max_samples)]
+    branch_text_map: Dict[str, str] = {}
+    if str(args.branch_text_jsonl).strip():
+        branch_text_map = build_branch_text_map(args.branch_text_jsonl)
 
     rows: List[Dict[str, Any]] = []
     for sample in samples:
-        probe = adapter.probe(sample)
+        baseline_pred = None
+        branch_source = str(args.probe_branch_source).strip().lower()
+        if branch_source == "baseline_output":
+            baseline_pred = adapter.predict_base_direct(sample)
+            probe = adapter.probe(sample, branch_text=str(baseline_pred.get("output", "")))
+        elif branch_source == "baseline_jsonl":
+            sid = str(sample.get("question_id", sample.get("id", sample.get("qid", "")))).strip()
+            branch_text = str(branch_text_map.get(sid, "")).strip()
+            probe = adapter.probe(sample, branch_text=branch_text)
+        else:
+            probe = adapter.probe(sample)
         extras = probe.extras
         attn_stats = extras.get("attn_stats", {}) if isinstance(extras, dict) else {}
         row = {
@@ -142,6 +174,18 @@ def main() -> None:
             "frg": float(probe.frg),
             "gmi": float(probe.gmi),
             "probe_feature_mode": str(extras.get("probe_feature_mode", "")),
+            "probe_position_mode": str(extras.get("probe_position_mode", "")),
+            "probe_branch_source": str(extras.get("probe_branch_source", "")),
+            "probe_source": str(extras.get("probe_source", "")),
+            "probe_impl": str(extras.get("probe_impl", "")),
+            "probe_impl_error": str(extras.get("probe_impl_error", "")),
+            "probe_branch_text": str(extras.get("probe_branch_text", "")),
+            "probe_anchor": str(extras.get("probe_anchor", "")),
+            "probe_anchor_token_idx": int(extras.get("probe_anchor_token_idx", -1)),
+            "probe_decision_pos": int(extras.get("probe_decision_pos", -1)),
+            "baseline_preview_reusable": int(bool(extras.get("baseline_preview_reusable", False))),
+            "baseline_preview_found_anchor": int(bool(extras.get("baseline_preview_found_anchor", False))),
+            "baseline_preview_fallback": int(bool(extras.get("baseline_preview_fallback", False))),
             "guidance_mode": extras.get("guidance_mode", ""),
             "g_top5_mass": float(extras.get("g_top5_mass", 0.0)),
             "late_head_vis_ratio_mean": float(attn_stats.get("late_head_vis_ratio_mean", 0.0)),
@@ -158,10 +202,15 @@ def main() -> None:
 
     csv_path = os.path.join(args.out_dir, "probe_features.csv")
     write_csv(csv_path, rows)
+    probe_impl_counts: Dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("probe_impl", "") or "")
+        probe_impl_counts[key] = int(probe_impl_counts.get(key, 0)) + 1
     summary = {
         "inputs": {
             "backend": args.backend,
             "question_file": os.path.abspath(args.question_file),
+            "branch_text_jsonl": os.path.abspath(args.branch_text_jsonl) if str(args.branch_text_jsonl).strip() else "",
             "probe_feature_mode": args.probe_feature_mode,
             "aggregate_frg_metric": args.aggregate_frg_metric,
             "aggregate_gmi_metric": args.aggregate_gmi_metric,
@@ -171,12 +220,16 @@ def main() -> None:
             "late_end": int(args.late_end),
             "headset_json": os.path.abspath(args.headset_json) if str(args.headset_json).strip() else "",
             "probe_position_mode": args.probe_position_mode,
+            "probe_branch_source": args.probe_branch_source,
             "probe_preview_max_new_tokens": int(args.probe_preview_max_new_tokens),
             "probe_preview_reuse_baseline": bool(args.probe_preview_reuse_baseline),
             "probe_preview_fallback_to_prompt_last": bool(args.probe_preview_fallback_to_prompt_last),
             "max_samples": int(args.max_samples),
         },
-        "counts": {"n_rows": int(len(rows))},
+        "counts": {
+            "n_rows": int(len(rows)),
+            "probe_impl_counts": probe_impl_counts,
+        },
         "outputs": {"probe_features_csv": csv_path},
     }
     summary_path = os.path.join(args.out_dir, "summary.json")
@@ -185,7 +238,17 @@ def main() -> None:
 
     print("[saved]", csv_path)
     print("[saved]", summary_path)
-    print("[summary]", json.dumps({"n_rows": len(rows), "probe_feature_mode": args.probe_feature_mode}, ensure_ascii=False))
+    print(
+        "[summary]",
+        json.dumps(
+            {
+                "n_rows": len(rows),
+                "probe_feature_mode": args.probe_feature_mode,
+                "probe_impl_counts": probe_impl_counts,
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 
 if __name__ == "__main__":

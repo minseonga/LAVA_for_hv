@@ -2,7 +2,6 @@
 set -euo pipefail
 
 CAL_ROOT="${CAL_ROOT:-/home/kms/LLaVA_calibration}"
-PY_BIN="${PY_BIN:-/home/kms/miniconda3/envs/vocot/bin/python}"
 
 POPE_ROOT="${POPE_ROOT:-$CAL_ROOT/experiments/pope_full_9000}"
 FEATURE_INPUT_ROOT="${FEATURE_INPUT_ROOT:-$POPE_ROOT/full9000_feature_extract}"
@@ -37,7 +36,7 @@ mkdir -p "$FEATURE_OUT_DIR" "$CONTROLLER_OUT_DIR"
 cd "$CAL_ROOT"
 
 echo "[1/2] build discovery-headset feature table"
-"$PY_BIN" scripts/build_pope_feature_screen_v1.py \
+python scripts/build_pope_feature_screen_v1.py \
   --subset_ids_csv "$SUBSET_IDS_CSV" \
   --subset_gt_csv "$SUBSET_GT_CSV" \
   --per_layer_trace_csv "$PER_LAYER_TRACE_CSV" \
@@ -55,7 +54,7 @@ echo "[1/2] build discovery-headset feature table"
   --eps 1e-6
 
 echo "[2/2] calibrate FRG-only offline hard veto"
-"$PY_BIN" scripts/run_vga_hard_veto_controller.py \
+python scripts/run_vga_hard_veto_controller.py \
   --per_case_csv "$PER_CASE_CSV" \
   --features_csv "$FEATURE_OUT_DIR/features_unified_table.csv" \
   --out_dir "$CONTROLLER_OUT_DIR" \

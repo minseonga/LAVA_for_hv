@@ -31,7 +31,7 @@ class OnlineMethodAdapter(ABC):
     backend_name = "online"
 
     @abstractmethod
-    def probe(self, sample: Any) -> ProbeState:
+    def probe(self, sample: Any, branch_text: str | None = None) -> ProbeState:
         raise NotImplementedError
 
     @abstractmethod

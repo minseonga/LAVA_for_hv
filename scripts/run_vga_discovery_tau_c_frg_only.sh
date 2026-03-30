@@ -2,8 +2,6 @@
 set -euo pipefail
 
 CAL_ROOT="${CAL_ROOT:-/home/kms/LLaVA_calibration}"
-VOCOT_PY="${VOCOT_PY:-/home/kms/miniconda3/envs/vocot/bin/python}"
-VGA_PY="${VGA_PY:-/home/kms/miniconda3/envs/vga/bin/python}"
 VGA_ROOT="${VGA_ROOT:-/home/kms/VGA_origin}"
 
 DISCOVERY_JSONL="${DISCOVERY_JSONL:-$CAL_ROOT/experiments/pope_discovery/discovery_adversarial.jsonl}"
@@ -54,7 +52,7 @@ cd "$CAL_ROOT"
 
 if [[ ! -f "$GT_CSV" || ! -f "$SUBSET_IDS_CSV" || ! -f "$Q_JSONL" || ! -f "$Q_WITH_OBJECT_JSONL" ]]; then
   echo "[1/7] build discovery assets"
-  "$VOCOT_PY" scripts/build_pope_style_discovery_assets.py \
+  python scripts/build_pope_style_discovery_assets.py \
     --in_jsonl "$DISCOVERY_JSONL" \
     --out_dir "$ASSET_DIR"
 else
@@ -63,7 +61,7 @@ fi
 
 if [[ ! -f "$BASELINE_PRED_JSONL" ]]; then
   echo "[2/7] run baseline on discovery set"
-  PYTHONPATH="$CAL_ROOT" "$VOCOT_PY" -m llava.eval.model_vqa_loader \
+  PYTHONPATH="$CAL_ROOT" python -m llava.eval.model_vqa_loader \
     --model-path "$MODEL_PATH" \
     --image-folder "$IMAGE_FOLDER" \
     --question-file "$Q_JSONL" \
@@ -80,7 +78,7 @@ if [[ ! -f "$VGA_PRED_JSONL" ]]; then
   echo "[3/7] run VGA on discovery set"
   (
     cd "$VGA_ROOT"
-    "$VGA_PY" eval/object_hallucination_vqa_llava.py \
+    python eval/object_hallucination_vqa_llava.py \
       --model-path "$MODEL_PATH" \
       --image-folder "$IMAGE_FOLDER" \
       --question-file "$Q_WITH_OBJECT_JSONL" \
@@ -102,7 +100,7 @@ fi
 
 if [[ ! -f "$TAX_DIR/per_case_compare.csv" ]]; then
   echo "[4/7] build taxonomy on discovery set"
-  "$VOCOT_PY" scripts/build_vga_failure_taxonomy.py \
+  python scripts/build_vga_failure_taxonomy.py \
     --gt_csv "$GT_CSV" \
     --baseline_pred_jsonl "$BASELINE_PRED_JSONL" \
     --vga_pred_jsonl "$VGA_PRED_JSONL" \
@@ -116,7 +114,7 @@ fi
 
 if [[ ! -f "$SAMPLES_CSV" ]]; then
   echo "[5/7] build baseline samples csv"
-  "$VOCOT_PY" scripts/build_pope_samples_from_gt_and_pred.py \
+  python scripts/build_pope_samples_from_gt_and_pred.py \
     --subset_gt_csv "$GT_CSV" \
     --pred_jsonl "$BASELINE_PRED_JSONL" \
     --pred_text_key text \
@@ -129,7 +127,7 @@ fi
 if [[ ! -f "$PER_HEAD_TRACE_CSV" || ! -f "$PER_LAYER_TRACE_CSV" ]]; then
   echo "[6/7] extract baseline traces on discovery set"
   TRACE_CMD=(
-    "$VOCOT_PY" "$CAL_ROOT/analyze_pope_visual_disconnect.py"
+    python "$CAL_ROOT/analyze_pope_visual_disconnect.py"
     --samples_csv "$SAMPLES_CSV"
     --image_root "$IMAGE_FOLDER"
     --out_dir "$TRACE_DIR"
@@ -160,7 +158,7 @@ fi
 
 echo "[7/7] build FRG-only features and calibrate tau_c"
 if [[ ! -f "$FEATURE_DIR/features_unified_table.csv" ]]; then
-  "$VOCOT_PY" scripts/build_pope_feature_screen_v1.py \
+  python scripts/build_pope_feature_screen_v1.py \
     --subset_ids_csv "$SUBSET_IDS_CSV" \
     --subset_gt_csv "$GT_CSV" \
     --per_layer_trace_csv "$PER_LAYER_TRACE_CSV" \
@@ -179,7 +177,7 @@ else
   echo "  [skip] feature table already exists"
 fi
 
-"$VOCOT_PY" scripts/run_vga_hard_veto_controller.py \
+python scripts/run_vga_hard_veto_controller.py \
   --per_case_csv "$TAX_DIR/per_case_compare.csv" \
   --features_csv "$FEATURE_DIR/features_unified_table.csv" \
   --out_dir "$CONTROLLER_DIR" \

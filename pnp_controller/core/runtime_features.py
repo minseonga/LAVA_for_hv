@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import torch
@@ -209,6 +210,52 @@ def compute_head_attn_vis_ratio_at_row(
         "n_faithful_points": float(len(faithful_vals)),
         "n_harmful_points": float(len(harmful_vals)),
         "per_layer": per_layer,
+    }
+
+
+def compute_attention_head_probes_at_row(
+    att_l: torch.Tensor,
+    decision_pos: int,
+    vision_positions: torch.Tensor,
+    text_positions: torch.Tensor,
+    eps: float = 1e-12,
+) -> Dict[str, torch.Tensor] | None:
+    if att_l is None:
+        return None
+    if att_l.ndim == 4:
+        if int(att_l.size(0)) != 1:
+            return None
+        att = att_l[0].float()
+    elif att_l.ndim == 3:
+        att = att_l.float()
+    else:
+        return None
+    if decision_pos < 0 or decision_pos >= int(att.size(1)):
+        return None
+    if vision_positions.numel() == 0:
+        return None
+
+    row = att[:, int(decision_pos), :]
+    vis_block = row[:, vision_positions]
+    vis_sum_h = vis_block.sum(dim=-1)
+    if text_positions.numel() > 0:
+        txt_sum_h = row[:, text_positions].sum(dim=-1)
+    else:
+        txt_sum_h = torch.zeros_like(vis_sum_h)
+    den = vis_sum_h + txt_sum_h + eps
+    vis_ratio_h = vis_sum_h / den
+    vis_peak_h = torch.max(vis_block, dim=-1).values
+    vis_probs = vis_block / torch.clamp(vis_sum_h.unsqueeze(-1), min=eps)
+    vis_entropy_h = -(vis_probs * torch.log(torch.clamp(vis_probs, min=eps))).sum(dim=-1)
+    if int(vis_block.size(-1)) > 1:
+        vis_entropy_h = vis_entropy_h / math.log(float(int(vis_block.size(-1))))
+    else:
+        vis_entropy_h = torch.zeros_like(vis_entropy_h)
+    return {
+        "head_attn_vis_sum": vis_sum_h.detach().cpu(),
+        "head_attn_vis_ratio": vis_ratio_h.detach().cpu(),
+        "head_attn_vis_peak": vis_peak_h.detach().cpu(),
+        "head_attn_vis_entropy": vis_entropy_h.detach().cpu(),
     }
 
 

@@ -15,6 +15,7 @@ from PIL import Image
 from pnp_controller.core.runtime_features import (
     compute_aggregate_probe_scores,
     compute_aggregate_probe_scores_at_row,
+    compute_attention_head_probes_at_row,
     combine_gmi_with_guidance_mass,
     compute_head_attn_vis_ratio_last_row,
     compute_head_attn_vis_ratio_at_row,
@@ -54,6 +55,7 @@ class VGAOnlineConfig:
     aggregate_lambda: float = 1.0
     headset_json: str = ""
     probe_position_mode: str = "prompt_last"
+    probe_branch_source: str = "preview"
     probe_preview_max_new_tokens: int = 3
     probe_preview_reuse_baseline: bool = True
     probe_preview_fallback_to_prompt_last: bool = True
@@ -341,6 +343,80 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             return_dict=True,
         )
 
+    def _build_base_gen_kwargs(
+        self,
+        prefill: Any,
+        image_tensor: torch.Tensor,
+    ) -> Dict[str, Any]:
+        return dict(
+            images=image_tensor.unsqueeze(0),
+            past_key_values=prefill.past_key_values,
+            do_sample=bool(self.cfg.sampling),
+            sampling=bool(self.cfg.sampling),
+            num_beams=int(self.cfg.num_beams),
+            max_new_tokens=int(self.cfg.max_gen_len),
+            use_cache=True,
+        )
+
+    def _build_method_gen_kwargs(
+        self,
+        base_gen_kwargs: Dict[str, Any],
+        vl_guidance: torch.Tensor,
+        vis_logits: torch.Tensor,
+    ) -> Dict[str, Any]:
+        method_gen_kwargs = dict(base_gen_kwargs)
+        method_gen_kwargs.update(
+            vl_guidance=vl_guidance,
+            vis_logits=vis_logits,
+            cd_alpha=float(self.cfg.cd_alpha),
+            add_layer=list(range(int(self.cfg.start_layer), int(self.cfg.end_layer) + 1)),
+            attn_coef=float(self.cfg.attn_coef),
+            head_balancing=str(self.cfg.head_balancing),
+            attn_norm=bool(self.cfg.attn_norm),
+        )
+        return method_gen_kwargs
+
+    def _prepare_runtime_context(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+        prepared = self._prepare_sample(sample)
+        input_ids = prepared["input_ids"]
+        image_tensor = prepared["image_tensor"]
+
+        with torch.inference_mode():
+            prefill = self._run_prompt_prefill(input_ids=input_ids, image_tensor=image_tensor)
+            logits = prefill.logits
+            vis_logits = F.softmax(logits[0, 35:611, :], dim=-1).float()
+            vl_guidance, guidance_mode = self._compute_vl_guidance(vis_logits, prepared["object_list"])
+
+        image_start, image_end = image_span_from_prompt_input_ids(
+            input_ids=input_ids,
+            image_token_index=int(self.IMAGE_TOKEN_INDEX),
+            image_token_count=int(vis_logits.size(0)),
+        )
+        g_top5_mass = topk_mass(vl_guidance.to(torch.float32), k=5)
+        base_gen_kwargs = self._build_base_gen_kwargs(
+            prefill=prefill,
+            image_tensor=image_tensor,
+        )
+        method_gen_kwargs = self._build_method_gen_kwargs(
+            base_gen_kwargs=base_gen_kwargs,
+            vl_guidance=vl_guidance,
+            vis_logits=vis_logits,
+        )
+        return {
+            "prepared": prepared,
+            "input_ids": input_ids,
+            "image_tensor": image_tensor,
+            "prefill": prefill,
+            "vis_logits": vis_logits,
+            "vl_guidance": vl_guidance,
+            "guidance_mode": guidance_mode,
+            "image_start": int(image_start),
+            "image_end": int(image_end),
+            "g_top5_mass": float(g_top5_mass),
+            "base_gen_kwargs": base_gen_kwargs,
+            "method_gen_kwargs": method_gen_kwargs,
+        }
+
     def _prepare_multimodal_expanded_sequence(
         self,
         full_ids: torch.Tensor,
@@ -596,9 +672,11 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         )
         debug = {
             "probe_source": "prompt_last",
+            "probe_branch_source": "prompt_last",
             "probe_anchor": "",
             "probe_anchor_token_idx": -1,
             "baseline_preview_text": "",
+            "probe_branch_text": "",
             "baseline_preview_reusable": False,
             "baseline_preview_found_anchor": False,
             "baseline_preview_fallback": False,
@@ -608,9 +686,9 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
     def _run_baseline_preview(
         self,
         prepared: Dict[str, Any],
-        common_gen_kwargs: Dict[str, Any],
+        base_gen_kwargs: Dict[str, Any],
     ) -> Tuple[List[int], str]:
-        preview_kwargs = dict(common_gen_kwargs)
+        preview_kwargs = dict(base_gen_kwargs)
         preview_kwargs["use_add"] = False
         preview_kwargs["max_new_tokens"] = max(1, int(self.cfg.probe_preview_max_new_tokens))
         with torch.inference_mode():
@@ -622,6 +700,26 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         preview_text = self._decode_generated_text(output_ids, prepared["stop_str"])
         return preview_ids, preview_text
 
+    def _build_yesno_branch_debug(
+        self,
+        *,
+        branch_text: str,
+        anchor_phrase: Optional[str],
+        anchor_idx: Optional[int],
+        branch_source: str,
+        preview_reusable: bool,
+    ) -> Dict[str, Any]:
+        return {
+            "probe_branch_source": str(branch_source),
+            "probe_anchor": str(anchor_phrase or ""),
+            "probe_anchor_token_idx": int(anchor_idx) if anchor_idx is not None else -1,
+            "baseline_preview_text": str(branch_text or ""),
+            "probe_branch_text": str(branch_text or ""),
+            "baseline_preview_reusable": bool(preview_reusable),
+            "baseline_preview_found_anchor": bool(anchor_idx is not None),
+            "baseline_preview_fallback": False,
+        }
+
     def _probe_baseline_yesno_preview(
         self,
         prepared: Dict[str, Any],
@@ -631,17 +729,19 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         image_end: int,
         guidance: torch.Tensor,
         g_top5_mass: float,
-        common_gen_kwargs: Dict[str, Any],
+        base_gen_kwargs: Dict[str, Any],
     ) -> Tuple[Optional[float], Optional[float], Dict[str, Any], Dict[str, Any]]:
         first_step = self._run_cached_probe_step(input_ids[:, -1:], prefill.past_key_values)
-        preview_ids, preview_text = self._run_baseline_preview(prepared, common_gen_kwargs)
+        preview_ids, preview_text = self._run_baseline_preview(prepared, base_gen_kwargs)
         anchor_phrase = self._normalize_yes_no_anchor(preview_text)
         anchor_idx = self._locate_phrase_token_start(preview_ids, anchor_phrase) if anchor_phrase is not None else None
         debug = {
             "probe_source": "baseline_yesno_preview",
+            "probe_branch_source": "preview",
             "probe_anchor": str(anchor_phrase or ""),
             "probe_anchor_token_idx": int(anchor_idx) if anchor_idx is not None else -1,
             "baseline_preview_text": str(preview_text or ""),
+            "probe_branch_text": str(preview_text or ""),
             "baseline_preview_reusable": bool(
                 bool(self.cfg.probe_preview_reuse_baseline)
                 and str(preview_text or "").strip() != ""
@@ -677,26 +777,44 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         input_ids: torch.Tensor,
         guidance: torch.Tensor,
         g_top5_mass: float,
-        common_gen_kwargs: Dict[str, Any],
+        base_gen_kwargs: Dict[str, Any],
     ) -> Tuple[Optional[float], Optional[float], Dict[str, Any], Dict[str, Any]]:
-        preview_ids, preview_text = self._run_baseline_preview(prepared, common_gen_kwargs)
-        anchor_phrase = self._normalize_yes_no_anchor(preview_text)
-        cont_ids = self._choose_cont_ids(preview_text)
-        anchor_idx = self._locate_phrase_token_start(cont_ids, anchor_phrase) if anchor_phrase is not None else None
-        preview_reusable = bool(
-            bool(self.cfg.probe_preview_reuse_baseline)
-            and len(preview_ids) >= int(self.cfg.max_gen_len)
-            and str(preview_text or "").strip() != ""
+        preview_ids, preview_text = self._run_baseline_preview(prepared, base_gen_kwargs)
+        return self._probe_baseline_yesno_offline_fullseq_from_text(
+            prepared=prepared,
+            input_ids=input_ids,
+            guidance=guidance,
+            g_top5_mass=g_top5_mass,
+            branch_text=preview_text,
+            branch_source="preview",
+            preview_reusable=bool(
+                bool(self.cfg.probe_preview_reuse_baseline)
+                and len(preview_ids) >= int(self.cfg.max_gen_len)
+                and str(preview_text or "").strip() != ""
+            ),
         )
-        debug = {
-            "probe_source": "baseline_yesno_offline_fullseq",
-            "probe_anchor": str(anchor_phrase or ""),
-            "probe_anchor_token_idx": int(anchor_idx) if anchor_idx is not None else -1,
-            "baseline_preview_text": str(preview_text or ""),
-            "baseline_preview_reusable": preview_reusable,
-            "baseline_preview_found_anchor": bool(anchor_idx is not None),
-            "baseline_preview_fallback": False,
-        }
+
+    def _probe_baseline_yesno_offline_fullseq_from_text(
+        self,
+        prepared: Dict[str, Any],
+        input_ids: torch.Tensor,
+        guidance: torch.Tensor,
+        g_top5_mass: float,
+        branch_text: str,
+        branch_source: str,
+        preview_reusable: bool,
+    ) -> Tuple[Optional[float], Optional[float], Dict[str, Any], Dict[str, Any]]:
+        anchor_phrase = self._normalize_yes_no_anchor(branch_text)
+        cont_ids = self._choose_cont_ids(branch_text)
+        anchor_idx = self._locate_phrase_token_start(cont_ids, anchor_phrase) if anchor_phrase is not None else None
+        debug = self._build_yesno_branch_debug(
+            branch_text=branch_text,
+            anchor_phrase=anchor_phrase,
+            anchor_idx=anchor_idx,
+            branch_source=branch_source,
+            preview_reusable=preview_reusable,
+        )
+        debug["probe_source"] = "baseline_yesno_offline_fullseq"
         if anchor_phrase is None or not cont_ids:
             debug["baseline_preview_fallback"] = True
             return None, None, {}, debug
@@ -708,11 +826,32 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         full_ids = torch.cat([input_ids, cont_t], dim=1)
 
         with torch.inference_mode():
-            pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
-                full_ids=full_ids,
-                image_tensor=prepared["image_tensor"],
-                image_size=prepared["image_size"],
-            )
+            probe_helper = getattr(self.model, "offline_style_full_attention_probe", None)
+            used_helper = False
+            if callable(probe_helper):
+                try:
+                    out, pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = probe_helper(
+                        full_ids=full_ids,
+                        images=prepared["image_tensor"].unsqueeze(0),
+                        attention_mask=torch.ones_like(full_ids, dtype=torch.long, device=self.device),
+                        labels=full_ids,
+                        output_attentions=True,
+                        output_hidden_states=True,
+                        return_dict=True,
+                    )
+                    debug["probe_impl"] = "offline_style_helper"
+                    used_helper = True
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    debug["probe_impl"] = "offline_style_helper_fallback"
+                    debug["probe_impl_error"] = str(exc)
+
+            if not used_helper:
+                pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
+                    full_ids=full_ids,
+                    image_tensor=prepared["image_tensor"],
+                    image_size=prepared["image_size"],
+                )
+                debug["probe_impl"] = str(debug.get("probe_impl", "adapter_legacy_prepare"))
 
             labels_exp = labels_e[0]
             cont_label_pos = self._find_cont_label_positions(labels_exp, cont_ids)
@@ -726,11 +865,12 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
 
             vision_pos = torch.where(labels_exp == int(self.IGNORE_INDEX))[0]
             text_pos = torch.where(labels_exp != int(self.IGNORE_INDEX))[0]
-            out = self._run_full_attention_probe(
-                mm_embeds=mm_embeds_e,
-                attn_mask=attn_mask_e,
-                pos_ids=pos_ids_e,
-            )
+            if not used_helper:
+                out = self._run_full_attention_probe(
+                    mm_embeds=mm_embeds_e,
+                    attn_mask=attn_mask_e,
+                    pos_ids=pos_ids_e,
+                )
 
         decision_pos = int(dec_pos[int(anchor_idx)].item())
         debug["probe_decision_pos"] = int(decision_pos)
@@ -744,40 +884,212 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         )
         return frg, gmi, attn_stats, debug
 
-    def probe(self, sample: Any) -> ProbeState:
-        prepared = self._prepare_sample(sample)
-        input_ids = prepared["input_ids"]
-        image_tensor = prepared["image_tensor"]
+    def debug_probe_baseline_yesno_offline_fullseq(
+        self,
+        sample: Dict[str, Any],
+        head_layer_start: Optional[int] = None,
+        head_layer_end: Optional[int] = None,
+        branch_text: Optional[str] = None,
+        branch_source: str = "preview",
+    ) -> Dict[str, Any]:
+        ctx = self._prepare_runtime_context(sample)
+        prepared = ctx["prepared"]
+        input_ids = ctx["input_ids"]
+        image_tensor = ctx["image_tensor"]
+        prefill = ctx["prefill"]
+        vis_logits = ctx["vis_logits"]
+        vl_guidance = ctx["vl_guidance"]
+        guidance_mode = ctx["guidance_mode"]
+        g_top5_mass = float(ctx["g_top5_mass"])
+        base_gen_kwargs = ctx["base_gen_kwargs"]
+
+        if branch_text is None:
+            preview_ids, preview_text = self._run_baseline_preview(prepared, base_gen_kwargs)
+            preview_reusable = bool(
+                bool(self.cfg.probe_preview_reuse_baseline)
+                and len(preview_ids) >= int(self.cfg.max_gen_len)
+                and str(preview_text or "").strip() != ""
+            )
+            probe_branch_source = "preview"
+        else:
+            preview_ids = []
+            preview_text = str(branch_text)
+            preview_reusable = False
+            probe_branch_source = str(branch_source or "baseline_output")
+        anchor_phrase = self._normalize_yes_no_anchor(preview_text)
+        cont_ids = self._choose_cont_ids(preview_text)
+        anchor_idx = self._locate_phrase_token_start(cont_ids, anchor_phrase) if anchor_phrase is not None else None
+        cont_token_strs: List[str] = []
+        for tid in cont_ids:
+            try:
+                cont_token_strs.append(str(self.tokenizer.convert_ids_to_tokens(int(tid))))
+            except Exception:
+                cont_token_strs.append("")
+        debug = {
+            "probe_source": "baseline_yesno_offline_fullseq",
+            "probe_branch_source": probe_branch_source,
+            "probe_anchor": str(anchor_phrase or ""),
+            "probe_anchor_token_idx": int(anchor_idx) if anchor_idx is not None else -1,
+            "baseline_preview_text": str(preview_text or ""),
+            "probe_branch_text": str(preview_text or ""),
+            "baseline_preview_reusable": preview_reusable,
+            "baseline_preview_found_anchor": bool(anchor_idx is not None),
+            "baseline_preview_fallback": False,
+            "probe_cont_ids": [int(x) for x in cont_ids],
+            "probe_cont_token_strs": cont_token_strs,
+        }
+        if anchor_phrase is None or not cont_ids:
+            raise RuntimeError("Could not determine yes/no anchor phrase for offline fullseq probe.")
+        if anchor_idx is None:
+            anchor_idx = 0
+            debug["probe_anchor_token_idx"] = 0
+        if 0 <= int(anchor_idx) < int(len(cont_ids)):
+            debug["probe_anchor_token_id"] = int(cont_ids[int(anchor_idx)])
+            try:
+                debug["probe_anchor_token_str"] = str(self.tokenizer.convert_ids_to_tokens(int(cont_ids[int(anchor_idx)])))
+            except Exception:
+                debug["probe_anchor_token_str"] = ""
+        else:
+            debug["probe_anchor_token_id"] = -1
+            debug["probe_anchor_token_str"] = ""
+
+        cont_t = torch.tensor([cont_ids], dtype=torch.long, device=self.device)
+        full_ids = torch.cat([input_ids, cont_t], dim=1)
 
         with torch.inference_mode():
-            prefill = self._run_prompt_prefill(input_ids=input_ids, image_tensor=image_tensor)
-            logits = prefill.logits
-            vis_logits = F.softmax(logits[0, 35:611, :], dim=-1).float()
-            vl_guidance, guidance_mode = self._compute_vl_guidance(vis_logits, prepared["object_list"])
+            probe_helper = getattr(self.model, "offline_style_full_attention_probe", None)
+            used_helper = False
+            if callable(probe_helper):
+                try:
+                    out, pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = probe_helper(
+                        full_ids=full_ids,
+                        images=prepared["image_tensor"].unsqueeze(0),
+                        attention_mask=torch.ones_like(full_ids, dtype=torch.long, device=self.device),
+                        labels=full_ids,
+                        output_attentions=True,
+                        output_hidden_states=True,
+                        return_dict=True,
+                    )
+                    debug["probe_impl"] = "offline_style_helper"
+                    used_helper = True
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    debug["probe_impl"] = "offline_style_helper_fallback"
+                    debug["probe_impl_error"] = str(exc)
 
-        image_start, image_end = image_span_from_prompt_input_ids(
-            input_ids=input_ids,
-            image_token_index=int(self.IMAGE_TOKEN_INDEX),
-            image_token_count=int(vis_logits.size(0)),
-        )
-        g_top5_mass = topk_mass(vl_guidance.to(torch.float32), k=5)
+            if not used_helper:
+                pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
+                    full_ids=full_ids,
+                    image_tensor=prepared["image_tensor"],
+                    image_size=prepared["image_size"],
+                )
+                debug["probe_impl"] = str(debug.get("probe_impl", "adapter_legacy_prepare"))
 
-        common_gen_kwargs = dict(
-            images=image_tensor.unsqueeze(0),
-            past_key_values=prefill.past_key_values,
-            vl_guidance=vl_guidance,
-            vis_logits=vis_logits,
-            cd_alpha=float(self.cfg.cd_alpha),
-            add_layer=list(range(int(self.cfg.start_layer), int(self.cfg.end_layer) + 1)),
-            attn_coef=float(self.cfg.attn_coef),
-            head_balancing=str(self.cfg.head_balancing),
-            attn_norm=bool(self.cfg.attn_norm),
-            do_sample=True,
-            sampling=bool(self.cfg.sampling),
-            num_beams=int(self.cfg.num_beams),
-            max_new_tokens=int(self.cfg.max_gen_len),
-            use_cache=True,
+            labels_exp = labels_e[0]
+            cont_label_pos = self._find_cont_label_positions(labels_exp, cont_ids)
+            if cont_label_pos is None or int(cont_label_pos.numel()) != int(len(cont_ids)):
+                raise RuntimeError("Could not align continuation labels in offline fullseq probe.")
+            dec_pos = cont_label_pos - 1
+            if int(dec_pos.min().item()) < 0:
+                raise RuntimeError("Negative decision position encountered in offline fullseq probe.")
+            debug["probe_decision_positions"] = [int(x) for x in dec_pos.detach().cpu().tolist()]
+
+            vision_pos = torch.where(labels_exp == int(self.IGNORE_INDEX))[0]
+            text_pos = torch.where(labels_exp != int(self.IGNORE_INDEX))[0]
+            debug["n_vision_positions"] = int(vision_pos.numel())
+            debug["n_text_positions"] = int(text_pos.numel())
+            debug["expanded_seq_len"] = int(labels_exp.numel())
+            if not used_helper:
+                out = self._run_full_attention_probe(
+                    mm_embeds=mm_embeds_e,
+                    attn_mask=attn_mask_e,
+                    pos_ids=pos_ids_e,
+                )
+
+        decision_pos = int(dec_pos[int(anchor_idx)].item())
+        debug["probe_decision_pos"] = int(decision_pos)
+        frg, gmi, attn_stats = self._compute_probe_metrics_at_decision_row(
+            attentions=out.attentions,
+            decision_pos=decision_pos,
+            vision_positions=vision_pos,
+            text_positions=text_pos,
+            guidance=vl_guidance,
+            g_top5_mass=float(g_top5_mass),
         )
+
+        layer_l0 = 0 if head_layer_start is None else max(0, int(head_layer_start))
+        layer_l1 = int(len(out.attentions) - 1) if head_layer_end is None else min(int(head_layer_end), int(len(out.attentions) - 1))
+        yesno_token_idx = int(anchor_idx)
+        yesno_token_str = ""
+        if 0 <= int(anchor_idx) < int(len(cont_ids)):
+            try:
+                yesno_token_str = str(self.tokenizer.convert_ids_to_tokens(int(cont_ids[int(anchor_idx)])))
+            except Exception:
+                yesno_token_str = ""
+
+        per_head_rows: List[Dict[str, Any]] = []
+        for block_idx in range(int(layer_l0), int(layer_l1) + 1):
+            att_l = out.attentions[int(block_idx)]
+            probes = compute_attention_head_probes_at_row(
+                att_l=att_l,
+                decision_pos=int(decision_pos),
+                vision_positions=vision_pos,
+                text_positions=text_pos,
+            )
+            if probes is None:
+                continue
+            n_heads = int(probes["head_attn_vis_sum"].numel())
+            for head_idx in range(n_heads):
+                per_head_rows.append(
+                    {
+                        "id": str(prepared["sample_id"]),
+                        "image_id": str(prepared["image_file"]),
+                        "question": str(prepared["question"]),
+                        "object_phrase": ",".join(prepared["object_list"]),
+                        "answer_pred": str(anchor_phrase),
+                        "pred_text": str(preview_text),
+                        "anchor_phrase": str(anchor_phrase),
+                        "yesno_token_idx": int(yesno_token_idx),
+                        "yesno_token_str": str(yesno_token_str),
+                        "block_layer_idx": int(block_idx),
+                        "head_idx": int(head_idx),
+                        "head_attn_vis_sum": float(probes["head_attn_vis_sum"][head_idx].item()),
+                        "head_attn_vis_ratio": float(probes["head_attn_vis_ratio"][head_idx].item()),
+                        "head_attn_vis_peak": float(probes["head_attn_vis_peak"][head_idx].item()),
+                        "head_attn_vis_entropy": float(probes["head_attn_vis_entropy"][head_idx].item()),
+                        "probe_impl": str(debug.get("probe_impl", "")),
+                        "probe_impl_error": str(debug.get("probe_impl_error", "")),
+                        "probe_source": str(debug.get("probe_source", "")),
+                        "probe_decision_pos": int(decision_pos),
+                        "baseline_preview_fallback": int(bool(debug.get("baseline_preview_fallback", False))),
+                    }
+                )
+
+        return {
+            "sample_id": str(prepared["sample_id"]),
+            "question": str(prepared["question"]),
+            "image_id": str(prepared["image_file"]),
+            "object_phrase": ",".join(prepared["object_list"]),
+            "guidance_mode": str(guidance_mode),
+            "g_top5_mass": float(g_top5_mass),
+            "frg": float(frg),
+            "gmi": float(gmi),
+            "attn_stats": attn_stats,
+            "debug": debug,
+            "per_head_rows": per_head_rows,
+        }
+
+    def probe(self, sample: Any, branch_text: str | None = None) -> ProbeState:
+        ctx = self._prepare_runtime_context(sample)
+        prepared = ctx["prepared"]
+        input_ids = ctx["input_ids"]
+        prefill = ctx["prefill"]
+        vl_guidance = ctx["vl_guidance"]
+        guidance_mode = ctx["guidance_mode"]
+        image_start = int(ctx["image_start"])
+        image_end = int(ctx["image_end"])
+        g_top5_mass = float(ctx["g_top5_mass"])
+        base_gen_kwargs = ctx["base_gen_kwargs"]
+
         probe_mode = str(self.cfg.probe_position_mode or "prompt_last").strip().lower()
         if probe_mode == "baseline_yesno_preview":
             frg, gmi, attn_stats, probe_debug = self._probe_baseline_yesno_preview(
@@ -788,7 +1100,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                 image_end=image_end,
                 guidance=vl_guidance,
                 g_top5_mass=float(g_top5_mass),
-                common_gen_kwargs=common_gen_kwargs,
+                base_gen_kwargs=base_gen_kwargs,
             )
             if frg is None or gmi is None:
                 if bool(self.cfg.probe_preview_fallback_to_prompt_last):
@@ -805,13 +1117,24 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                 else:
                     raise RuntimeError("baseline_yesno_preview probe could not find yes/no anchor and fallback is disabled.")
         elif probe_mode == "baseline_yesno_offline_fullseq":
-            frg, gmi, attn_stats, probe_debug = self._probe_baseline_yesno_offline_fullseq(
-                prepared=prepared,
-                input_ids=input_ids,
-                guidance=vl_guidance,
-                g_top5_mass=float(g_top5_mass),
-                common_gen_kwargs=common_gen_kwargs,
-            )
+            if branch_text is not None:
+                frg, gmi, attn_stats, probe_debug = self._probe_baseline_yesno_offline_fullseq_from_text(
+                    prepared=prepared,
+                    input_ids=input_ids,
+                    guidance=vl_guidance,
+                    g_top5_mass=float(g_top5_mass),
+                    branch_text=str(branch_text),
+                    branch_source=str(self.cfg.probe_branch_source or "baseline_output"),
+                    preview_reusable=False,
+                )
+            else:
+                frg, gmi, attn_stats, probe_debug = self._probe_baseline_yesno_offline_fullseq(
+                    prepared=prepared,
+                    input_ids=input_ids,
+                    guidance=vl_guidance,
+                    g_top5_mass=float(g_top5_mass),
+                    base_gen_kwargs=base_gen_kwargs,
+                )
             if frg is None or gmi is None:
                 if bool(self.cfg.probe_preview_fallback_to_prompt_last):
                     frg, gmi, attn_stats, prompt_debug = self._probe_prompt_last(
@@ -837,9 +1160,11 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             )
         extras = {
             "prepared": prepared,
-            "common_gen_kwargs": common_gen_kwargs,
+            "base_gen_kwargs": ctx["base_gen_kwargs"],
+            "method_gen_kwargs": ctx["method_gen_kwargs"],
             "probe_feature_mode": str(self.cfg.probe_feature_mode),
             "probe_position_mode": str(self.cfg.probe_position_mode),
+            "probe_branch_source": str(self.cfg.probe_branch_source),
             "guidance_mode": guidance_mode,
             "g_top5_mass": float(g_top5_mass),
             "image_start": int(image_start),
@@ -849,20 +1174,42 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         extras.update(probe_debug)
         return ProbeState(sample_id=prepared["sample_id"], frg=frg, gmi=gmi, extras=extras)
 
-    def _generate(self, sample: Dict[str, Any], probe_state: ProbeState, use_add: bool) -> Dict[str, Any]:
-        extras = probe_state.extras
-        prepared = extras["prepared"]
-        gen_kwargs = dict(extras["common_gen_kwargs"])
+    def _generate_from_prepared(
+        self,
+        sample: Dict[str, Any],
+        prepared: Dict[str, Any],
+        gen_kwargs: Dict[str, Any],
+        use_add: bool,
+    ) -> Dict[str, Any]:
+        gen_kwargs = dict(gen_kwargs)
         gen_kwargs["use_add"] = bool(use_add)
-
         with torch.inference_mode():
             output_ids = self.model.generate(
                 prepared["input_ids"][:, -1:],
                 **gen_kwargs,
             )
-
         output_text = self._decode_generated_text(output_ids, prepared["stop_str"])
         return self._build_prediction_row(sample=sample, prepared=prepared, output_text=output_text, use_add=use_add)
+
+    def predict_base_direct(self, sample: Any) -> Any:
+        ctx = self._prepare_runtime_context(sample)
+        return self._generate_from_prepared(
+            sample=sample,
+            prepared=ctx["prepared"],
+            gen_kwargs=ctx["base_gen_kwargs"],
+            use_add=False,
+        )
+
+    def _generate(self, sample: Dict[str, Any], probe_state: ProbeState, use_add: bool) -> Dict[str, Any]:
+        extras = probe_state.extras
+        prepared = extras["prepared"]
+        gen_kwargs = extras["method_gen_kwargs"] if bool(use_add) else extras["base_gen_kwargs"]
+        return self._generate_from_prepared(
+            sample=sample,
+            prepared=prepared,
+            gen_kwargs=gen_kwargs,
+            use_add=use_add,
+        )
 
     def predict_base(self, sample: Any, probe_state: ProbeState | None = None) -> Any:
         if probe_state is None:

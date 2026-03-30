@@ -206,6 +206,12 @@ def main() -> None:
         default="prompt_last",
         choices=["prompt_last", "baseline_yesno_preview", "baseline_yesno_offline_fullseq"],
     )
+    ap.add_argument(
+        "--probe_branch_source",
+        type=str,
+        default="preview",
+        choices=["preview", "baseline_output"],
+    )
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
@@ -248,6 +254,7 @@ def main() -> None:
             aggregate_lambda=args.aggregate_lambda,
             headset_json=args.headset_json,
             probe_position_mode=args.probe_position_mode,
+            probe_branch_source=args.probe_branch_source,
             probe_preview_max_new_tokens=args.probe_preview_max_new_tokens,
             probe_preview_reuse_baseline=bool(args.probe_preview_reuse_baseline),
             probe_preview_fallback_to_prompt_last=bool(args.probe_preview_fallback_to_prompt_last),
@@ -263,10 +270,15 @@ def main() -> None:
     preds: List[Dict[str, Any]] = []
     route_rows: List[Dict[str, Any]] = []
     for sample in tqdm(samples, total=len(samples), desc="pnp-online", dynamic_ncols=True):
-        probe = adapter.probe(sample)
+        baseline_pred = None
+        if str(args.probe_branch_source).strip().lower() == "baseline_output":
+            baseline_pred = adapter.predict_base_direct(sample)
+            probe = adapter.probe(sample, branch_text=str(baseline_pred.get("output", "")))
+        else:
+            probe = adapter.probe(sample)
         veto = bool((probe.frg >= tau_frg) or (probe.gmi >= tau_gmi))
         if veto:
-            pred = adapter.predict_base(sample, probe_state=probe)
+            pred = baseline_pred if baseline_pred is not None else adapter.predict_base(sample, probe_state=probe)
             route = "baseline"
         else:
             pred = adapter.predict_method(sample, probe_state=probe)
@@ -288,7 +300,9 @@ def main() -> None:
                 "gmi": float(probe.gmi),
                 "probe_feature_mode": str(extras.get("probe_feature_mode", "")),
                 "probe_position_mode": str(extras.get("probe_position_mode", "")),
+                "probe_branch_source": str(extras.get("probe_branch_source", "")),
                 "probe_source": str(extras.get("probe_source", "")),
+                "probe_impl": str(extras.get("probe_impl", "")),
                 "tau_frg": float(tau_frg),
                 "tau_gmi": float(tau_gmi),
                 "g_top5_mass": float(extras.get("g_top5_mass", 0.0)),
@@ -342,6 +356,7 @@ def main() -> None:
             "aggregate_lambda": float(args.aggregate_lambda),
             "headset_json": os.path.abspath(args.headset_json) if str(args.headset_json).strip() else "",
             "probe_position_mode": args.probe_position_mode,
+            "probe_branch_source": args.probe_branch_source,
             "probe_preview_max_new_tokens": int(args.probe_preview_max_new_tokens),
             "probe_preview_reuse_baseline": bool(args.probe_preview_reuse_baseline),
             "probe_preview_fallback_to_prompt_last": bool(args.probe_preview_fallback_to_prompt_last),
