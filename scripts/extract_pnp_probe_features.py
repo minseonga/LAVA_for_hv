@@ -106,6 +106,7 @@ def main() -> None:
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
+    ap.add_argument("--probe_force_manual_fullseq", type=lambda x: x.lower() == "true", default=False)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max_samples", type=int, default=-1)
     args = ap.parse_args()
@@ -140,6 +141,7 @@ def main() -> None:
             headset_json=args.headset_json,
             probe_position_mode=args.probe_position_mode,
             probe_branch_source=args.probe_branch_source,
+            probe_force_manual_fullseq=bool(args.probe_force_manual_fullseq),
             probe_preview_max_new_tokens=args.probe_preview_max_new_tokens,
             probe_preview_reuse_baseline=bool(args.probe_preview_reuse_baseline),
             probe_preview_fallback_to_prompt_last=bool(args.probe_preview_fallback_to_prompt_last),
@@ -176,6 +178,7 @@ def main() -> None:
             "probe_feature_mode": str(extras.get("probe_feature_mode", "")),
             "probe_position_mode": str(extras.get("probe_position_mode", "")),
             "probe_branch_source": str(extras.get("probe_branch_source", "")),
+            "probe_force_manual_fullseq": int(bool(extras.get("probe_force_manual_fullseq", False))),
             "probe_source": str(extras.get("probe_source", "")),
             "probe_impl": str(extras.get("probe_impl", "")),
             "probe_impl_error": str(extras.get("probe_impl_error", "")),
@@ -221,6 +224,7 @@ def main() -> None:
             "headset_json": os.path.abspath(args.headset_json) if str(args.headset_json).strip() else "",
             "probe_position_mode": args.probe_position_mode,
             "probe_branch_source": args.probe_branch_source,
+            "probe_force_manual_fullseq": bool(args.probe_force_manual_fullseq),
             "probe_preview_max_new_tokens": int(args.probe_preview_max_new_tokens),
             "probe_preview_reuse_baseline": bool(args.probe_preview_reuse_baseline),
             "probe_preview_fallback_to_prompt_last": bool(args.probe_preview_fallback_to_prompt_last),

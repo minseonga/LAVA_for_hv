@@ -10,6 +10,18 @@
 
 서버에서 바로 artifact를 만들고 actual online inference까지 돌리려면 [SERVER_ONLINE_EXPERIMENT.md](./SERVER_ONLINE_EXPERIMENT.md)를 먼저 보면 된다.
 
+현재 paper-valid discovery artifact build의 기준 서버 경로는 다음이다.
+
+- `/home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785`
+
+해당 경로의 핵심 파일:
+
+- `discovery_mix_train2014.jsonl`
+- `discovery_q_with_object.jsonl`
+- `discovery_subset_ids.csv`
+- `per_case_compare.csv`
+- `summary.json`
+
 ---
 
 ## 1. 왜 이 방법이 필요한가

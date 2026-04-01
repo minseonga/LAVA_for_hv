@@ -32,6 +32,7 @@ PROBE_FEATURE_MODE="${PROBE_FEATURE_MODE:-static_headset}"
 PROBE_POSITION_MODE="${PROBE_POSITION_MODE:-baseline_yesno_preview}"
 PROBE_BRANCH_SOURCE="${PROBE_BRANCH_SOURCE:-preview}"
 BRANCH_TEXT_JSONL="${BRANCH_TEXT_JSONL:-}"
+PROBE_FORCE_MANUAL_FULLSEQ="${PROBE_FORCE_MANUAL_FULLSEQ:-false}"
 PROBE_PREVIEW_MAX_NEW_TOKENS="${PROBE_PREVIEW_MAX_NEW_TOKENS:-3}"
 PROBE_PREVIEW_REUSE_BASELINE="${PROBE_PREVIEW_REUSE_BASELINE:-true}"
 PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST="${PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST:-true}"
@@ -74,6 +75,7 @@ python scripts/run_cost_aware_gain_router_online.py \
   --headset_json "$HEADSET_JSON" \
   --probe_position_mode "$PROBE_POSITION_MODE" \
   --probe_branch_source "$PROBE_BRANCH_SOURCE" \
+  --probe_force_manual_fullseq "$PROBE_FORCE_MANUAL_FULLSEQ" \
   --probe_preview_max_new_tokens "$PROBE_PREVIEW_MAX_NEW_TOKENS" \
   --probe_preview_reuse_baseline "$PROBE_PREVIEW_REUSE_BASELINE" \
   --probe_preview_fallback_to_prompt_last "$PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST" \

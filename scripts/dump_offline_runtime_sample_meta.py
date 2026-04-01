@@ -30,6 +30,16 @@ def load_csv(path: str) -> List[Dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+def build_branch_text_map(path: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for row in load_jsonl(path):
+        sid = row.get("question_id", row.get("id", row.get("qid", None)))
+        if sid is None:
+            continue
+        out[str(sid)] = str(row.get("output", row.get("text", ""))).strip()
+    return out
+
+
 def first_row_by_id(rows: List[Dict[str, str]], sid: str) -> Dict[str, str]:
     for row in rows:
         if str(row.get("id", "")) == str(sid):
@@ -70,6 +80,14 @@ def main() -> None:
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
+    ap.add_argument("--probe_force_manual_fullseq", type=lambda x: x.lower() == "true", default=False)
+    ap.add_argument(
+        "--probe_branch_source",
+        type=str,
+        default="preview",
+        choices=["preview", "baseline_output", "baseline_jsonl"],
+    )
+    ap.add_argument("--branch_text_jsonl", type=str, default="")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
@@ -103,13 +121,28 @@ def main() -> None:
             probe_feature_mode=args.probe_feature_mode,
             headset_json=args.headset_json,
             probe_position_mode="baseline_yesno_offline_fullseq",
+            probe_force_manual_fullseq=bool(args.probe_force_manual_fullseq),
             probe_preview_max_new_tokens=args.probe_preview_max_new_tokens,
             probe_preview_reuse_baseline=bool(args.probe_preview_reuse_baseline),
             probe_preview_fallback_to_prompt_last=bool(args.probe_preview_fallback_to_prompt_last),
             seed=args.seed,
         )
     )
-    debug_pack = adapter.debug_probe_baseline_yesno_offline_fullseq(sample=sample)
+    branch_source = str(args.probe_branch_source).strip().lower()
+    branch_text: str | None = None
+    if branch_source == "baseline_output":
+        baseline_pred = adapter.predict_base_direct(sample)
+        branch_text = str(baseline_pred.get("output", ""))
+    elif branch_source == "baseline_jsonl":
+        if str(args.branch_text_jsonl).strip() == "":
+            raise SystemExit("--branch_text_jsonl is required when --probe_branch_source=baseline_jsonl")
+        branch_text_map = build_branch_text_map(args.branch_text_jsonl)
+        branch_text = str(branch_text_map.get(sid, ""))
+    debug_pack = adapter.debug_probe_baseline_yesno_offline_fullseq(
+        sample=sample,
+        branch_text=branch_text,
+        branch_source=branch_source,
+    )
 
     offline_head_row = first_row_by_id(load_csv(args.offline_per_head_trace_csv), sid)
     offline_layer_row = first_row_by_id(load_csv(args.offline_per_layer_trace_csv), sid)

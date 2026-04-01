@@ -56,6 +56,7 @@ class VGAOnlineConfig:
     headset_json: str = ""
     probe_position_mode: str = "prompt_last"
     probe_branch_source: str = "preview"
+    probe_force_manual_fullseq: bool = False
     probe_preview_max_new_tokens: int = 3
     probe_preview_reuse_baseline: bool = True
     probe_preview_fallback_to_prompt_last: bool = True
@@ -311,6 +312,46 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         if output_text.endswith(stop_str):
             output_text = output_text[:-len(stop_str)]
         return output_text.strip()
+
+    def _safe_token_to_str(self, token_id: int) -> str:
+        try:
+            return str(self.tokenizer.convert_ids_to_tokens(int(token_id)))
+        except Exception:
+            return ""
+
+    def _token_ids_to_token_strs(self, token_ids: List[int]) -> List[str]:
+        return [self._safe_token_to_str(int(tid)) for tid in token_ids]
+
+    def _build_expanded_window_rows(
+        self,
+        labels_expanded: torch.Tensor,
+        cont_label_pos: torch.Tensor,
+        dec_pos: torch.Tensor,
+        window_radius: int = 8,
+    ) -> List[Dict[str, Any]]:
+        labels_cpu = labels_expanded.detach().cpu().tolist()
+        cont_pos_set = {int(x) for x in cont_label_pos.detach().cpu().tolist()}
+        dec_pos_set = {int(x) for x in dec_pos.detach().cpu().tolist()}
+        if not labels_cpu:
+            return []
+
+        lo = max(0, min(dec_pos_set | cont_pos_set) - int(window_radius))
+        hi = min(len(labels_cpu) - 1, max(dec_pos_set | cont_pos_set) + int(window_radius))
+        rows: List[Dict[str, Any]] = []
+        for pos in range(int(lo), int(hi) + 1):
+            label_id = int(labels_cpu[pos])
+            is_vision = label_id == int(self.IGNORE_INDEX)
+            rows.append(
+                {
+                    "pos": int(pos),
+                    "kind": "vision" if is_vision else "text",
+                    "label_id": None if is_vision else int(label_id),
+                    "token_str": "<image>" if is_vision else self._safe_token_to_str(int(label_id)),
+                    "is_cont": bool(pos in cont_pos_set),
+                    "is_decision": bool(pos in dec_pos_set),
+                }
+            )
+        return rows
 
     def _build_prediction_row(
         self,
@@ -828,7 +869,10 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         with torch.inference_mode():
             probe_helper = getattr(self.model, "offline_style_full_attention_probe", None)
             used_helper = False
-            if callable(probe_helper):
+            helper_enabled = bool(
+                callable(probe_helper) and not bool(getattr(self.cfg, "probe_force_manual_fullseq", False))
+            )
+            if helper_enabled:
                 try:
                     out, pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = probe_helper(
                         full_ids=full_ids,
@@ -844,6 +888,10 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                 except (RuntimeError, TypeError, ValueError) as exc:
                     debug["probe_impl"] = "offline_style_helper_fallback"
                     debug["probe_impl_error"] = str(exc)
+            elif callable(probe_helper):
+                debug["probe_impl"] = "adapter_manual_fullseq_forced"
+            else:
+                debug["probe_impl"] = "adapter_manual_fullseq_no_helper"
 
             if not used_helper:
                 pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
@@ -851,7 +899,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                     image_tensor=prepared["image_tensor"],
                     image_size=prepared["image_size"],
                 )
-                debug["probe_impl"] = str(debug.get("probe_impl", "adapter_legacy_prepare"))
+                debug["probe_impl"] = str(debug.get("probe_impl", "adapter_manual_fullseq"))
 
             labels_exp = labels_e[0]
             cont_label_pos = self._find_cont_label_positions(labels_exp, cont_ids)
@@ -919,12 +967,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         anchor_phrase = self._normalize_yes_no_anchor(preview_text)
         cont_ids = self._choose_cont_ids(preview_text)
         anchor_idx = self._locate_phrase_token_start(cont_ids, anchor_phrase) if anchor_phrase is not None else None
-        cont_token_strs: List[str] = []
-        for tid in cont_ids:
-            try:
-                cont_token_strs.append(str(self.tokenizer.convert_ids_to_tokens(int(tid))))
-            except Exception:
-                cont_token_strs.append("")
+        cont_token_strs = self._token_ids_to_token_strs(cont_ids)
         debug = {
             "probe_source": "baseline_yesno_offline_fullseq",
             "probe_branch_source": probe_branch_source,
@@ -937,6 +980,9 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             "baseline_preview_fallback": False,
             "probe_cont_ids": [int(x) for x in cont_ids],
             "probe_cont_token_strs": cont_token_strs,
+            "prompt_input_ids_len": int(input_ids.size(1)),
+            "probe_cont_len": int(len(cont_ids)),
+            "probe_branch_text_len": int(len(str(preview_text or ""))),
         }
         if anchor_phrase is None or not cont_ids:
             raise RuntimeError("Could not determine yes/no anchor phrase for offline fullseq probe.")
@@ -945,21 +991,22 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             debug["probe_anchor_token_idx"] = 0
         if 0 <= int(anchor_idx) < int(len(cont_ids)):
             debug["probe_anchor_token_id"] = int(cont_ids[int(anchor_idx)])
-            try:
-                debug["probe_anchor_token_str"] = str(self.tokenizer.convert_ids_to_tokens(int(cont_ids[int(anchor_idx)])))
-            except Exception:
-                debug["probe_anchor_token_str"] = ""
+            debug["probe_anchor_token_str"] = self._safe_token_to_str(int(cont_ids[int(anchor_idx)]))
         else:
             debug["probe_anchor_token_id"] = -1
             debug["probe_anchor_token_str"] = ""
 
         cont_t = torch.tensor([cont_ids], dtype=torch.long, device=self.device)
         full_ids = torch.cat([input_ids, cont_t], dim=1)
+        debug["probe_full_ids_len"] = int(full_ids.size(1))
 
         with torch.inference_mode():
             probe_helper = getattr(self.model, "offline_style_full_attention_probe", None)
             used_helper = False
-            if callable(probe_helper):
+            helper_enabled = bool(
+                callable(probe_helper) and not bool(getattr(self.cfg, "probe_force_manual_fullseq", False))
+            )
+            if helper_enabled:
                 try:
                     out, pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = probe_helper(
                         full_ids=full_ids,
@@ -972,9 +1019,17 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                     )
                     debug["probe_impl"] = "offline_style_helper"
                     used_helper = True
+                    debug["mm_embeds_shape"] = [int(x) for x in mm_embeds_e.shape]
+                    debug["attn_mask_shape"] = [int(x) for x in attn_mask_e.shape]
+                    debug["labels_shape"] = [int(x) for x in labels_e.shape]
+                    debug["pos_ids_shape"] = [int(x) for x in pos_ids_e.shape] if pos_ids_e is not None else []
                 except (RuntimeError, TypeError, ValueError) as exc:
                     debug["probe_impl"] = "offline_style_helper_fallback"
                     debug["probe_impl_error"] = str(exc)
+            elif callable(probe_helper):
+                debug["probe_impl"] = "adapter_manual_fullseq_forced"
+            else:
+                debug["probe_impl"] = "adapter_manual_fullseq_no_helper"
 
             if not used_helper:
                 pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
@@ -982,7 +1037,11 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
                     image_tensor=prepared["image_tensor"],
                     image_size=prepared["image_size"],
                 )
-                debug["probe_impl"] = str(debug.get("probe_impl", "adapter_legacy_prepare"))
+                debug["probe_impl"] = str(debug.get("probe_impl", "adapter_manual_fullseq"))
+                debug["mm_embeds_shape"] = [int(x) for x in mm_embeds_e.shape]
+                debug["attn_mask_shape"] = [int(x) for x in attn_mask_e.shape]
+                debug["labels_shape"] = [int(x) for x in labels_e.shape]
+                debug["pos_ids_shape"] = [int(x) for x in pos_ids_e.shape] if pos_ids_e is not None else []
 
             labels_exp = labels_e[0]
             cont_label_pos = self._find_cont_label_positions(labels_exp, cont_ids)
@@ -991,13 +1050,24 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             dec_pos = cont_label_pos - 1
             if int(dec_pos.min().item()) < 0:
                 raise RuntimeError("Negative decision position encountered in offline fullseq probe.")
+            debug["probe_cont_label_positions"] = [int(x) for x in cont_label_pos.detach().cpu().tolist()]
             debug["probe_decision_positions"] = [int(x) for x in dec_pos.detach().cpu().tolist()]
 
             vision_pos = torch.where(labels_exp == int(self.IGNORE_INDEX))[0]
             text_pos = torch.where(labels_exp != int(self.IGNORE_INDEX))[0]
+            valid_label_ids = [int(x) for x in labels_exp[text_pos].detach().cpu().tolist()]
+            debug["vision_positions"] = [int(x) for x in vision_pos.detach().cpu().tolist()]
+            debug["text_positions"] = [int(x) for x in text_pos.detach().cpu().tolist()]
+            debug["expanded_valid_label_ids"] = valid_label_ids
+            debug["expanded_valid_label_token_strs"] = self._token_ids_to_token_strs(valid_label_ids)
             debug["n_vision_positions"] = int(vision_pos.numel())
             debug["n_text_positions"] = int(text_pos.numel())
             debug["expanded_seq_len"] = int(labels_exp.numel())
+            debug["expanded_window_rows"] = self._build_expanded_window_rows(
+                labels_expanded=labels_exp,
+                cont_label_pos=cont_label_pos,
+                dec_pos=dec_pos,
+            )
             if not used_helper:
                 out = self._run_full_attention_probe(
                     mm_embeds=mm_embeds_e,
@@ -1021,10 +1091,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         yesno_token_idx = int(anchor_idx)
         yesno_token_str = ""
         if 0 <= int(anchor_idx) < int(len(cont_ids)):
-            try:
-                yesno_token_str = str(self.tokenizer.convert_ids_to_tokens(int(cont_ids[int(anchor_idx)])))
-            except Exception:
-                yesno_token_str = ""
+            yesno_token_str = self._safe_token_to_str(int(cont_ids[int(anchor_idx)]))
 
         per_head_rows: List[Dict[str, Any]] = []
         for block_idx in range(int(layer_l0), int(layer_l1) + 1):
@@ -1165,6 +1232,7 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             "probe_feature_mode": str(self.cfg.probe_feature_mode),
             "probe_position_mode": str(self.cfg.probe_position_mode),
             "probe_branch_source": str(self.cfg.probe_branch_source),
+            "probe_force_manual_fullseq": bool(self.cfg.probe_force_manual_fullseq),
             "guidance_mode": guidance_mode,
             "g_top5_mass": float(g_top5_mass),
             "image_start": int(image_start),

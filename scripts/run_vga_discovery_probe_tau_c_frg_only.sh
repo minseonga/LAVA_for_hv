@@ -48,6 +48,7 @@ LATE_START="${LATE_START:-16}"
 LATE_END="${LATE_END:-24}"
 PROBE_POSITION_MODE="${PROBE_POSITION_MODE:-baseline_yesno_offline_fullseq}"
 PROBE_BRANCH_SOURCE="${PROBE_BRANCH_SOURCE:-baseline_jsonl}"
+PROBE_FORCE_MANUAL_FULLSEQ="${PROBE_FORCE_MANUAL_FULLSEQ:-false}"
 PROBE_PREVIEW_MAX_NEW_TOKENS="${PROBE_PREVIEW_MAX_NEW_TOKENS:-3}"
 PROBE_PREVIEW_REUSE_BASELINE="${PROBE_PREVIEW_REUSE_BASELINE:-true}"
 PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST="${PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST:-true}"
@@ -146,6 +147,7 @@ if [[ "$FORCE_PROBE" == "1" || ! -f "$PROBE_FEATURES_CSV" ]]; then
     --probe_feature_mode static_headset \
     --probe_position_mode "$PROBE_POSITION_MODE" \
     --probe_branch_source "$PROBE_BRANCH_SOURCE" \
+    --probe_force_manual_fullseq "$PROBE_FORCE_MANUAL_FULLSEQ" \
     --branch_text_jsonl "$BASELINE_PRED_JSONL" \
     --probe_preview_max_new_tokens "$PROBE_PREVIEW_MAX_NEW_TOKENS" \
     --probe_preview_reuse_baseline "$PROBE_PREVIEW_REUSE_BASELINE" \

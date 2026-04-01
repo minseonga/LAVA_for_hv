@@ -63,6 +63,7 @@ Relevant scripts:
 - router build/export: [scripts/build_cost_aware_gain_router.py](../scripts/build_cost_aware_gain_router.py)
 - actual online runner: [scripts/run_cost_aware_gain_router_online.py](../scripts/run_cost_aware_gain_router_online.py)
 - artifact wrapper: [scripts/build_vga_cost_aware_gain_router_artifact_9000.sh](../scripts/build_vga_cost_aware_gain_router_artifact_9000.sh)
+- discovery-mix artifact wrapper: [scripts/build_vga_cost_aware_gain_router_artifact_discovery_mix.sh](../scripts/build_vga_cost_aware_gain_router_artifact_discovery_mix.sh)
 - online wrapper: [scripts/run_vga_cost_aware_gain_router_online_9000.sh](../scripts/run_vga_cost_aware_gain_router_online_9000.sh)
 
 Relevant documents:
@@ -111,14 +112,25 @@ What this wrapper does:
 
 Build on discovery, then carry that frozen artifact to POPE-9000.
 
+Current server discovery root:
+
+- `/home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785`
+
+Expected core files there:
+
+- `discovery_mix_train2014.jsonl`
+- `discovery_q_with_object.jsonl`
+- `discovery_subset_ids.csv`
+- `per_case_compare.csv`
+- `summary.json`
+
+Recommended command:
+
 ```bash
 cd ~/LLaVA_calibration
 
 CUDA_VISIBLE_DEVICES=5 \
-QUESTION_FILE=/home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_adversarial/assets/discovery_q_with_object.jsonl \
-TAXONOMY_CSV=/home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_adversarial/taxonomy/per_case_compare.csv \
-OUT_DIR=/home/kms/LLaVA_calibration/experiments/pope_discovery/vga_cost_aware_gain_router_artifact \
-bash scripts/build_vga_cost_aware_gain_router_artifact_9000.sh
+bash scripts/build_vga_cost_aware_gain_router_artifact_discovery_mix.sh
 ```
 
 This is the command you want if the online POPE-9000 result is intended for the paper.
@@ -135,8 +147,8 @@ Expect roughly:
 
 - `feature_variant = "no_abs"`
 - `deployment_budget = 0.3`
-- `hgb_budget_row.acc ≈ 0.8729`
-- `deployment_cutoff_hgb_fullfit ≈ 0.0141`
+- if the balanced mix discovery is the intended one, compare against that run's own `base_acc`, `vga_acc`, and `hgb_budget_acc`
+- the important check is `hgb_budget_acc >= vga_acc` on discovery before moving to POPE-9000
 
 If these are far off, do not proceed until the probe extraction path matches the intended setting.
 
@@ -150,7 +162,7 @@ Command:
 cd ~/LLaVA_calibration
 
 CUDA_VISIBLE_DEVICES=5 \
-ROUTER_DIR=/home/kms/LLaVA_calibration/experiments/pope_discovery/vga_cost_aware_gain_router_artifact/router \
+ROUTER_DIR=/home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785/vga_cost_aware_gain_router_artifact/router \
 OUT_DIR=/home/kms/LLaVA_calibration/experiments/pope_full_9000/vga_cost_aware_gain_router_online_from_discovery \
 bash scripts/run_vga_cost_aware_gain_router_online_9000.sh
 ```
@@ -183,9 +195,9 @@ CUDA_VISIBLE_DEVICES=5 python scripts/extract_pnp_probe_features.py \
   --backend vga \
   --vga_root /home/kms/VGA_origin \
   --model_path liuhaotian/llava-v1.5-7b \
-  --image_folder /home/kms/data/pope/val2014 \
-  --question_file /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_adversarial/assets/discovery_q_with_object.jsonl \
-  --out_dir /home/kms/LLaVA_calibration/experiments/pope_discovery/vga_cost_aware_gain_router_artifact/probe_features \
+  --image_folder /home/kms/data/images/mscoco/images/train2014 \
+  --question_file /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785/discovery_q_with_object.jsonl \
+  --out_dir /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785/vga_cost_aware_gain_router_artifact/probe_features \
   --conv_mode llava_v1 \
   --device cuda \
   --temperature 0 \
@@ -217,9 +229,9 @@ CUDA_VISIBLE_DEVICES=5 python scripts/extract_pnp_probe_features.py \
 cd ~/LLaVA_calibration
 
 python scripts/build_cost_aware_gain_router.py \
-  --probe_log_csv /home/kms/LLaVA_calibration/experiments/pope_discovery/vga_cost_aware_gain_router_artifact/probe_features/probe_features.csv \
-  --taxonomy_csv /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_adversarial/taxonomy/per_case_compare.csv \
-  --out_dir /home/kms/LLaVA_calibration/experiments/pope_discovery/vga_cost_aware_gain_router_artifact/router \
+  --probe_log_csv /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785/vga_cost_aware_gain_router_artifact/probe_features/probe_features.csv \
+  --taxonomy_csv /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785/per_case_compare.csv \
+  --out_dir /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785/vga_cost_aware_gain_router_artifact/router \
   --tau -0.0068411549792573 \
   --backend_name vga \
   --feature_variant no_abs \
@@ -235,7 +247,7 @@ cd ~/LLaVA_calibration
 
 CUDA_VISIBLE_DEVICES=5 python scripts/run_cost_aware_gain_router_online.py \
   --backend vga \
-  --router_dir /home/kms/LLaVA_calibration/experiments/pope_discovery/vga_cost_aware_gain_router_artifact/router \
+  --router_dir /home/kms/LLaVA_calibration/experiments/pope_discovery/tau_c_calibration_mix_train2014_2785/vga_cost_aware_gain_router_artifact/router \
   --vga_root /home/kms/VGA_origin \
   --model_path liuhaotian/llava-v1.5-7b \
   --image_folder /home/kms/data/pope/val2014 \

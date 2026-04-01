@@ -36,6 +36,15 @@ def build_branch_text_map(path: str) -> Dict[str, str]:
     return out
 
 
+def parse_yes_no(text: str) -> str:
+    s = (text or "").strip()
+    first = s.split(".", 1)[0].replace(",", " ")
+    words = set(w.strip().lower() for w in first.split())
+    if "no" in words or "not" in words:
+        return "no"
+    return "yes"
+
+
 def load_csv_rows(path: str) -> List[Dict[str, str]]:
     with open(path, newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
@@ -89,6 +98,7 @@ def main() -> None:
     ap.add_argument("--max_ids", type=int, default=-1)
     ap.add_argument("--offline_features_csv", type=str, default="")
     ap.add_argument("--taxonomy_csv", type=str, default="")
+    ap.add_argument("--offline_branch_text_jsonl", type=str, default="")
     ap.add_argument("--model_base", type=str, default=None)
     ap.add_argument("--conv_mode", type=str, default="llava_v1")
     ap.add_argument("--device", type=str, default="cuda")
@@ -110,6 +120,7 @@ def main() -> None:
     ap.add_argument("--probe_preview_max_new_tokens", type=int, default=3)
     ap.add_argument("--probe_preview_reuse_baseline", type=lambda x: x.lower() == "true", default=True)
     ap.add_argument("--probe_preview_fallback_to_prompt_last", type=lambda x: x.lower() == "true", default=True)
+    ap.add_argument("--probe_force_manual_fullseq", type=lambda x: x.lower() == "true", default=False)
     ap.add_argument(
         "--probe_branch_source",
         type=str,
@@ -134,6 +145,11 @@ def main() -> None:
     branch_text_map: Dict[str, str] = {}
     if str(args.branch_text_jsonl).strip():
         branch_text_map = build_branch_text_map(args.branch_text_jsonl)
+    if str(args.probe_branch_source).strip().lower() == "baseline_jsonl" and not branch_text_map:
+        raise SystemExit("--branch_text_jsonl is required when --probe_branch_source=baseline_jsonl")
+    offline_branch_text_map: Dict[str, str] = {}
+    if str(args.offline_branch_text_jsonl).strip():
+        offline_branch_text_map = build_branch_text_map(args.offline_branch_text_jsonl)
 
     offline_trace_rows = load_csv_rows(args.offline_per_head_trace_csv)
     offline_trace_filtered = [row for row in offline_trace_rows if str(row.get("id", "")) in set(selected_ids)]
@@ -174,6 +190,7 @@ def main() -> None:
             probe_feature_mode=args.probe_feature_mode,
             headset_json=args.headset_json,
             probe_position_mode="baseline_yesno_offline_fullseq",
+            probe_force_manual_fullseq=bool(args.probe_force_manual_fullseq),
             probe_preview_max_new_tokens=args.probe_preview_max_new_tokens,
             probe_preview_reuse_baseline=bool(args.probe_preview_reuse_baseline),
             probe_preview_fallback_to_prompt_last=bool(args.probe_preview_fallback_to_prompt_last),
@@ -184,6 +201,8 @@ def main() -> None:
     runtime_rows: List[Dict[str, Any]] = []
     aligned_rows: List[Dict[str, Any]] = []
     sample_rows: List[Dict[str, Any]] = []
+    per_sample_json_dir = os.path.join(args.out_dir, "per_sample_json")
+    os.makedirs(per_sample_json_dir, exist_ok=True)
 
     for sid in selected_ids:
         sample = samples[sid]
@@ -194,6 +213,8 @@ def main() -> None:
             branch_text = str(baseline_pred.get("output", ""))
         elif branch_source == "baseline_jsonl":
             branch_text = str(branch_text_map.get(sid, ""))
+            if branch_text.strip() == "":
+                raise SystemExit(f"Missing branch text for id={sid} in --branch_text_jsonl")
         debug_pack = adapter.debug_probe_baseline_yesno_offline_fullseq(
             sample=sample,
             head_layer_start=args.head_layer_start,
@@ -204,6 +225,13 @@ def main() -> None:
         debug = debug_pack["debug"]
         offline_feat = offline_feat_map.get(sid, {})
         tax = tax_map.get(sid, {})
+        runtime_branch_text = str(debug.get("probe_branch_text", ""))
+        offline_branch_text = str(offline_branch_text_map.get(sid, ""))
+        runtime_branch_label = parse_yes_no(runtime_branch_text) if runtime_branch_text.strip() else ""
+        offline_branch_label = parse_yes_no(offline_branch_text) if offline_branch_text.strip() else ""
+        sample_runtime_rows: List[Dict[str, Any]] = []
+        sample_offline_rows = [row for row in offline_trace_filtered if str(row.get("id", "")) == sid]
+        sample_aligned_rows: List[Dict[str, Any]] = []
         sample_rows.append(
             {
                 "id": sid,
@@ -214,9 +242,19 @@ def main() -> None:
                 "probe_impl_error": debug.get("probe_impl_error", ""),
                 "probe_branch_source": debug.get("probe_branch_source", ""),
                 "probe_branch_text": debug.get("probe_branch_text", ""),
+                "probe_branch_label": runtime_branch_label,
+                "offline_branch_text": offline_branch_text,
+                "offline_branch_label": offline_branch_label,
+                "branch_text_exact_match": int(runtime_branch_text == offline_branch_text) if offline_branch_text.strip() else "",
+                "branch_label_match": int(runtime_branch_label == offline_branch_label) if offline_branch_label else "",
                 "probe_anchor": debug.get("probe_anchor", ""),
                 "probe_anchor_token_idx": debug.get("probe_anchor_token_idx", -1),
+                "probe_cont_len": debug.get("probe_cont_len", -1),
+                "probe_cont_label_positions": json.dumps(debug.get("probe_cont_label_positions", []), ensure_ascii=False),
                 "probe_decision_pos": debug.get("probe_decision_pos", -1),
+                "probe_decision_positions": json.dumps(debug.get("probe_decision_positions", []), ensure_ascii=False),
+                "vision_positions": json.dumps(debug.get("vision_positions", []), ensure_ascii=False),
+                "text_positions": json.dumps(debug.get("text_positions", []), ensure_ascii=False),
                 "baseline_preview_fallback": int(bool(debug.get("baseline_preview_fallback", False))),
                 "baseline_preview_text": debug.get("baseline_preview_text", ""),
                 "guidance_mode": debug_pack["guidance_mode"],
@@ -233,35 +271,70 @@ def main() -> None:
         )
 
         for row in debug_pack["per_head_rows"]:
+            sample_runtime_rows.append(row)
             runtime_rows.append(row)
             key = (str(row["id"]), int(row["block_layer_idx"]), int(row["head_idx"]))
             offline = offline_trace_map.get(key)
             if offline is None:
                 continue
-            aligned_rows.append(
-                {
-                    "id": str(row["id"]),
-                    "question": str(row["question"]),
-                    "image_id": str(row["image_id"]),
-                    "block_layer_idx": int(row["block_layer_idx"]),
-                    "head_idx": int(row["head_idx"]),
-                    "probe_impl": str(row.get("probe_impl", "")),
-                    "probe_anchor": str(row.get("anchor_phrase", "")),
-                    "probe_decision_pos": int(row.get("probe_decision_pos", -1)),
-                    "offline_head_attn_vis_sum": float(offline["head_attn_vis_sum"]),
-                    "runtime_head_attn_vis_sum": float(row["head_attn_vis_sum"]),
-                    "diff_head_attn_vis_sum": float(row["head_attn_vis_sum"]) - float(offline["head_attn_vis_sum"]),
-                    "offline_head_attn_vis_ratio": float(offline["head_attn_vis_ratio"]),
-                    "runtime_head_attn_vis_ratio": float(row["head_attn_vis_ratio"]),
-                    "diff_head_attn_vis_ratio": float(row["head_attn_vis_ratio"]) - float(offline["head_attn_vis_ratio"]),
-                    "offline_head_attn_vis_peak": float(offline["head_attn_vis_peak"]),
-                    "runtime_head_attn_vis_peak": float(row["head_attn_vis_peak"]),
-                    "diff_head_attn_vis_peak": float(row["head_attn_vis_peak"]) - float(offline["head_attn_vis_peak"]),
-                    "offline_head_attn_vis_entropy": float(offline["head_attn_vis_entropy"]),
-                    "runtime_head_attn_vis_entropy": float(row["head_attn_vis_entropy"]),
-                    "diff_head_attn_vis_entropy": float(row["head_attn_vis_entropy"]) - float(offline["head_attn_vis_entropy"]),
-                }
-            )
+            aligned = {
+                "id": str(row["id"]),
+                "question": str(row["question"]),
+                "image_id": str(row["image_id"]),
+                "block_layer_idx": int(row["block_layer_idx"]),
+                "head_idx": int(row["head_idx"]),
+                "probe_impl": str(row.get("probe_impl", "")),
+                "probe_anchor": str(row.get("anchor_phrase", "")),
+                "probe_decision_pos": int(row.get("probe_decision_pos", -1)),
+                "offline_head_attn_vis_sum": float(offline["head_attn_vis_sum"]),
+                "runtime_head_attn_vis_sum": float(row["head_attn_vis_sum"]),
+                "diff_head_attn_vis_sum": float(row["head_attn_vis_sum"]) - float(offline["head_attn_vis_sum"]),
+                "offline_head_attn_vis_ratio": float(offline["head_attn_vis_ratio"]),
+                "runtime_head_attn_vis_ratio": float(row["head_attn_vis_ratio"]),
+                "diff_head_attn_vis_ratio": float(row["head_attn_vis_ratio"]) - float(offline["head_attn_vis_ratio"]),
+                "offline_head_attn_vis_peak": float(offline["head_attn_vis_peak"]),
+                "runtime_head_attn_vis_peak": float(row["head_attn_vis_peak"]),
+                "diff_head_attn_vis_peak": float(row["head_attn_vis_peak"]) - float(offline["head_attn_vis_peak"]),
+                "offline_head_attn_vis_entropy": float(offline["head_attn_vis_entropy"]),
+                "runtime_head_attn_vis_entropy": float(row["head_attn_vis_entropy"]),
+                "diff_head_attn_vis_entropy": float(row["head_attn_vis_entropy"]) - float(offline["head_attn_vis_entropy"]),
+            }
+            aligned_rows.append(aligned)
+            sample_aligned_rows.append(aligned)
+
+        if sample_aligned_rows:
+            mean_abs_ratio_diff = sum(abs(float(r["diff_head_attn_vis_ratio"])) for r in sample_aligned_rows) / len(sample_aligned_rows)
+            mean_abs_sum_diff = sum(abs(float(r["diff_head_attn_vis_sum"])) for r in sample_aligned_rows) / len(sample_aligned_rows)
+            sample_rows[-1]["n_runtime_head_rows"] = int(len(sample_runtime_rows))
+            sample_rows[-1]["n_offline_head_rows"] = int(len(sample_offline_rows))
+            sample_rows[-1]["n_aligned_head_rows"] = int(len(sample_aligned_rows))
+            sample_rows[-1]["mean_abs_diff_head_attn_vis_ratio"] = float(mean_abs_ratio_diff)
+            sample_rows[-1]["mean_abs_diff_head_attn_vis_sum"] = float(mean_abs_sum_diff)
+        else:
+            sample_rows[-1]["n_runtime_head_rows"] = int(len(sample_runtime_rows))
+            sample_rows[-1]["n_offline_head_rows"] = int(len(sample_offline_rows))
+            sample_rows[-1]["n_aligned_head_rows"] = 0
+            sample_rows[-1]["mean_abs_diff_head_attn_vis_ratio"] = ""
+            sample_rows[-1]["mean_abs_diff_head_attn_vis_sum"] = ""
+
+        sample_json = {
+            "id": sid,
+            "question_file_sample": sample,
+            "runtime_debug_pack": debug_pack,
+            "offline_feature_row": offline_feat,
+            "taxonomy_row": tax,
+            "runtime_branch_text": runtime_branch_text,
+            "runtime_branch_label": runtime_branch_label,
+            "offline_branch_text": offline_branch_text,
+            "offline_branch_label": offline_branch_label,
+            "branch_text_exact_match": bool(runtime_branch_text == offline_branch_text) if offline_branch_text.strip() else None,
+            "branch_label_match": bool(runtime_branch_label == offline_branch_label) if offline_branch_label else None,
+            "offline_head_rows": sample_offline_rows,
+            "runtime_head_rows": sample_runtime_rows,
+            "aligned_head_rows": sample_aligned_rows,
+        }
+        with open(os.path.join(per_sample_json_dir, f"{sid}.json"), "w", encoding="utf-8") as f:
+            json.dump(sample_json, f, ensure_ascii=False, indent=2)
 
     runtime_csv = os.path.join(args.out_dir, "runtime_probe_head_rows.csv")
     offline_csv = os.path.join(args.out_dir, "offline_trace_head_rows.csv")
@@ -279,6 +352,7 @@ def main() -> None:
             "offline_per_head_trace_csv": os.path.abspath(args.offline_per_head_trace_csv),
             "offline_features_csv": os.path.abspath(args.offline_features_csv) if str(args.offline_features_csv).strip() else "",
             "taxonomy_csv": os.path.abspath(args.taxonomy_csv) if str(args.taxonomy_csv).strip() else "",
+            "offline_branch_text_jsonl": os.path.abspath(args.offline_branch_text_jsonl) if str(args.offline_branch_text_jsonl).strip() else "",
             "probe_branch_source": str(args.probe_branch_source),
             "branch_text_jsonl": os.path.abspath(args.branch_text_jsonl) if str(args.branch_text_jsonl).strip() else "",
             "head_layer_start": int(args.head_layer_start),
@@ -296,6 +370,7 @@ def main() -> None:
             "runtime_probe_head_rows_csv": runtime_csv,
             "offline_trace_head_rows_csv": offline_csv,
             "aligned_head_comparison_csv": aligned_csv,
+            "per_sample_json_dir": per_sample_json_dir,
         },
     }
     summary_path = os.path.join(args.out_dir, "summary.json")

@@ -58,6 +58,7 @@ PROBE_BRANCH_TEXT_COL="${PROBE_BRANCH_TEXT_COL:-output}"
 PROBE_PREVIEW_MAX_NEW_TOKENS="${PROBE_PREVIEW_MAX_NEW_TOKENS:-3}"
 PROBE_PREVIEW_REUSE_BASELINE="${PROBE_PREVIEW_REUSE_BASELINE:-true}"
 PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST="${PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST:-true}"
+PROBE_FORCE_MANUAL_FULLSEQ="${PROBE_FORCE_MANUAL_FULLSEQ:-false}"
 SEED="${SEED:-42}"
 MAX_SAMPLES="${MAX_SAMPLES:--1}"
 
@@ -100,6 +101,7 @@ python scripts/run_pnp_hard_veto_online.py \
   --probe_feature_mode static_headset \
   --probe_position_mode "$PROBE_POSITION_MODE" \
   --probe_branch_source "$PROBE_BRANCH_SOURCE" \
+  --probe_force_manual_fullseq "$PROBE_FORCE_MANUAL_FULLSEQ" \
   --probe_preview_max_new_tokens "$PROBE_PREVIEW_MAX_NEW_TOKENS" \
   --probe_preview_reuse_baseline "$PROBE_PREVIEW_REUSE_BASELINE" \
   --probe_preview_fallback_to_prompt_last "$PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST" \
