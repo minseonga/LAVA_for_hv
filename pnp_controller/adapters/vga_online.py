@@ -1145,6 +1145,197 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             "per_head_rows": per_head_rows,
         }
 
+    def _summarize_path_metric(self, values: List[float], prefix: str) -> Dict[str, float]:
+        if not values:
+            return {
+                f"{prefix}_mean": 0.0,
+                f"{prefix}_std": 0.0,
+                f"{prefix}_min": 0.0,
+                f"{prefix}_max": 0.0,
+                f"{prefix}_last": 0.0,
+                f"{prefix}_mean_plus_std": 0.0,
+            }
+        vals_t = torch.tensor(values, dtype=torch.float32)
+        mean_v = float(vals_t.mean().item())
+        std_v = float(vals_t.std(unbiased=False).item())
+        min_v = float(vals_t.min().item())
+        max_v = float(vals_t.max().item())
+        last_v = float(vals_t[-1].item())
+        return {
+            f"{prefix}_mean": mean_v,
+            f"{prefix}_std": std_v,
+            f"{prefix}_min": min_v,
+            f"{prefix}_max": max_v,
+            f"{prefix}_last": last_v,
+            f"{prefix}_mean_plus_std": float(mean_v + std_v),
+        }
+
+    def _resolve_verify_context(
+        self,
+        sample: Dict[str, Any],
+        probe_state: Optional[ProbeState] = None,
+    ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, float]:
+        extras = probe_state.extras if probe_state is not None else {}
+        prepared = extras.get("prepared", None)
+        input_ids = extras.get("input_ids", None)
+        vl_guidance = extras.get("vl_guidance", None)
+        g_top5_mass = extras.get("g_top5_mass", None)
+        if (
+            isinstance(prepared, dict)
+            and torch.is_tensor(input_ids)
+            and torch.is_tensor(vl_guidance)
+            and g_top5_mass is not None
+        ):
+            return prepared, input_ids, vl_guidance, float(g_top5_mass)
+
+        ctx = self._prepare_runtime_context(sample)
+        return ctx["prepared"], ctx["input_ids"], ctx["vl_guidance"], float(ctx["g_top5_mass"])
+
+    def verify_candidate_path(
+        self,
+        sample: Dict[str, Any],
+        candidate_text: str,
+        probe_state: Optional[ProbeState] = None,
+        force_manual_fullseq: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        prepared, input_ids, vl_guidance, g_top5_mass = self._resolve_verify_context(
+            sample=sample,
+            probe_state=probe_state,
+        )
+        raw_text = str(candidate_text or "").strip()
+        debug: Dict[str, Any] = {
+            "verify_source": "candidate_path_fullseq",
+            "candidate_text": raw_text,
+            "verify_impl": "",
+            "verify_impl_error": "",
+            "force_manual_fullseq": bool(force_manual_fullseq) if force_manual_fullseq is not None else None,
+        }
+        if raw_text == "":
+            return {
+                "valid": False,
+                "n_tokens": 0,
+                "token_rows": [],
+                "debug": debug,
+            }
+
+        cont_ids = self._choose_cont_ids(raw_text)
+        if not cont_ids:
+            debug["verify_impl_error"] = "empty_cont_ids"
+            return {
+                "valid": False,
+                "n_tokens": 0,
+                "token_rows": [],
+                "debug": debug,
+            }
+
+        cont_t = torch.tensor([cont_ids], dtype=torch.long, device=self.device)
+        full_ids = torch.cat([input_ids, cont_t], dim=1)
+        use_force_manual = bool(self.cfg.probe_force_manual_fullseq) if force_manual_fullseq is None else bool(force_manual_fullseq)
+
+        with torch.inference_mode():
+            probe_helper = getattr(self.model, "offline_style_full_attention_probe", None)
+            used_helper = False
+            helper_enabled = bool(callable(probe_helper) and not use_force_manual)
+            if helper_enabled:
+                try:
+                    out, pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = probe_helper(
+                        full_ids=full_ids,
+                        images=prepared["image_tensor"].unsqueeze(0),
+                        attention_mask=torch.ones_like(full_ids, dtype=torch.long, device=self.device),
+                        labels=full_ids,
+                        output_attentions=True,
+                        output_hidden_states=True,
+                        return_dict=True,
+                    )
+                    debug["verify_impl"] = "offline_style_helper"
+                    used_helper = True
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    debug["verify_impl"] = "offline_style_helper_fallback"
+                    debug["verify_impl_error"] = str(exc)
+            elif callable(probe_helper):
+                debug["verify_impl"] = "candidate_manual_fullseq_forced"
+            else:
+                debug["verify_impl"] = "candidate_manual_fullseq_no_helper"
+
+            if not used_helper:
+                pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
+                    full_ids=full_ids,
+                    image_tensor=prepared["image_tensor"],
+                    image_size=prepared["image_size"],
+                )
+
+            labels_exp = labels_e[0]
+            cont_label_pos = self._find_cont_label_positions(labels_exp, cont_ids)
+            if cont_label_pos is None or int(cont_label_pos.numel()) != int(len(cont_ids)):
+                debug["verify_impl_error"] = "cont_alignment_failed"
+                return {
+                    "valid": False,
+                    "n_tokens": 0,
+                    "token_rows": [],
+                    "debug": debug,
+                }
+            dec_pos = cont_label_pos - 1
+            if int(dec_pos.min().item()) < 0:
+                debug["verify_impl_error"] = "negative_decision_pos"
+                return {
+                    "valid": False,
+                    "n_tokens": 0,
+                    "token_rows": [],
+                    "debug": debug,
+                }
+
+            vision_pos = torch.where(labels_exp == int(self.IGNORE_INDEX))[0]
+            text_pos = torch.where(labels_exp != int(self.IGNORE_INDEX))[0]
+            if not used_helper:
+                out = self._run_full_attention_probe(
+                    mm_embeds=mm_embeds_e,
+                    attn_mask=attn_mask_e,
+                    pos_ids=pos_ids_e,
+                )
+
+        token_rows: List[Dict[str, Any]] = []
+        frg_vals: List[float] = []
+        gmi_vals: List[float] = []
+        cont_pos_list = [int(x) for x in cont_label_pos.detach().cpu().tolist()]
+        dec_pos_list = [int(x) for x in dec_pos.detach().cpu().tolist()]
+        for idx, decision_pos in enumerate(dec_pos_list):
+            frg_t, gmi_t, attn_stats_t = self._compute_probe_metrics_at_decision_row(
+                attentions=out.attentions,
+                decision_pos=int(decision_pos),
+                vision_positions=vision_pos,
+                text_positions=text_pos,
+                guidance=vl_guidance,
+                g_top5_mass=float(g_top5_mass),
+            )
+            frg_vals.append(float(frg_t))
+            gmi_vals.append(float(gmi_t))
+            token_id = int(cont_ids[idx])
+            token_rows.append(
+                {
+                    "token_idx": int(idx),
+                    "token_id": token_id,
+                    "token_str": self._safe_token_to_str(token_id),
+                    "label_pos": int(cont_pos_list[idx]),
+                    "decision_pos": int(decision_pos),
+                    "frg": float(frg_t),
+                    "gmi": float(gmi_t),
+                    "faithful_head_attn_mean": float(attn_stats_t.get("faithful_head_attn_mean", 0.0)),
+                    "harmful_head_attn_mean": float(attn_stats_t.get("harmful_head_attn_mean", 0.0)),
+                    "global_late_head_attn_mean": float(attn_stats_t.get("global_late_head_attn_mean", 0.0)),
+                }
+            )
+
+        out_obj: Dict[str, Any] = {
+            "valid": True,
+            "candidate_text": raw_text,
+            "n_tokens": int(len(token_rows)),
+            "token_rows": token_rows,
+            "debug": debug,
+        }
+        out_obj.update(self._summarize_path_metric(frg_vals, "path_frg"))
+        out_obj.update(self._summarize_path_metric(gmi_vals, "path_gmi"))
+        return out_obj
+
     def probe(self, sample: Any, branch_text: str | None = None) -> ProbeState:
         ctx = self._prepare_runtime_context(sample)
         prepared = ctx["prepared"]
@@ -1227,6 +1418,8 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             )
         extras = {
             "prepared": prepared,
+            "input_ids": input_ids,
+            "vl_guidance": vl_guidance,
             "base_gen_kwargs": ctx["base_gen_kwargs"],
             "method_gen_kwargs": ctx["method_gen_kwargs"],
             "probe_feature_mode": str(self.cfg.probe_feature_mode),
