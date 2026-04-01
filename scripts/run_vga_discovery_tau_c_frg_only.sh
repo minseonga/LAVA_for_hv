@@ -39,6 +39,10 @@ LAYER_FOCUS="${LAYER_FOCUS:-17}"
 TRACE_HEAD_LAYER_START="${TRACE_HEAD_LAYER_START:-10}"
 TRACE_HEAD_LAYER_END="${TRACE_HEAD_LAYER_END:-24}"
 MAX_TRACE_SAMPLES="${MAX_TRACE_SAMPLES:-0}"
+TRACE_ATTN_IMPL="${TRACE_ATTN_IMPL:-auto}"
+TRACE_CONTROL_MODES="${TRACE_CONTROL_MODES:-blur,shuffle}"
+TRACE_BOOTSTRAP="${TRACE_BOOTSTRAP:-500}"
+TRACE_DISABLE_PCA_PROBE="${TRACE_DISABLE_PCA_PROBE:-false}"
 
 OBJECT_PRIOR_THR="${OBJECT_PRIOR_THR:-0.55}"
 CALIB_RATIO="${CALIB_RATIO:-0.3}"
@@ -134,6 +138,7 @@ if [[ ! -f "$PER_HEAD_TRACE_CSV" || ! -f "$PER_LAYER_TRACE_CSV" ]]; then
     --dataset_mode pope
     --model_path "$MODEL_PATH"
     --conv_mode "$CONV_MODE"
+    --attn_impl "$TRACE_ATTN_IMPL"
     --topk_local 16
     --object_patch_topk 64
     --hidden_layer_idx -1
@@ -142,12 +147,15 @@ if [[ ! -f "$PER_HEAD_TRACE_CSV" || ! -f "$PER_LAYER_TRACE_CSV" ]]; then
     --save_head_trace
     --head_layer_start "$TRACE_HEAD_LAYER_START"
     --head_layer_end "$TRACE_HEAD_LAYER_END"
-    --control_modes blur,shuffle
+    --control_modes "$TRACE_CONTROL_MODES"
     --shuffle_grid 4
     --blur_radius 12
-    --bootstrap 500
+    --bootstrap "$TRACE_BOOTSTRAP"
     --seed "$SEED"
   )
+  if [[ "$TRACE_DISABLE_PCA_PROBE" == "true" ]]; then
+    TRACE_CMD+=(--disable_pca_probe)
+  fi
   if [[ "$MAX_TRACE_SAMPLES" != "0" ]]; then
     TRACE_CMD+=(--num_samples "$MAX_TRACE_SAMPLES")
   fi
