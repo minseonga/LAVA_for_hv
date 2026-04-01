@@ -92,6 +92,7 @@ def compute_score_rows(args: argparse.Namespace) -> List[ScoreRow]:
         model_path=args.model_path,
         model_base=(None if not str(args.model_base).strip() else args.model_base),
         conv_mode=args.conv_mode,
+        device=args.device,
         load_8bit=bool(args.load_8bit),
         load_4bit=bool(args.load_4bit),
     )
@@ -376,6 +377,7 @@ def main() -> None:
     ap.add_argument("--model_path", type=str, required=True)
     ap.add_argument("--model_base", type=str, default="")
     ap.add_argument("--conv_mode", type=str, default="llava_v1")
+    ap.add_argument("--device", type=str, default="cuda")
     ap.add_argument("--headset_json", type=str, required=True)
     ap.add_argument("--late_start", type=int, default=-1)
     ap.add_argument("--late_end", type=int, default=-1)
@@ -451,6 +453,7 @@ def main() -> None:
             "model_path": args.model_path,
             "model_base": args.model_base,
             "conv_mode": args.conv_mode,
+            "device": args.device,
             "headset_json": os.path.abspath(args.headset_json),
             "beta": float(args.beta),
             "lambda_a": float(args.lambda_a),

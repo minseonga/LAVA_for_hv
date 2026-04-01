@@ -4,6 +4,7 @@ set -euo pipefail
 CAL_ROOT="${CAL_ROOT:-/home/kms/LLaVA_calibration}"
 VGA_ROOT="${VGA_ROOT:-/home/kms/VGA_origin}"
 GPU="${GPU:-${CUDA_VISIBLE_DEVICES:-6}}"
+DEVICE="${DEVICE:-cuda}"
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 
 IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/images/mscoco/images/train2014}"
@@ -94,6 +95,7 @@ PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_frgavr_cleanroom.py \
   --gt_id_col id \
   --gt_label_col answer \
   --model_path "$MODEL_PATH" \
+  --device "$DEVICE" \
   --conv_mode "$CONV_MODE" \
   --headset_json "$HEADSET_JSON" \
   --beta "$BETA" \

@@ -299,6 +299,7 @@ class CleanroomLlavaRuntime:
         model_path: str,
         model_base: Optional[str],
         conv_mode: str,
+        device: str = "cuda",
         load_8bit: bool = False,
         load_4bit: bool = False,
     ) -> None:
@@ -308,19 +309,40 @@ class CleanroomLlavaRuntime:
 
         disable_torch_init()
         model_name = get_model_name_from_path(model_path)
-        tokenizer, model, image_processor, _ = load_pretrained_model(
-            model_path,
-            model_base,
-            model_name,
-            load_8bit=bool(load_8bit),
-            load_4bit=bool(load_4bit),
-        )
+        requested_device = str(device or "cuda")
+        fallback_used = False
+        try:
+            tokenizer, model, image_processor, _ = load_pretrained_model(
+                model_path,
+                model_base,
+                model_name,
+                load_8bit=bool(load_8bit),
+                load_4bit=bool(load_4bit),
+                device=requested_device,
+            )
+        except ValueError as exc:
+            if "does not support `device_map='auto'`" not in str(exc):
+                raise
+            if bool(load_8bit or load_4bit):
+                raise
+            tokenizer, model, image_processor, _ = load_pretrained_model(
+                model_path,
+                model_base,
+                model_name,
+                load_8bit=False,
+                load_4bit=False,
+                device_map="cpu",
+                device="cpu",
+            )
+            if requested_device != "cpu":
+                model = model.to(device=requested_device, dtype=torch.float16)
+            fallback_used = True
         tokenizer.padding_side = "right"
         self.tokenizer = tokenizer
         self.model = model
         self.image_processor = image_processor
         self.conv_mode = conv_mode
-        self.device = model.device
+        self.device = torch.device(requested_device if fallback_used else model.device)
 
     def prompt_text(self, question: str) -> str:
         return build_prompt(
@@ -554,4 +576,3 @@ def stage_b_score_from_packs(
         "stage_b_delta_mean": delta_mean,
         "stage_b_delta_std": delta_std,
     }
-
