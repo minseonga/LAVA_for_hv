@@ -341,6 +341,19 @@ def main() -> None:
         on="id",
         how="inner",
     )
+    if df.empty:
+        probe_ids = probe["id"].astype(str).str.strip()
+        tax_ids = tax["id"].astype(str).str.strip()
+        probe_examples = [x for x in probe_ids.tolist() if x][:5]
+        tax_examples = [x for x in tax_ids.tolist() if x][:5]
+        raise ValueError(
+            "Probe/taxonomy join produced 0 rows. "
+            f"probe rows={len(probe)}, nonempty probe ids={(probe_ids != '').sum()}, "
+            f"taxonomy rows={len(tax)}, nonempty taxonomy ids={(tax_ids != '').sum()}, "
+            f"probe id examples={probe_examples}, taxonomy id examples={tax_examples}. "
+            "Most likely the probe question file did not contain stable question_id/id fields. "
+            "Use a normalized discovery_q_with_object.jsonl produced by scripts/build_pope_style_discovery_assets.py."
+        )
 
     for c in ["baseline_ok", "vga_ok"]:
         df[c] = df[c].astype(int)

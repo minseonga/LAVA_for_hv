@@ -125,6 +125,7 @@ Expected core files there:
 - `summary.json`
 
 The wrapper prefers `discovery_q_with_object.jsonl`. If that file is missing, it automatically falls back to `discovery_mix_train2014.jsonl`.
+When only the raw `discovery_mix_train2014.jsonl` is available, the wrapper first normalizes it through `scripts/build_pope_style_discovery_assets.py` and then uses the generated `discovery_q_with_object.jsonl` for probe extraction.
 For taxonomy, the wrapper first looks for `per_case_compare.csv` at the discovery root, then falls back to `taxonomy/per_case_compare.csv`.
 If the discovered taxonomy CSV does not contain the router-required VGA correctness columns, the wrapper tries to rebuild it automatically from `discovery_gt.csv`, `baseline/pred_baseline.jsonl`, and `vga/pred_vga.jsonl`.
 

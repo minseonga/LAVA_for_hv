@@ -69,9 +69,23 @@ if [[ -z "${VGA_PRED_JSONL:-}" ]]; then
     VGA_PRED_JSONL="$DEFAULT_VGA_DIR"
   elif [[ -f "$DEFAULT_VGA_ROOT" ]]; then
     VGA_PRED_JSONL="$DEFAULT_VGA_ROOT"
-  else
-    VGA_PRED_JSONL="$DEFAULT_VGA_DIR"
+else
+  VGA_PRED_JSONL="$DEFAULT_VGA_DIR"
   fi
+fi
+
+if [[ "$(basename "$QUESTION_FILE")" == "discovery_mix_train2014.jsonl" ]]; then
+  NORMALIZED_ASSET_DIR="${NORMALIZED_ASSET_DIR:-$OUT_DIR/discovery_assets}"
+  NORMALIZED_Q_WITH_OBJECT="$NORMALIZED_ASSET_DIR/discovery_q_with_object.jsonl"
+  NORMALIZED_GT="$NORMALIZED_ASSET_DIR/discovery_gt.csv"
+  if [[ ! -f "$NORMALIZED_Q_WITH_OBJECT" || ! -f "$NORMALIZED_GT" ]]; then
+    mkdir -p "$NORMALIZED_ASSET_DIR"
+    python "$CAL_ROOT/scripts/build_pope_style_discovery_assets.py" \
+      --in_jsonl "$QUESTION_FILE" \
+      --out_dir "$NORMALIZED_ASSET_DIR"
+  fi
+  QUESTION_FILE="$NORMALIZED_Q_WITH_OBJECT"
+  GT_CSV="$NORMALIZED_GT"
 fi
 
 CONV_MODE="${CONV_MODE:-llava_v1}"
@@ -115,6 +129,9 @@ if [[ "$QUESTION_FILE" == "$DEFAULT_Q_MIX" ]]; then
 fi
 if [[ "$TAXONOMY_CSV" == "$DEFAULT_TAX_DIR" ]]; then
   echo "[warn] root per_case_compare.csv not found; falling back to taxonomy/per_case_compare.csv"
+fi
+if [[ -n "${NORMALIZED_ASSET_DIR:-}" ]]; then
+  echo "[info] normalized discovery mix into $NORMALIZED_ASSET_DIR"
 fi
 
 TAX_VALIDATION_STATUS="$(python - "$TAXONOMY_CSV" <<'PY'
