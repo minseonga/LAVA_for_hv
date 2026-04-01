@@ -21,6 +21,15 @@ from sklearn.tree import DecisionTreeRegressor
 
 
 BUDGETS_DEFAULT = [0.03, 0.05, 0.07, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50]
+REQUIRED_TAXONOMY_COLUMNS = [
+    "id",
+    "gt",
+    "pred_baseline",
+    "pred_vga",
+    "baseline_ok",
+    "vga_ok",
+    "case_type",
+]
 
 
 def parse_anchor_yes(text: Any) -> int:
@@ -316,20 +325,19 @@ def main() -> None:
     probe = pd.read_csv(args.probe_log_csv)
     tax = pd.read_csv(args.taxonomy_csv)
     probe["id"] = probe["id"].astype(str)
+
+    missing_tax_cols = [c for c in REQUIRED_TAXONOMY_COLUMNS if c not in tax.columns]
+    if missing_tax_cols:
+        raise ValueError(
+            "taxonomy_csv is not a VGA branch-correctness table. "
+            f"Missing required columns: {missing_tax_cols}. "
+            f"Present columns: {list(tax.columns)}. "
+            "Expected a per_case_compare.csv produced by scripts/build_vga_failure_taxonomy.py."
+        )
     tax["id"] = tax["id"].astype(str)
 
     df = probe[["id", "frg", "g_top5_mass", "probe_anchor"]].merge(
-        tax[
-            [
-                "id",
-                "gt",
-                "pred_baseline",
-                "pred_vga",
-                "baseline_ok",
-                "vga_ok",
-                "case_type",
-            ]
-        ],
+        tax[REQUIRED_TAXONOMY_COLUMNS],
         on="id",
         how="inner",
     )
