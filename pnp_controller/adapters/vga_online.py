@@ -134,9 +134,10 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
     def _load_model(self) -> None:
         self.disable_torch_init()
         model_name = self.get_model_name_from_path(os.path.expanduser(self.cfg.model_path))
+        model_base = str(self.cfg.model_base or "").strip() or None
         tokenizer, model, image_processor, _ = self.load_pretrained_model(
             os.path.expanduser(self.cfg.model_path),
-            self.cfg.model_base,
+            model_base,
             model_name,
             device=self.cfg.device,
         )
