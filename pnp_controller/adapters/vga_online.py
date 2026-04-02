@@ -62,6 +62,12 @@ class VGAOnlineConfig:
     probe_preview_fallback_to_prompt_last: bool = True
     use_gmi: bool = True  # Set False to skip GMI (use FRG-only veto)
     seed: int = 42
+    prefer_local_llava: bool = False
+    proxy_trace_enabled: bool = False
+    proxy_trace_late_start: int = 16
+    proxy_trace_late_end: int = 24
+    proxy_trace_last_k: int = 8
+    proxy_trace_margin_low: float = 1.0
 
 
 class VGAOnlineAdapter(OnlineMethodAdapter):
@@ -77,7 +83,10 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         self._load_headset()
 
     def _bootstrap_vga_imports(self) -> None:
-        if self.vga_root not in sys.path:
+        sys.path = [p for p in sys.path if os.path.abspath(str(p)) != self.vga_root]
+        if bool(self.cfg.prefer_local_llava):
+            sys.path.append(self.vga_root)
+        else:
             sys.path.insert(0, self.vga_root)
 
         # VGA_origin still imports several private bloom/opt helpers that were
@@ -321,6 +330,151 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
 
     def _token_ids_to_token_strs(self, token_ids: List[int]) -> List[str]:
         return [self._safe_token_to_str(int(tid)) for tid in token_ids]
+
+    def _select_content_token_indices(self, token_ids: List[int]) -> List[int]:
+        keep: List[int] = []
+        for idx, token_id in enumerate(token_ids):
+            try:
+                piece = self.tokenizer.decode([int(token_id)], skip_special_tokens=True)
+            except Exception:
+                piece = ""
+            if any(ch.isalnum() for ch in str(piece or "").strip()):
+                keep.append(int(idx))
+        return keep if keep else list(range(int(len(token_ids))))
+
+    def _mean_or_zero(self, values: List[float]) -> float:
+        if not values:
+            return 0.0
+        return float(sum(float(v) for v in values) / float(len(values)))
+
+    def _std_or_zero(self, values: List[float]) -> float:
+        if len(values) <= 1:
+            return 0.0
+        mu = self._mean_or_zero(values)
+        var = sum((float(v) - mu) ** 2 for v in values) / float(len(values))
+        return float(var ** 0.5)
+
+    def _min_or_zero(self, values: List[float]) -> float:
+        return float(min(values)) if values else 0.0
+
+    def _max_or_zero(self, values: List[float]) -> float:
+        return float(max(values)) if values else 0.0
+
+    def _sign_flip_count(self, values: List[float]) -> int:
+        if len(values) <= 1:
+            return 0
+        flips = 0
+        prev = 1 if float(values[0]) > 0 else (-1 if float(values[0]) < 0 else 0)
+        for value in values[1:]:
+            cur = 1 if float(value) > 0 else (-1 if float(value) < 0 else 0)
+            if prev != 0 and cur != 0 and cur != prev:
+                flips += 1
+            if cur != 0:
+                prev = cur
+        return int(flips)
+
+    def _ratio_below(self, values: List[float], threshold: float) -> float:
+        if not values:
+            return 0.0
+        n = sum(1 for value in values if float(value) <= float(threshold))
+        return float(n / float(len(values)))
+
+    def _last_k_slice(self, values: List[float]) -> List[float]:
+        if not values:
+            return []
+        k = max(1, int(self.cfg.proxy_trace_last_k))
+        return [float(v) for v in values[-k:]]
+
+    def _summarize_scalar_series(self, values: List[float], prefix: str) -> Dict[str, Any]:
+        seq = [float(v) for v in values]
+        tail = self._last_k_slice(seq)
+        return {
+            f"{prefix}_mean": self._mean_or_zero(seq),
+            f"{prefix}_std": self._std_or_zero(seq),
+            f"{prefix}_min": self._min_or_zero(seq),
+            f"{prefix}_max": self._max_or_zero(seq),
+            f"{prefix}_lastk_mean": self._mean_or_zero(tail),
+            f"{prefix}_lastk_std": self._std_or_zero(tail),
+        }
+
+    def _build_decode_time_proxy_row(
+        self,
+        *,
+        sample: Dict[str, Any],
+        prepared: Dict[str, Any],
+        output_ids: torch.Tensor,
+        output_scores: List[torch.Tensor],
+        proxy_trace_rows: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        gen_ids = [int(x) for x in output_ids[0, 1:].tolist()]
+        n_steps = int(min(len(gen_ids), len(output_scores)))
+        gen_ids = gen_ids[:n_steps]
+        content_idx = self._select_content_token_indices(gen_ids)
+
+        lp_all: List[float] = []
+        margin_all: List[float] = []
+        ent_all: List[float] = []
+        for step_idx in range(int(n_steps)):
+            logits = output_scores[int(step_idx)][0].detach().to(torch.float32)
+            probs = torch.softmax(logits, dim=-1)
+            log_probs = torch.log_softmax(logits, dim=-1)
+            target_id = int(gen_ids[int(step_idx)])
+            target_lp = float(log_probs[target_id].item())
+            top2_vals, top2_idx = torch.topk(logits, k=2, dim=-1)
+            top1_id = int(top2_idx[0].item())
+            top1_val = float(top2_vals[0].item())
+            top2_val = float(top2_vals[1].item())
+            target_logit = float(logits[target_id].item())
+            best_other = top2_val if top1_id == target_id else top1_val
+            lp_all.append(target_lp)
+            margin_all.append(float(target_logit - best_other))
+            ent_all.append(float((-(probs * log_probs).sum()).item()))
+
+        proxy_rows = sorted(proxy_trace_rows, key=lambda row: int(row.get("step_idx", -1)))
+        faithful_all = [float(row.get("proxy_faithful_mean", 0.0)) for row in proxy_rows[:n_steps]]
+        harmful_all = [float(row.get("proxy_harmful_mean", 0.0)) for row in proxy_rows[:n_steps]]
+        gap_all = [float(row.get("proxy_gap_mean", 0.0)) for row in proxy_rows[:n_steps]]
+
+        def pick(values: List[float], idxs: List[int]) -> List[float]:
+            if not values:
+                return []
+            return [float(values[i]) for i in idxs if 0 <= int(i) < len(values)]
+
+        lp_content = pick(lp_all, content_idx)
+        margin_content = pick(margin_all, content_idx)
+        ent_content = pick(ent_all, content_idx)
+        faithful_content = pick(faithful_all, content_idx)
+        harmful_content = pick(harmful_all, content_idx)
+        gap_content = pick(gap_all, content_idx)
+
+        row: Dict[str, Any] = {
+            "id": prepared["sample_id"],
+            "image": prepared["image_file"],
+            "question": prepared["question"],
+            "output": self._decode_generated_text(output_ids, prepared["stop_str"]),
+            "n_generated_tokens": int(n_steps),
+            "n_content_tokens": int(len(content_idx)),
+            "proxy_content_fraction": float(len(content_idx) / max(1, n_steps)),
+            "proxy_gap_sign_flip_count_all": int(self._sign_flip_count(gap_all)),
+            "proxy_gap_sign_flip_count_content": int(self._sign_flip_count(gap_content)),
+            "proxy_low_gap_ratio_all": float(self._ratio_below(gap_all, 0.0)),
+            "proxy_low_gap_ratio_content": float(self._ratio_below(gap_content, 0.0)),
+            "proxy_low_margin_ratio_all": float(self._ratio_below(margin_all, float(self.cfg.proxy_trace_margin_low))),
+            "proxy_low_margin_ratio_content": float(self._ratio_below(margin_content, float(self.cfg.proxy_trace_margin_low))),
+        }
+        row.update(self._summarize_scalar_series(lp_all, "proxy_lp_all"))
+        row.update(self._summarize_scalar_series(lp_content, "proxy_lp_content"))
+        row.update(self._summarize_scalar_series(margin_all, "proxy_margin_all"))
+        row.update(self._summarize_scalar_series(margin_content, "proxy_margin_content"))
+        row.update(self._summarize_scalar_series(ent_all, "proxy_entropy_all"))
+        row.update(self._summarize_scalar_series(ent_content, "proxy_entropy_content"))
+        row.update(self._summarize_scalar_series(faithful_all, "proxy_faithful_all"))
+        row.update(self._summarize_scalar_series(faithful_content, "proxy_faithful_content"))
+        row.update(self._summarize_scalar_series(harmful_all, "proxy_harmful_all"))
+        row.update(self._summarize_scalar_series(harmful_content, "proxy_harmful_content"))
+        row.update(self._summarize_scalar_series(gap_all, "proxy_gap_all"))
+        row.update(self._summarize_scalar_series(gap_content, "proxy_gap_content"))
+        return row
 
     def _build_expanded_window_rows(
         self,
@@ -1441,16 +1595,44 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         prepared: Dict[str, Any],
         gen_kwargs: Dict[str, Any],
         use_add: bool,
+        capture_proxy: bool = False,
     ) -> Dict[str, Any]:
         gen_kwargs = dict(gen_kwargs)
         gen_kwargs["use_add"] = bool(use_add)
+        gen_kwargs["enable_proxy_trace"] = bool(capture_proxy and self.cfg.proxy_trace_enabled)
+        if bool(capture_proxy and self.cfg.proxy_trace_enabled):
+            gen_kwargs["proxy_late_start"] = int(self.cfg.proxy_trace_late_start)
+            gen_kwargs["proxy_late_end"] = int(self.cfg.proxy_trace_late_end)
+            gen_kwargs["ais_headset_json"] = str(self.cfg.headset_json or "")
+            gen_kwargs["output_scores"] = True
+            gen_kwargs["return_dict_in_generate"] = True
+            gen_kwargs["ais_sample_ids"] = [prepared["sample_id"]]
+            _ = getattr(self.model, "get_proxy_trace_rows", lambda reset=False: [])(reset=True)
         with torch.inference_mode():
-            output_ids = self.model.generate(
+            output_obj = self.model.generate(
                 prepared["input_ids"][:, -1:],
                 **gen_kwargs,
             )
+        output_ids = output_obj.sequences if hasattr(output_obj, "sequences") else output_obj
         output_text = self._decode_generated_text(output_ids, prepared["stop_str"])
-        return self._build_prediction_row(sample=sample, prepared=prepared, output_text=output_text, use_add=use_add)
+        pred_row = self._build_prediction_row(sample=sample, prepared=prepared, output_text=output_text, use_add=use_add)
+        if not bool(capture_proxy and self.cfg.proxy_trace_enabled):
+            return pred_row
+
+        score_list = list(getattr(output_obj, "scores", []) or [])
+        proxy_trace_rows = list(getattr(self.model, "get_proxy_trace_rows", lambda reset=False: [])(reset=True))
+        proxy_row = self._build_decode_time_proxy_row(
+            sample=sample,
+            prepared=prepared,
+            output_ids=output_ids,
+            output_scores=score_list,
+            proxy_trace_rows=proxy_trace_rows,
+        )
+        return {
+            "prediction": pred_row,
+            "proxy": proxy_row,
+            "proxy_trace_rows": proxy_trace_rows,
+        }
 
     def predict_base_direct(self, sample: Any) -> Any:
         ctx = self._prepare_runtime_context(sample)
@@ -1470,6 +1652,16 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
             prepared=prepared,
             gen_kwargs=gen_kwargs,
             use_add=use_add,
+        )
+
+    def predict_method_with_proxy(self, sample: Any) -> Dict[str, Any]:
+        ctx = self._prepare_runtime_context(sample)
+        return self._generate_from_prepared(
+            sample=sample,
+            prepared=ctx["prepared"],
+            gen_kwargs=ctx["method_gen_kwargs"],
+            use_add=True,
+            capture_proxy=True,
         )
 
     def predict_base(self, sample: Any, probe_state: ProbeState | None = None) -> Any:

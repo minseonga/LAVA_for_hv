@@ -146,6 +146,10 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
         frrs_online_recompute_feats: Optional[bool] = None,
         frrs_online_blend: Optional[float] = None,
         frrs_debug_log: Optional[bool] = None,
+        enable_proxy_trace: Optional[bool] = None,
+        proxy_late_start: Optional[int] = None,
+        proxy_late_end: Optional[int] = None,
+        proxy_eps: Optional[float] = None,
     ) -> Dict[str, Any]:
         rt = self._ensure_ais_runtime()
         rt.configure(
@@ -222,6 +226,10 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
             frrs_online_recompute_feats=frrs_online_recompute_feats,
             frrs_online_blend=frrs_online_blend,
             frrs_debug_log=frrs_debug_log,
+            enable_proxy_trace=enable_proxy_trace,
+            proxy_late_start=proxy_late_start,
+            proxy_late_end=proxy_late_end,
+            proxy_eps=proxy_eps,
         )
         if rt.is_effective_enabled():
             self._ensure_ais_hooks()
@@ -299,12 +307,21 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
             "frrs_online_recompute_feats": bool(rt.config.frrs_online_recompute_feats),
             "frrs_online_blend": float(rt.config.frrs_online_blend),
             "frrs_debug_log": bool(rt.config.frrs_debug_log),
+            "enable_proxy_trace": bool(rt.config.enable_proxy_trace),
+            "proxy_late_start": int(rt.config.proxy_late_start),
+            "proxy_late_end": int(rt.config.proxy_late_end),
+            "proxy_eps": float(rt.config.proxy_eps),
         }
 
     def get_ais_debug_rows(self, reset: bool = False) -> List[Dict[str, Any]]:
         if self._ais_gating_runtime is None:
             return []
         return self._ais_gating_runtime.get_debug_rows(reset=reset)
+
+    def get_proxy_trace_rows(self, reset: bool = False) -> List[Dict[str, Any]]:
+        if self._ais_gating_runtime is None:
+            return []
+        return self._ais_gating_runtime.get_proxy_trace_rows(reset=reset)
 
     def forward(
         self,
@@ -661,6 +678,10 @@ class LlavaLlamaForCausalLM(LlamaForCausalLM, LlavaMetaForCausalLM):
             "frrs_online_recompute_feats": kwargs.pop("frrs_online_recompute_feats", None),
             "frrs_online_blend": kwargs.pop("frrs_online_blend", None),
             "frrs_debug_log": kwargs.pop("frrs_debug_log", None),
+            "enable_proxy_trace": kwargs.pop("enable_proxy_trace", None),
+            "proxy_late_start": kwargs.pop("proxy_late_start", None),
+            "proxy_late_end": kwargs.pop("proxy_late_end", None),
+            "proxy_eps": kwargs.pop("proxy_eps", None),
         }
         ais_sample_ids = kwargs.pop("ais_sample_ids", None)
         rfhar_feats = kwargs.pop("rfhar_feats", None)

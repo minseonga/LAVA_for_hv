@@ -131,6 +131,12 @@ class AISGatingConfig:
     frrs_online_recompute_feats: bool = False
     frrs_online_blend: float = 1.0
     frrs_debug_log: bool = False
+    # Decode-time proxy trace: collect lightweight late-head scalar summaries
+    # during generation without any extra replay pass.
+    enable_proxy_trace: bool = False
+    proxy_late_start: int = 18
+    proxy_late_end: int = 24
+    proxy_eps: float = 1e-6
 
 
 def _call_orig_forward(
@@ -198,6 +204,12 @@ class AISGatingRuntime:
         self._frrs_feats_base: Optional[Dict[str, torch.Tensor]] = None
         self._frrs_module: Optional[FRRS] = None
         self._frrs_module_sig: Optional[Tuple[float, float, float, float, float, float, float, float, float, str]] = None
+        self._proxy_trace_rows: List[Dict[str, Any]] = []
+        self._proxy_step_faithful_sum: Optional[torch.Tensor] = None
+        self._proxy_step_harmful_sum: Optional[torch.Tensor] = None
+        self._proxy_step_faithful_count: Optional[torch.Tensor] = None
+        self._proxy_step_harmful_count: Optional[torch.Tensor] = None
+        self._proxy_step_bsz: int = 0
 
     @property
     def active(self) -> bool:
@@ -214,9 +226,10 @@ class AISGatingRuntime:
         rfhar_on = bool(self.config.enable_rfhar and float(self.config.rfhar_gamma) > 0.0)
         frgg_on = bool(self.config.enable_frgg and float(self.config.frgg_gamma) > 0.0)
         frrs_on = bool(self.config.enable_frrs and (float(self.config.frrs_alpha) > 0.0 or float(self.config.frrs_beta) > 0.0))
+        proxy_on = bool(self.config.enable_proxy_trace)
         mode = str(self.config.path_probe_mode or "none").strip().lower()
         probe_on = bool(mode != "none" and float(self.config.path_probe_penalty) > 0.0)
-        return bool(ais_on or probe_on or rfhar_on or frgg_on or frrs_on)
+        return bool(ais_on or probe_on or rfhar_on or frgg_on or frrs_on or proxy_on)
 
     def configure(self, **kwargs: Any) -> None:
         for k, v in kwargs.items():
@@ -233,6 +246,15 @@ class AISGatingRuntime:
         rows = list(self._debug_rows)
         if reset:
             self._debug_rows = []
+        return rows
+
+    def clear_proxy_trace_rows(self) -> None:
+        self._proxy_trace_rows = []
+
+    def get_proxy_trace_rows(self, reset: bool = False) -> List[Dict[str, Any]]:
+        rows = list(self._proxy_trace_rows)
+        if reset:
+            self._proxy_trace_rows = []
         return rows
 
     def dump_debug_csv(self, path: str) -> None:
@@ -277,6 +299,11 @@ class AISGatingRuntime:
         self._early_count = 0
         self._late_seen_in_step = 0
         self._late_triggered_in_step = 0
+        self._proxy_step_bsz = 0
+        self._proxy_step_faithful_sum = None
+        self._proxy_step_harmful_sum = None
+        self._proxy_step_faithful_count = None
+        self._proxy_step_harmful_count = None
         self._rfhar_feats_base = None
         if rfhar_feats is not None:
             self.set_rfhar_feats(rfhar_feats)
@@ -290,6 +317,7 @@ class AISGatingRuntime:
         self._refresh_oracle_roles()
 
     def end_generation(self) -> None:
+        self._finalize_proxy_step()
         self._active = False
         self._step_kv_seq_len = None
         self._step_batch_size = None
@@ -301,6 +329,11 @@ class AISGatingRuntime:
         self._rfhar_feats_base = None
         self._frgg_feats_base = None
         self._frrs_feats_base = None
+        self._proxy_step_bsz = 0
+        self._proxy_step_faithful_sum = None
+        self._proxy_step_harmful_sum = None
+        self._proxy_step_faithful_count = None
+        self._proxy_step_harmful_count = None
 
     def _in_early(self, layer_idx: int) -> bool:
         return int(self.config.ais_early_start) <= int(layer_idx) <= int(self.config.ais_early_end)
@@ -317,6 +350,9 @@ class AISGatingRuntime:
     def _in_frrs_late(self, layer_idx: int) -> bool:
         return int(self.config.frrs_late_start) <= int(layer_idx) <= int(self.config.frrs_late_end)
 
+    def _in_proxy_late(self, layer_idx: int) -> bool:
+        return int(self.config.proxy_late_start) <= int(layer_idx) <= int(self.config.proxy_late_end)
+
     def _n_late_layers(self) -> int:
         lo = int(min(self.config.ais_late_start, self.config.ais_late_end))
         hi = int(max(self.config.ais_late_start, self.config.ais_late_end))
@@ -330,6 +366,53 @@ class AISGatingRuntime:
 
     def _frrs_enabled(self) -> bool:
         return bool(self.config.enable_frrs and (float(self.config.frrs_alpha) > 0.0 or float(self.config.frrs_beta) > 0.0))
+
+    def _proxy_trace_enabled(self) -> bool:
+        return bool(self.config.enable_proxy_trace)
+
+    def _init_proxy_step_state(self, bsz: int) -> None:
+        self._proxy_step_bsz = int(bsz)
+        self._proxy_step_faithful_sum = torch.zeros(int(bsz), dtype=torch.float32)
+        self._proxy_step_harmful_sum = torch.zeros(int(bsz), dtype=torch.float32)
+        self._proxy_step_faithful_count = torch.zeros(int(bsz), dtype=torch.float32)
+        self._proxy_step_harmful_count = torch.zeros(int(bsz), dtype=torch.float32)
+
+    def _finalize_proxy_step(self) -> None:
+        if not self._proxy_trace_enabled():
+            return
+        if self._proxy_step_bsz <= 0:
+            return
+        if self._proxy_step_faithful_sum is None or self._proxy_step_harmful_sum is None:
+            return
+        if self._step_index < 0:
+            return
+        sample_ids = self._sample_ids_for_batch(self._proxy_step_bsz)
+        faithful_sum = self._proxy_step_faithful_sum
+        harmful_sum = self._proxy_step_harmful_sum
+        faithful_count = self._proxy_step_faithful_count
+        harmful_count = self._proxy_step_harmful_count
+        for b in range(int(self._proxy_step_bsz)):
+            f_cnt = float(faithful_count[b].item()) if faithful_count is not None else 0.0
+            h_cnt = float(harmful_count[b].item()) if harmful_count is not None else 0.0
+            faithful_mean = float(faithful_sum[b].item() / max(1.0, f_cnt))
+            harmful_mean = float(harmful_sum[b].item() / max(1.0, h_cnt))
+            self._proxy_trace_rows.append(
+                {
+                    "generation_idx": int(self._generation_index),
+                    "step_idx": int(self._step_index),
+                    "sample_id": str(sample_ids[b]).strip(),
+                    "proxy_faithful_mean": faithful_mean,
+                    "proxy_harmful_mean": harmful_mean,
+                    "proxy_gap_mean": float(faithful_mean - harmful_mean),
+                    "proxy_faithful_layer_count": int(round(f_cnt)),
+                    "proxy_harmful_layer_count": int(round(h_cnt)),
+                }
+            )
+        self._proxy_step_bsz = 0
+        self._proxy_step_faithful_sum = None
+        self._proxy_step_harmful_sum = None
+        self._proxy_step_faithful_count = None
+        self._proxy_step_harmful_count = None
 
     def _to_feat_2d_cpu(self, x: Any, name: str) -> torch.Tensor:
         if not torch.is_tensor(x):
@@ -975,16 +1058,18 @@ class AISGatingRuntime:
         rfhar_needed = bool(self._rfhar_enabled() and self._in_rfhar_late(li))
         frgg_needed = bool(self._frgg_enabled() and self._in_frgg_late(li))
         frrs_needed = bool(self._frrs_enabled() and self._in_frrs_late(li))
+        proxy_needed = bool(self._proxy_trace_enabled() and self._in_proxy_late(li))
         probe_needed = bool(
             str(self.config.path_probe_mode or "none").strip().lower() != "none"
             and float(self.config.path_probe_penalty) > 0.0
             and (self._in_early(li) or self._in_late(li))
         )
-        return bool(ais_needed or rfhar_needed or frgg_needed or frrs_needed or probe_needed)
+        return bool(ais_needed or rfhar_needed or frgg_needed or frrs_needed or proxy_needed or probe_needed)
 
     def _begin_step_if_needed(self, kv_seq_len: int, bsz: int) -> None:
         if self._step_kv_seq_len == int(kv_seq_len) and self._step_batch_size == int(bsz):
             return
+        self._finalize_proxy_step()
         self._step_index += 1
         self._step_kv_seq_len = int(kv_seq_len)
         self._step_batch_size = int(bsz)
@@ -992,6 +1077,8 @@ class AISGatingRuntime:
         self._early_count = 0
         self._late_seen_in_step = 0
         self._late_triggered_in_step = 0
+        if self._proxy_trace_enabled():
+            self._init_proxy_step_state(int(bsz))
 
     def _resolve_image_mask_for_kv(
         self,
@@ -1040,6 +1127,66 @@ class AISGatingRuntime:
         denom = torch.clamp(image_mask.sum(dim=-1), min=1, max=k_eff).to(x.dtype)
         num = torch.where(finite, topk_vals, torch.zeros_like(topk_vals)).sum(dim=-1)
         return num / (denom + float(self.config.ais_eps))
+
+    def record_proxy_attn(
+        self,
+        layer_idx: int,
+        attn_weights_last: Optional[torch.Tensor],  # [B,H,K]
+        attention_mask: Optional[torch.Tensor],
+    ) -> None:
+        if not bool(self._proxy_trace_enabled() and self._in_proxy_late(int(layer_idx))):
+            return
+        if attn_weights_last is None or attn_weights_last.dim() != 3:
+            return
+        bsz, _n_heads, kv_seq_len = (
+            int(attn_weights_last.size(0)),
+            int(attn_weights_last.size(1)),
+            int(attn_weights_last.size(2)),
+        )
+        self._begin_step_if_needed(kv_seq_len=kv_seq_len, bsz=bsz)
+        if self._proxy_step_faithful_sum is None or self._proxy_step_bsz != int(bsz):
+            self._init_proxy_step_state(int(bsz))
+
+        image_mask = self._resolve_image_mask_for_kv(
+            bsz=bsz,
+            kv_seq_len=kv_seq_len,
+            attention_mask=attention_mask,
+            device=attn_weights_last.device,
+        )
+        if image_mask is None or int(image_mask.sum().item()) == 0:
+            return
+
+        if attention_mask is not None:
+            valid_mask = torch.isfinite(attention_mask[:, 0, -1, :]).to(torch.bool)
+        else:
+            valid_mask = torch.ones_like(image_mask, dtype=torch.bool)
+        text_mask = valid_mask & (~image_mask)
+
+        attn = attn_weights_last.to(torch.float32)
+        img = image_mask[:, None, :].to(dtype=attn.dtype)
+        txt = text_mask[:, None, :].to(dtype=attn.dtype)
+        vis_sum = (attn * img).sum(dim=-1)
+        txt_sum = (attn * txt).sum(dim=-1)
+        ratio = vis_sum / torch.clamp(vis_sum + txt_sum, min=float(max(self.config.proxy_eps, 1e-9)))
+
+        faithful_heads = sorted(self._faithful_heads_map.get(int(layer_idx), set()))
+        harmful_heads = sorted(self._harmful_heads_map.get(int(layer_idx), set()))
+
+        if faithful_heads:
+            idx = torch.as_tensor(faithful_heads, dtype=torch.long, device=ratio.device)
+            idx = idx[(idx >= 0) & (idx < int(ratio.size(1)))]
+            if int(idx.numel()) > 0:
+                faithful_mean = ratio.index_select(1, idx).mean(dim=1).detach().cpu()
+                self._proxy_step_faithful_sum += faithful_mean
+                self._proxy_step_faithful_count += 1.0
+
+        if harmful_heads:
+            idx = torch.as_tensor(harmful_heads, dtype=torch.long, device=ratio.device)
+            idx = idx[(idx >= 0) & (idx < int(ratio.size(1)))]
+            if int(idx.numel()) > 0:
+                harmful_mean = ratio.index_select(1, idx).mean(dim=1).detach().cpu()
+                self._proxy_step_harmful_sum += harmful_mean
+                self._proxy_step_harmful_count += 1.0
 
     def compute_bias(
         self,
@@ -2015,6 +2162,12 @@ def _manual_llama_attention_forward_with_ais(
     # Upcast to fp32 for stable softmax, then cast back.
     attn_weights = torch.softmax(attn_logits, dim=-1, dtype=torch.float32).to(query_states.dtype)
     attn_weights = F.dropout(attn_weights, p=self_attn.attention_dropout, training=self_attn.training)
+    if ais_runtime is not None and ais_runtime.should_intercept_layer(getattr(self_attn, "layer_idx", None)):
+        ais_runtime.record_proxy_attn(
+            layer_idx=int(self_attn.layer_idx),
+            attn_weights_last=attn_weights[:, :, -1, :],
+            attention_mask=combined_mask,
+        )
     attn_output = torch.matmul(attn_weights, value_states)
 
     if ais_runtime is not None and ais_runtime.should_intercept_layer(getattr(self_attn, "layer_idx", None)):
