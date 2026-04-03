@@ -7,6 +7,7 @@ import math
 import os
 import sys
 import time
+import traceback
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -262,6 +263,7 @@ def main() -> None:
             "question": str(sample.get("text", sample.get("question", ""))).strip(),
             "gt_label": gt_label,
             "feature_error": "",
+            "feature_error_traceback": "",
             "proxy_rescue": 0,
         }
         try:
@@ -396,6 +398,7 @@ def main() -> None:
         except Exception as exc:
             n_errors += 1
             row["feature_error"] = str(exc)
+            row["feature_error_traceback"] = traceback.format_exc()
 
         rows.append(row)
         if (idx + 1) % max(1, int(args.log_every)) == 0:

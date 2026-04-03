@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import traceback
 import json
 import math
 import os
@@ -357,20 +358,23 @@ class CleanroomLlavaRuntime:
             mm_use_im_start_end=bool(getattr(self.model.config, "mm_use_im_start_end", False)),
         )
 
-    def _process_image(self, image: Image.Image) -> Tuple[Union[torch.Tensor, List[torch.Tensor]], List[Tuple[int, int]]]:
-        from llava.mm_utils import process_images
-
-        image_tensor = process_images([image], self.image_processor, self.model.config)
+    def _process_image(self, image: Image.Image) -> Tuple[torch.Tensor, List[Tuple[int, int]]]:
+        # Match VGA_origin's image preprocessing path first. This keeps the
+        # cheap teacher-forced replay aligned with the canonical VGA run and
+        # avoids processor/list codepaths that are brittle across forks.
+        image_tensor = self.image_processor.preprocess(image, return_tensors="pt")["pixel_values"]
         if image_tensor is None:
-            image_tensor = self.image_processor.preprocess(image, return_tensors="pt")["pixel_values"]
+            from llava.mm_utils import process_images
+            image_tensor = process_images([image], self.image_processor, self.model.config)
         if isinstance(image_tensor, list):
-            image_tensor = [
-                tensor.to(self.device, dtype=torch.float16) if hasattr(tensor, "to") else tensor
-                for tensor in image_tensor
-            ]
-        else:
-            image_tensor = image_tensor.to(self.device, dtype=torch.float16)
-        return image_tensor, [image.size]
+            if not image_tensor:
+                raise RuntimeError("Image preprocessing returned an empty image tensor list.")
+            image_tensor = image_tensor[0]
+        if image_tensor is None:
+            raise RuntimeError("Image preprocessing returned None.")
+        if image_tensor.ndim == 4:
+            image_tensor = image_tensor[0]
+        return image_tensor.to(self.device, dtype=torch.float16), [image.size]
 
     def _prepare_multimodal_expanded_sequence(
         self,
@@ -387,7 +391,7 @@ class CleanroomLlavaRuntime:
                 base_attn,
                 None,
                 full_ids,
-                images_tensor,
+                images_tensor.unsqueeze(0),
                 image_sizes,
             )
         except TypeError as new_sig_exc:
@@ -397,7 +401,7 @@ class CleanroomLlavaRuntime:
                     base_attn,
                     None,
                     full_ids,
-                    images_tensor,
+                    images_tensor.unsqueeze(0),
                 )
             except TypeError:
                 raise new_sig_exc
