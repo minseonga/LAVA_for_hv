@@ -5,7 +5,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -357,11 +357,19 @@ class CleanroomLlavaRuntime:
             mm_use_im_start_end=bool(getattr(self.model.config, "mm_use_im_start_end", False)),
         )
 
-    def _process_image(self, image: Image.Image) -> Tuple[torch.Tensor, List[Tuple[int, int]]]:
+    def _process_image(self, image: Image.Image) -> Tuple[Union[torch.Tensor, List[torch.Tensor]], List[Tuple[int, int]]]:
         from llava.mm_utils import process_images
 
         image_tensor = process_images([image], self.image_processor, self.model.config)
-        image_tensor = image_tensor.to(self.device, dtype=torch.float16)
+        if image_tensor is None:
+            image_tensor = self.image_processor.preprocess(image, return_tensors="pt")["pixel_values"]
+        if isinstance(image_tensor, list):
+            image_tensor = [
+                tensor.to(self.device, dtype=torch.float16) if hasattr(tensor, "to") else tensor
+                for tensor in image_tensor
+            ]
+        else:
+            image_tensor = image_tensor.to(self.device, dtype=torch.float16)
         return image_tensor, [image.size]
 
     def _prepare_multimodal_expanded_sequence(
