@@ -274,6 +274,7 @@ def main() -> None:
     ap.add_argument("--model_base", type=str, default="")
     ap.add_argument("--conv_mode", type=str, default="llava_v1")
     ap.add_argument("--device", type=str, default="cuda")
+    ap.add_argument("--headset_json", type=str, default="")
     ap.add_argument("--max_gen_len", type=int, default=8)
     ap.add_argument("--use_add", type=parse_bool, default=True)
     ap.add_argument("--attn_coef", type=float, default=0.2)
@@ -319,10 +320,11 @@ def main() -> None:
             model_path=args.model_path,
             image_folder=args.image_folder,
             conv_mode=args.conv_mode,
-            model_base=(args.model_base or None),
-            device=args.device,
-            sampling=bool(args.sampling),
-            max_gen_len=int(args.max_gen_len),
+                model_base=(args.model_base or None),
+                device=args.device,
+                headset_json=str(args.headset_json or ""),
+                sampling=bool(args.sampling),
+                max_gen_len=int(args.max_gen_len),
             cd_alpha=float(args.cd_alpha),
             attn_coef=float(args.attn_coef),
             start_layer=int(args.start_layer),
@@ -550,6 +552,11 @@ def main() -> None:
                 "model_base": args.model_base,
                 "conv_mode": args.conv_mode,
                 "device": args.device,
+                "headset_json": (
+                    os.path.abspath(args.headset_json)
+                    if str(args.headset_json or "").strip()
+                    else ""
+                ),
                 "max_gen_len": int(args.max_gen_len),
                 "use_add": bool(args.use_add),
                 "attn_coef": float(args.attn_coef),

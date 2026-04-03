@@ -18,6 +18,7 @@ MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 MODEL_BASE="${MODEL_BASE:-}"
 CONV_MODE="${CONV_MODE:-llava_v1}"
 DEVICE="${DEVICE:-cuda}"
+HEADSET_JSON="${HEADSET_JSON:-$ROOT_DIR/experiments/pope_discovery/discovery_headset.json}"
 
 MAX_GEN_LEN="${MAX_GEN_LEN:-8}"
 USE_ADD="${USE_ADD:-true}"
@@ -51,6 +52,7 @@ python scripts/run_true_full_vga_cheap_proxy.py \
   --model_base "$MODEL_BASE" \
   --conv_mode "$CONV_MODE" \
   --device "$DEVICE" \
+  --headset_json "$HEADSET_JSON" \
   --max_gen_len "$MAX_GEN_LEN" \
   --use_add "$USE_ADD" \
   --attn_coef "$ATTN_COEF" \
