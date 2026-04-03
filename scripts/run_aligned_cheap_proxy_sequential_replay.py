@@ -28,7 +28,9 @@ from frgavr_cleanroom.runtime import (
 
 
 def maybe_float(value: object) -> Optional[float]:
-    s = str(value or "").strip()
+    if value is None:
+        return None
+    s = str(value).strip()
     if s == "" or s.lower() in {"nan", "none", "null"}:
         return None
     try:
