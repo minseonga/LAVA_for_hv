@@ -365,6 +365,12 @@ aligned cheap proxy의 구조적 비용은:
 
 - [run_aligned_cheap_proxy_sequential_replay.sh](./scripts/run_aligned_cheap_proxy_sequential_replay.sh)
 - [run_aligned_cheap_proxy_sequential_replay.py](./scripts/run_aligned_cheap_proxy_sequential_replay.py)
+- [run_true_full_vga_cheap_proxy.sh](./scripts/run_true_full_vga_cheap_proxy.sh)
+- [run_true_full_vga_cheap_proxy.py](./scripts/run_true_full_vga_cheap_proxy.py)
+
+`run_aligned_cheap_proxy_sequential_replay.*`는 canonical VGA prediction artifact를 재사용하는 `post-VGA replay`다.
+
+`run_true_full_vga_cheap_proxy.*`는 VGA generation부터 cheap proxy, conditional baseline rescue까지 전부 sample-wise로 다시 도는 `true full replay`다.
 
 ---
 
@@ -400,4 +406,3 @@ aligned cheap proxy의 구조적 비용은:
 그리고 practical claim은 아직 이렇게 제한해야 한다.
 
 > The current cheap proxy is promising but still requires sequential replay measurement before making a final deployment-efficiency claim.
-
