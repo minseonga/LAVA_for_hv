@@ -302,41 +302,47 @@ class CleanroomLlavaRuntime:
         device: str = "cuda",
         load_8bit: bool = False,
         load_4bit: bool = False,
+        tokenizer: Optional[Any] = None,
+        model: Optional[Any] = None,
+        image_processor: Optional[Any] = None,
     ) -> None:
-        from llava.mm_utils import get_model_name_from_path
-        from llava.model.builder import load_pretrained_model
-        from llava.utils import disable_torch_init
-
-        disable_torch_init()
-        model_name = get_model_name_from_path(model_path)
         requested_device = str(device or "cuda")
         fallback_used = False
-        try:
-            tokenizer, model, image_processor, _ = load_pretrained_model(
-                model_path,
-                model_base,
-                model_name,
-                load_8bit=bool(load_8bit),
-                load_4bit=bool(load_4bit),
-                device=requested_device,
-            )
-        except ValueError as exc:
-            if "does not support `device_map='auto'`" not in str(exc):
-                raise
-            if bool(load_8bit or load_4bit):
-                raise
-            tokenizer, model, image_processor, _ = load_pretrained_model(
-                model_path,
-                model_base,
-                model_name,
-                load_8bit=False,
-                load_4bit=False,
-                device_map="cpu",
-                device="cpu",
-            )
-            if requested_device != "cpu":
-                model = model.to(device=requested_device, dtype=torch.float16)
-            fallback_used = True
+        if tokenizer is None or model is None or image_processor is None:
+            from llava.mm_utils import get_model_name_from_path
+            from llava.model.builder import load_pretrained_model
+            from llava.utils import disable_torch_init
+
+            disable_torch_init()
+            model_name = get_model_name_from_path(model_path)
+            try:
+                tokenizer, model, image_processor, _ = load_pretrained_model(
+                    model_path,
+                    model_base,
+                    model_name,
+                    load_8bit=bool(load_8bit),
+                    load_4bit=bool(load_4bit),
+                    device=requested_device,
+                )
+            except ValueError as exc:
+                if "does not support `device_map='auto'`" not in str(exc):
+                    raise
+                if bool(load_8bit or load_4bit):
+                    raise
+                tokenizer, model, image_processor, _ = load_pretrained_model(
+                    model_path,
+                    model_base,
+                    model_name,
+                    load_8bit=False,
+                    load_4bit=False,
+                    device_map="cpu",
+                    device="cpu",
+                )
+                if requested_device != "cpu":
+                    model = model.to(device=requested_device, dtype=torch.float16)
+                fallback_used = True
+        if tokenizer is None or model is None or image_processor is None:
+            raise RuntimeError("Failed to initialize cleanroom runtime components.")
         tokenizer.padding_side = "right"
         self.tokenizer = tokenizer
         self.model = model

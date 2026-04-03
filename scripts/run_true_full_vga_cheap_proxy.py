@@ -229,6 +229,9 @@ def main() -> None:
         model_base=(args.model_base or None),
         conv_mode=args.conv_mode,
         device=args.device,
+        tokenizer=adapter.tokenizer,
+        model=adapter.model,
+        image_processor=adapter.image_processor,
     )
 
     rows: List[Dict[str, Any]] = []
