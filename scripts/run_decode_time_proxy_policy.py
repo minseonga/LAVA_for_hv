@@ -149,7 +149,9 @@ def select_feature_names(rows: Sequence[Dict[str, Any]], feature_cols: str) -> L
     names = [part.strip() for part in str(feature_cols or "").split(",") if part.strip()]
     if not names:
         names = list(DEFAULT_PROXY_FEATURES)
-    keys = set(rows[0].keys()) if rows else set()
+    keys = set()
+    for row in rows:
+        keys.update(row.keys())
     return [name for name in names if name in keys]
 
 
