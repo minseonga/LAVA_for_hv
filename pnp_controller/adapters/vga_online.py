@@ -1603,8 +1603,8 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         if bool(capture_proxy):
             gen_kwargs["output_scores"] = True
             gen_kwargs["return_dict_in_generate"] = True
-        gen_kwargs["enable_proxy_trace"] = bool(capture_proxy and self.cfg.proxy_trace_enabled)
         if bool(capture_proxy and self.cfg.proxy_trace_enabled):
+            gen_kwargs["enable_proxy_trace"] = True
             gen_kwargs["proxy_late_start"] = int(self.cfg.proxy_trace_late_start)
             gen_kwargs["proxy_late_end"] = int(self.cfg.proxy_trace_late_end)
             gen_kwargs["ais_headset_json"] = str(self.cfg.headset_json or "")
