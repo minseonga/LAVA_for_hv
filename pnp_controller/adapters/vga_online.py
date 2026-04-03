@@ -547,7 +547,10 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         return dict(
             images=image_tensor.unsqueeze(0),
             past_key_values=prefill.past_key_values,
-            do_sample=bool(self.cfg.sampling),
+            # Match VGA_origin/eval/object_hallucination_vqa_llava.py, which
+            # always passes do_sample=True and uses the custom `sampling`
+            # flag to choose the actual decoding branch.
+            do_sample=True,
             sampling=bool(self.cfg.sampling),
             num_beams=int(self.cfg.num_beams),
             max_new_tokens=int(self.cfg.max_gen_len),
