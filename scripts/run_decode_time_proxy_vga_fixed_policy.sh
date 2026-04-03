@@ -41,6 +41,7 @@ DISCOVERY_OUT_DIR="${DISCOVERY_OUT_DIR:-$OUT_ROOT/discovery}"
 TEST_OUT_DIR="${TEST_OUT_DIR:-$OUT_ROOT/test}"
 
 FEATURE_COLS="${FEATURE_COLS:-proxy_lp_content_mean,proxy_lp_content_std,proxy_lp_content_min,proxy_lp_content_lastk_mean,proxy_lp_content_lastk_std,proxy_margin_content_mean,proxy_margin_content_min,proxy_margin_content_lastk_mean,proxy_margin_content_lastk_std,proxy_entropy_content_mean,proxy_entropy_content_std,proxy_low_margin_ratio_content}"
+TARGET_LABEL="${TARGET_LABEL:-actual_rescue}"
 PAIR_FEATURE_TOPN="${PAIR_FEATURE_TOPN:-6}"
 MAX_RESCUE_RATE="${MAX_RESCUE_RATE:-0.03}"
 
@@ -130,6 +131,7 @@ python scripts/run_decode_time_proxy_policy.py calibrate \
   --features_csv "$DISCOVERY_OUT_DIR/decode_time_proxy_features.csv" \
   --reference_decisions_csv "$DISCOVERY_REF_DECISIONS_CSV" \
   --feature_cols "$FEATURE_COLS" \
+  --target_label "$TARGET_LABEL" \
   --pair_feature_topn "$PAIR_FEATURE_TOPN" \
   --max_rescue_rate "$MAX_RESCUE_RATE" \
   --out_dir "$DISCOVERY_OUT_DIR/calibration"
@@ -175,6 +177,7 @@ python scripts/run_decode_time_proxy_policy.py apply \
   --features_csv "$TEST_OUT_DIR/decode_time_proxy_features.csv" \
   --reference_decisions_csv "$TEST_REF_DECISIONS_CSV" \
   --policy_json "$DISCOVERY_OUT_DIR/calibration/selected_policy.json" \
+  --target_label "$TARGET_LABEL" \
   --out_dir "$TEST_OUT_DIR/fixed_eval"
 
 echo "[done] discovery calibration -> $DISCOVERY_OUT_DIR/calibration"

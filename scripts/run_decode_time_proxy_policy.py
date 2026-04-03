@@ -25,6 +25,10 @@ DEFAULT_PROXY_FEATURES = [
 ]
 
 
+def canonical_label_name(label_key: str) -> str:
+    return str(label_key or "").strip().lower()
+
+
 def maybe_float(value: object) -> Optional[float]:
     s = str(value or "").strip()
     if s == "" or s.lower() in {"nan", "none", "null"}:
@@ -173,14 +177,17 @@ def merge_rows(
         out["intervention_correct"] = maybe_int(ref.get("intervention_correct"))
         out["reference_final_correct"] = maybe_int(ref.get("final_correct"))
         out["reference_case_type"] = str(ref.get("case_type", "")).strip()
+        bc = out.get("baseline_correct")
+        ic = out.get("intervention_correct")
+        out["actual_rescue"] = None if bc is None or ic is None else int(int(bc) == 1 and int(ic) == 0)
         merged.append(out)
     return merged
 
 
-def orient_for_rescue(rows: Sequence[Dict[str, Any]], feature: str) -> Tuple[str, Optional[float]]:
-    feat_rows = [row for row in rows if maybe_float(row.get(feature)) is not None and row.get("reference_rescue") is not None]
+def orient_for_rescue(rows: Sequence[Dict[str, Any]], feature: str, label_key: str) -> Tuple[str, Optional[float]]:
+    feat_rows = [row for row in rows if maybe_float(row.get(feature)) is not None and row.get(label_key) is not None]
     scores = [float(row[feature]) for row in feat_rows]
-    labels = [int(row["reference_rescue"]) for row in feat_rows]
+    labels = [int(row[label_key]) for row in feat_rows]
     high_auc = binary_auc(scores, labels)
     low_auc = binary_auc([-float(v) for v in scores], labels)
     if (low_auc or -1.0) > (high_auc or -1.0):
@@ -188,54 +195,85 @@ def orient_for_rescue(rows: Sequence[Dict[str, Any]], feature: str) -> Tuple[str
     return "high", high_auc
 
 
-def eval_decision(
+def eval_against_label(
     rows: Sequence[Dict[str, Any]],
     rescue_flags: Sequence[int],
+    *,
+    label_key: str,
+    prefix: str,
 ) -> Dict[str, Any]:
-    n = 0
     tp = fp = tn = fn = 0
-    base_sum = 0
-    int_sum = 0
-    final_sum = 0
+    n = 0
     for row, rescue in zip(rows, rescue_flags):
-        bc = row.get("baseline_correct")
-        ic = row.get("intervention_correct")
-        ref = row.get("reference_rescue")
-        if bc is None or ic is None:
+        label = row.get(label_key)
+        if label is None:
             continue
         n += 1
-        base_sum += int(bc)
-        int_sum += int(ic)
-        final_sum += int(bc) if int(rescue) == 1 else int(ic)
-        if ref is not None:
-            if int(rescue) == 1 and int(ref) == 1:
-                tp += 1
-            elif int(rescue) == 1 and int(ref) == 0:
-                fp += 1
-            elif int(rescue) == 0 and int(ref) == 0:
-                tn += 1
-            elif int(rescue) == 0 and int(ref) == 1:
-                fn += 1
+        if int(rescue) == 1 and int(label) == 1:
+            tp += 1
+        elif int(rescue) == 1 and int(label) == 0:
+            fp += 1
+        elif int(rescue) == 0 and int(label) == 0:
+            tn += 1
+        elif int(rescue) == 0 and int(label) == 1:
+            fn += 1
     precision = None if (tp + fp) == 0 else float(tp / float(tp + fp))
     recall = None if (tp + fn) == 0 else float(tp / float(tp + fn))
     f1 = None
     if precision is not None and recall is not None and (precision + recall) > 0:
         f1 = float(2.0 * precision * recall / (precision + recall))
     return {
+        f"{prefix}_n": int(n),
+        f"{prefix}_precision": precision,
+        f"{prefix}_recall": recall,
+        f"{prefix}_f1": f1,
+        f"{prefix}_tp": int(tp),
+        f"{prefix}_fp": int(fp),
+        f"{prefix}_tn": int(tn),
+        f"{prefix}_fn": int(fn),
+    }
+
+
+def eval_decision(
+    rows: Sequence[Dict[str, Any]],
+    rescue_flags: Sequence[int],
+    *,
+    target_label: str,
+) -> Dict[str, Any]:
+    n = 0
+    base_sum = 0
+    int_sum = 0
+    final_sum = 0
+    for row, rescue in zip(rows, rescue_flags):
+        bc = row.get("baseline_correct")
+        ic = row.get("intervention_correct")
+        if bc is None or ic is None:
+            continue
+        n += 1
+        base_sum += int(bc)
+        int_sum += int(ic)
+        final_sum += int(bc) if int(rescue) == 1 else int(ic)
+
+    out = {
         "n_eval": int(n),
+        "target_label": canonical_label_name(target_label),
         "rescue_rate": (None if n == 0 else float(sum(int(x) for x in rescue_flags) / float(n))),
         "baseline_acc": (None if n == 0 else float(base_sum / float(n))),
         "intervention_acc": (None if n == 0 else float(int_sum / float(n))),
         "final_acc": (None if n == 0 else float(final_sum / float(n))),
         "delta_vs_intervention": (None if n == 0 else float((final_sum - int_sum) / float(n))),
-        "reference_precision": precision,
-        "reference_recall": recall,
-        "reference_f1": f1,
-        "reference_tp": int(tp),
-        "reference_fp": int(fp),
-        "reference_tn": int(tn),
-        "reference_fn": int(fn),
     }
+    out.update(eval_against_label(rows, rescue_flags, label_key="reference_rescue", prefix="reference"))
+    out.update(eval_against_label(rows, rescue_flags, label_key="actual_rescue", prefix="actual"))
+    primary_prefix = "actual" if canonical_label_name(target_label) == "actual_rescue" else "reference"
+    out["target_precision"] = out.get(f"{primary_prefix}_precision")
+    out["target_recall"] = out.get(f"{primary_prefix}_recall")
+    out["target_f1"] = out.get(f"{primary_prefix}_f1")
+    out["target_tp"] = out.get(f"{primary_prefix}_tp")
+    out["target_fp"] = out.get(f"{primary_prefix}_fp")
+    out["target_tn"] = out.get(f"{primary_prefix}_tn")
+    out["target_fn"] = out.get(f"{primary_prefix}_fn")
+    return out
 
 
 def build_single_oriented_scores(rows: Sequence[Dict[str, Any]], feature: str, direction: str) -> List[Optional[float]]:
@@ -281,6 +319,7 @@ def calibrate(args: argparse.Namespace) -> None:
     feature_rows = load_csv_rows(args.features_csv)
     reference_rows = load_csv_rows(args.reference_decisions_csv)
     rows = merge_rows(feature_rows, reference_rows)
+    target_label = canonical_label_name(args.target_label)
     feature_names = select_feature_names(rows, args.feature_cols)
     if not rows:
         raise RuntimeError("No merged rows for calibration.")
@@ -297,18 +336,19 @@ def calibrate(args: argparse.Namespace) -> None:
     single_rank: List[Tuple[str, float]] = []
 
     for feature in feature_names:
-        direction, auc = orient_for_rescue(rows, feature)
+        direction, auc = orient_for_rescue(rows, feature, target_label)
         single_rank.append((feature, -1.0 if auc is None else float(auc)))
         oriented = build_single_oriented_scores(rows, feature, direction)
         valid = [float(v) for v in oriented if v is not None]
         for tau in threshold_grid(valid):
             flags = [0 if v is None else int(float(v) >= float(tau)) for v in oriented]
-            metrics = eval_decision(rows, flags)
+            metrics = eval_decision(rows, flags, target_label=target_label)
             if metrics["rescue_rate"] is not None and float(metrics["rescue_rate"]) > float(args.max_rescue_rate):
                 continue
             candidates.append(
                 {
                     "policy_type": "single",
+                    "target_label": target_label,
                     "feature_a": feature,
                     "direction_a": direction,
                     "feature_b": "",
@@ -326,8 +366,8 @@ def calibrate(args: argparse.Namespace) -> None:
     single_rank = sorted(single_rank, key=lambda x: float(x[1]), reverse=True)
     top_pair_feats = [name for name, _ in single_rank[: max(2, int(args.pair_feature_topn))]]
     for feat_a, feat_b in combinations(top_pair_feats, 2):
-        dir_a, auc_a = orient_for_rescue(rows, feat_a)
-        dir_b, auc_b = orient_for_rescue(rows, feat_b)
+        dir_a, auc_a = orient_for_rescue(rows, feat_a, target_label)
+        dir_b, auc_b = orient_for_rescue(rows, feat_b, target_label)
         oa = [v for v in build_single_oriented_scores(rows, feat_a, dir_a) if v is not None]
         ob = [v for v in build_single_oriented_scores(rows, feat_b, dir_b) if v is not None]
         mu_a = mean(oa)
@@ -340,12 +380,13 @@ def calibrate(args: argparse.Namespace) -> None:
         valid = [float(v) for v in pair_scores if v is not None]
         for tau in threshold_grid(valid):
             flags = [0 if v is None else int(float(v) >= float(tau)) for v in pair_scores]
-            metrics = eval_decision(rows, flags)
+            metrics = eval_decision(rows, flags, target_label=target_label)
             if metrics["rescue_rate"] is not None and float(metrics["rescue_rate"]) > float(args.max_rescue_rate):
                 continue
             candidates.append(
                 {
                     "policy_type": "pair_sum_z",
+                    "target_label": target_label,
                     "feature_a": feat_a,
                     "direction_a": dir_a,
                     "feature_b": feat_b,
@@ -365,9 +406,9 @@ def calibrate(args: argparse.Namespace) -> None:
 
     def score_key(row: Dict[str, Any]) -> Tuple[float, float, float, float]:
         return (
-            -1.0 if row["reference_f1"] is None else float(row["reference_f1"]),
+            -1.0 if row["target_f1"] is None else float(row["target_f1"]),
             -1.0 if row["final_acc"] is None else float(row["final_acc"]),
-            -1.0 if row["reference_precision"] is None else float(row["reference_precision"]),
+            -1.0 if row["target_precision"] is None else float(row["target_precision"]),
             -float(row["rescue_rate"] or 0.0),
         )
 
@@ -379,6 +420,7 @@ def calibrate(args: argparse.Namespace) -> None:
     summary_json = os.path.join(out_dir, "summary.json")
     write_csv(candidates_csv, candidates)
     selected_policy = {
+        "target_label": target_label,
         "policy_type": str(best["policy_type"]),
         "feature_a": str(best["feature_a"]),
         "direction_a": str(best["direction_a"]),
@@ -399,6 +441,7 @@ def calibrate(args: argparse.Namespace) -> None:
                 "features_csv": os.path.abspath(args.features_csv),
                 "reference_decisions_csv": os.path.abspath(args.reference_decisions_csv),
                 "feature_cols": feature_names,
+                "target_label": target_label,
                 "pair_feature_topn": int(args.pair_feature_topn),
                 "max_rescue_rate": float(args.max_rescue_rate),
             },
@@ -410,6 +453,12 @@ def calibrate(args: argparse.Namespace) -> None:
                         "final_acc",
                         "delta_vs_intervention",
                         "rescue_rate",
+                        "target_precision",
+                        "target_recall",
+                        "target_f1",
+                        "actual_precision",
+                        "actual_recall",
+                        "actual_f1",
                         "reference_precision",
                         "reference_recall",
                         "reference_f1",
@@ -433,6 +482,7 @@ def apply(args: argparse.Namespace) -> None:
     rows = merge_rows(feature_rows, reference_rows)
     with open(args.policy_json, "r", encoding="utf-8") as f:
         policy = json.load(f)
+    target_label = canonical_label_name(policy.get("target_label", args.target_label))
 
     flags: List[int] = []
     decision_rows: List[Dict[str, Any]] = []
@@ -459,6 +509,7 @@ def apply(args: argparse.Namespace) -> None:
                 "id": row.get("id"),
                 "reference_case_type": row.get("reference_case_type"),
                 "reference_rescue": row.get("reference_rescue"),
+                "actual_rescue": row.get("actual_rescue"),
                 "proxy_score": score,
                 "proxy_rescue": rescue,
                 "feature_a": policy["feature_a"],
@@ -471,7 +522,7 @@ def apply(args: argparse.Namespace) -> None:
             }
         )
 
-    metrics = eval_decision(rows, flags)
+    metrics = eval_decision(rows, flags, target_label=target_label)
     out_dir = args.out_dir
     os.makedirs(out_dir, exist_ok=True)
     decisions_csv = os.path.join(out_dir, "decision_rows.csv")
@@ -505,6 +556,7 @@ def main() -> None:
     ap_cal.add_argument("--features_csv", type=str, required=True)
     ap_cal.add_argument("--reference_decisions_csv", type=str, required=True)
     ap_cal.add_argument("--feature_cols", type=str, default="")
+    ap_cal.add_argument("--target_label", type=str, default="reference_rescue")
     ap_cal.add_argument("--pair_feature_topn", type=int, default=6)
     ap_cal.add_argument("--max_rescue_rate", type=float, default=0.03)
     ap_cal.add_argument("--out_dir", type=str, required=True)
@@ -513,6 +565,7 @@ def main() -> None:
     ap_apply.add_argument("--features_csv", type=str, required=True)
     ap_apply.add_argument("--reference_decisions_csv", type=str, required=True)
     ap_apply.add_argument("--policy_json", type=str, required=True)
+    ap_apply.add_argument("--target_label", type=str, default="reference_rescue")
     ap_apply.add_argument("--out_dir", type=str, required=True)
 
     args = ap.parse_args()
