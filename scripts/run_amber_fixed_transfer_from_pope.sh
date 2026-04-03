@@ -40,6 +40,11 @@ EVAL_PYTHON_BIN="${EVAL_PYTHON_BIN:-$PYTHON_BIN}"
 VGA_CONDA_SH="${VGA_CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 VGA_ENV="${VGA_ENV:-vga}"
 
+VGA_MODEL_BASE_ARGS=()
+if [[ -n "${MODEL_BASE}" ]]; then
+  VGA_MODEL_BASE_ARGS+=(--model-base "$MODEL_BASE")
+fi
+
 if [[ ! -d "$AMBER_ROOT" ]]; then
   echo "[error] AMBER_ROOT does not exist: $AMBER_ROOT" >&2
   exit 1
@@ -132,7 +137,7 @@ if [[ "$REUSE_PREDS" != "true" || ! -f "$GEN_VGA" ]]; then
     cd "$VGA_ROOT"
     python eval/object_hallucination_vqa_llava.py \
       --model-path "$MODEL_PATH" \
-      --model-base "$MODEL_BASE" \
+      "${VGA_MODEL_BASE_ARGS[@]}" \
       --image-folder "$AMBER_IMAGE_FOLDER" \
       --question-file "$GEN_Q_OBJ" \
       --answers-file "$GEN_VGA" \
@@ -160,7 +165,7 @@ if [[ "$REUSE_PREDS" != "true" || ! -f "$DISC_VGA" ]]; then
     cd "$VGA_ROOT"
     python eval/object_hallucination_vqa_llava.py \
       --model-path "$MODEL_PATH" \
-      --model-base "$MODEL_BASE" \
+      "${VGA_MODEL_BASE_ARGS[@]}" \
       --image-folder "$AMBER_IMAGE_FOLDER" \
       --question-file "$DISC_Q_OBJ" \
       --answers-file "$DISC_VGA" \
