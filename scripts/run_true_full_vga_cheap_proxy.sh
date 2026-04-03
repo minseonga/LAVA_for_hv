@@ -34,11 +34,29 @@ SEED="${SEED:-42}"
 LIMIT="${LIMIT:-0}"
 LOG_EVERY="${LOG_EVERY:-25}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-false}"
+SMOKE="${SMOKE:-false}"
+SMOKE_LIMIT="${SMOKE_LIMIT:-64}"
 
 REFERENCE_VGA_PRED_JSONL="${REFERENCE_VGA_PRED_JSONL:-$REFERENCE_ROOT/test_stageb/pred_vga.jsonl}"
 REFERENCE_BASELINE_PRED_JSONL="${REFERENCE_BASELINE_PRED_JSONL:-$REFERENCE_ROOT/test_stageb/pred_baseline.jsonl}"
 
+if [[ "$SMOKE" == "true" && "$LIMIT" == "0" ]]; then
+  LIMIT="$SMOKE_LIMIT"
+  echo "[smoke] overriding LIMIT -> $LIMIT"
+fi
+
 mkdir -p "$OUT_DIR"
+
+if [[ ! -d "$VGA_ROOT" ]]; then
+  echo "[error] VGA_ROOT does not exist: $VGA_ROOT" >&2
+  echo "[hint] This runner needs the external VGA_origin checkout." >&2
+  exit 1
+fi
+
+if [[ ! -f "$VGA_ROOT/eval/object_hallucination_vqa_llava.py" ]]; then
+  echo "[error] missing VGA eval entrypoint: $VGA_ROOT/eval/object_hallucination_vqa_llava.py" >&2
+  exit 1
+fi
 
 PYTHONPATH="$ROOT_DIR" \
 python scripts/run_true_full_vga_cheap_proxy.py \

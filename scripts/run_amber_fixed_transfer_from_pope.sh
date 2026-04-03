@@ -39,6 +39,9 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 EVAL_PYTHON_BIN="${EVAL_PYTHON_BIN:-$PYTHON_BIN}"
 VGA_CONDA_SH="${VGA_CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 VGA_ENV="${VGA_ENV:-vga}"
+SMOKE="${SMOKE:-false}"
+SMOKE_LIMIT_G="${SMOKE_LIMIT_G:-32}"
+SMOKE_LIMIT_D="${SMOKE_LIMIT_D:-64}"
 
 VGA_MODEL_BASE_ARGS=()
 if [[ -n "${MODEL_BASE}" ]]; then
@@ -94,6 +97,37 @@ if [[ "$REUSE_ASSETS" != "true" || ! -f "$ALL_Q" ]]; then
     --out_dir "$ASSET_ROOT"
 else
   echo "[1/8] reuse AMBER assets -> $ASSET_ROOT"
+fi
+
+if [[ "$SMOKE" == "true" ]]; then
+  echo "[smoke] build reduced AMBER subset assets"
+  SMOKE_ASSET_ROOT="$OUT_ROOT/smoke_assets"
+  SMOKE_GEN_Q="$SMOKE_ASSET_ROOT/generative/assets/amber_generative_q.jsonl"
+  SMOKE_GEN_Q_OBJ="$SMOKE_ASSET_ROOT/generative/assets/amber_generative_q_with_object.jsonl"
+  SMOKE_DISC_Q="$SMOKE_ASSET_ROOT/discriminative/assets/amber_discriminative_q.jsonl"
+  SMOKE_DISC_Q_OBJ="$SMOKE_ASSET_ROOT/discriminative/assets/amber_discriminative_q_with_object.jsonl"
+  SMOKE_ALL_Q="$SMOKE_ASSET_ROOT/all/assets/amber_all_q.jsonl"
+  mkdir -p "$(dirname "$SMOKE_GEN_Q")" "$(dirname "$SMOKE_DISC_Q")" "$(dirname "$SMOKE_ALL_Q")" "$OUT_ROOT/smoke/generative" "$OUT_ROOT/smoke/discriminative" "$OUT_ROOT/smoke/final"
+  head -n "$SMOKE_LIMIT_G" "$GEN_Q" > "$SMOKE_GEN_Q"
+  head -n "$SMOKE_LIMIT_G" "$GEN_Q_OBJ" > "$SMOKE_GEN_Q_OBJ"
+  head -n "$SMOKE_LIMIT_D" "$DISC_Q" > "$SMOKE_DISC_Q"
+  head -n "$SMOKE_LIMIT_D" "$DISC_Q_OBJ" > "$SMOKE_DISC_Q_OBJ"
+  cat "$SMOKE_GEN_Q" "$SMOKE_DISC_Q" > "$SMOKE_ALL_Q"
+  GEN_Q="$SMOKE_GEN_Q"
+  GEN_Q_OBJ="$SMOKE_GEN_Q_OBJ"
+  DISC_Q="$SMOKE_DISC_Q"
+  DISC_Q_OBJ="$SMOKE_DISC_Q_OBJ"
+  ALL_Q="$SMOKE_ALL_Q"
+  OUT_ROOT="$OUT_ROOT/smoke"
+  GEN_BASE="$OUT_ROOT/generative/pred_baseline.jsonl"
+  DISC_BASE="$OUT_ROOT/discriminative/pred_baseline.jsonl"
+  GEN_VGA="$OUT_ROOT/generative/pred_vga.jsonl"
+  DISC_VGA="$OUT_ROOT/discriminative/pred_vga.jsonl"
+  GEN_FEAT="$OUT_ROOT/generative/cheap_online_features.csv"
+  DISC_FEAT="$OUT_ROOT/discriminative/cheap_online_features.csv"
+  RUN_OFFICIAL_EVAL=false
+else
+  RUN_OFFICIAL_EVAL=true
 fi
 
 if [[ "$REUSE_PREDS" != "true" || ! -f "$GEN_BASE" ]]; then
@@ -238,6 +272,6 @@ PYTHONPATH="$ROOT_DIR" \
   --baseline_pred_text_key text \
   --intervention_pred_text_key output \
   --python_bin "$EVAL_PYTHON_BIN" \
-  --run_official_eval true
+  --run_official_eval "$RUN_OFFICIAL_EVAL"
 
 echo "[done] AMBER fixed transfer -> $OUT_ROOT/final"
