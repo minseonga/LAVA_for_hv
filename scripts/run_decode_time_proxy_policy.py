@@ -125,8 +125,14 @@ def threshold_grid(values: Sequence[float]) -> List[float]:
     if not finite:
         return [0.0]
     if len(finite) == 1:
-        return [finite[0]]
-    out = {finite[0], finite[-1]}
+        base = float(finite[0])
+        eps = max(1e-9, 1e-6 * max(1.0, abs(base)))
+        return [base - eps, base, base + eps]
+    lo = float(finite[0])
+    hi = float(finite[-1])
+    scale = max(1.0, abs(lo), abs(hi), abs(hi - lo))
+    eps = max(1e-9, 1e-6 * scale)
+    out = {lo - eps, lo, hi, hi + eps}
     for q in [i / 100.0 for i in range(1, 100)]:
         pos = q * float(len(finite) - 1)
         lo = int(math.floor(pos))
@@ -276,6 +282,11 @@ def calibrate(args: argparse.Namespace) -> None:
     feature_names = select_feature_names(rows, args.feature_cols)
     if not rows:
         raise RuntimeError("No merged rows for calibration.")
+    if not feature_names:
+        raise RuntimeError(
+            "No requested proxy features were found after merging. "
+            "Check --feature_cols names against decode_time_proxy_features.csv."
+        )
 
     candidates: List[Dict[str, Any]] = []
     single_rank: List[Tuple[str, float]] = []
