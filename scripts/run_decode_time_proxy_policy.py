@@ -173,10 +173,16 @@ def merge_rows(
         out: Dict[str, Any] = dict(row)
         out["id"] = sid
         out["reference_rescue"] = maybe_int(ref.get("rescue"))
-        out["baseline_correct"] = maybe_int(ref.get("baseline_correct"))
-        out["intervention_correct"] = maybe_int(ref.get("intervention_correct"))
+        base_correct = maybe_int(ref.get("baseline_correct"))
+        if base_correct is None:
+            base_correct = maybe_int(ref.get("baseline_ok"))
+        int_correct = maybe_int(ref.get("intervention_correct"))
+        if int_correct is None:
+            int_correct = maybe_int(ref.get("vga_ok"))
+        out["baseline_correct"] = base_correct
+        out["intervention_correct"] = int_correct
         out["reference_final_correct"] = maybe_int(ref.get("final_correct"))
-        out["reference_case_type"] = str(ref.get("case_type", "")).strip()
+        out["reference_case_type"] = str(ref.get("reference_case_type", ref.get("case_type", ""))).strip()
         bc = out.get("baseline_correct")
         ic = out.get("intervention_correct")
         out["actual_rescue"] = None if bc is None or ic is None else int(int(bc) == 1 and int(ic) == 0)
