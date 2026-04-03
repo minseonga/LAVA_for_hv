@@ -358,6 +358,48 @@ class CleanroomLlavaRuntime:
         image_tensor = image_tensor.to(self.device, dtype=torch.float16)
         return image_tensor, [image.size]
 
+    def _prepare_multimodal_expanded_sequence(
+        self,
+        full_ids: torch.Tensor,
+        images_tensor: torch.Tensor,
+        image_sizes: Sequence[Tuple[int, int]],
+    ) -> Tuple[Optional[torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor]:
+        base_attn = torch.ones_like(full_ids, dtype=torch.long, device=self.device)
+        fn = self.model.prepare_inputs_labels_for_multimodal
+        try:
+            packed = fn(
+                full_ids,
+                None,
+                base_attn,
+                None,
+                full_ids,
+                images_tensor,
+                image_sizes,
+            )
+        except TypeError as new_sig_exc:
+            try:
+                packed = fn(
+                    full_ids,
+                    base_attn,
+                    None,
+                    full_ids,
+                    images_tensor,
+                )
+            except TypeError:
+                raise new_sig_exc
+            if not isinstance(packed, tuple) or len(packed) != 5:
+                raise RuntimeError("Unexpected legacy prepare_inputs_labels_for_multimodal return shape.")
+            _, attn_mask_e, _, mm_embeds_e, labels_e = packed
+            pos_ids_e = None
+        else:
+            if not isinstance(packed, tuple) or len(packed) != 6:
+                raise RuntimeError("Unexpected prepare_inputs_labels_for_multimodal return shape.")
+            _, pos_ids_e, attn_mask_e, _, mm_embeds_e, labels_e = packed
+
+        if mm_embeds_e is None or labels_e is None or attn_mask_e is None:
+            raise RuntimeError("prepare_inputs_labels_for_multimodal did not return expected multimodal tensors.")
+        return pos_ids_e, attn_mask_e, mm_embeds_e, labels_e
+
     def load_image(self, image_path: str) -> Image.Image:
         return Image.open(image_path).convert("RGB")
 
@@ -390,21 +432,14 @@ class CleanroomLlavaRuntime:
             raise ValueError("Candidate text tokenization is empty.")
 
         full_ids = torch.cat([prompt_ids[0], cont_ids], dim=0).unsqueeze(0)
-        base_mask = torch.ones_like(full_ids, dtype=torch.long, device=self.device)
         images_tensor, image_sizes = self._process_image(image)
 
         with torch.no_grad():
-            _, pos_ids_e, attn_mask_e, _, mm_embeds_e, labels_e = self.model.prepare_inputs_labels_for_multimodal(
-                full_ids,
-                None,
-                base_mask,
-                None,
-                full_ids,
-                images_tensor,
-                image_sizes,
+            pos_ids_e, attn_mask_e, mm_embeds_e, labels_e = self._prepare_multimodal_expanded_sequence(
+                full_ids=full_ids,
+                images_tensor=images_tensor,
+                image_sizes=image_sizes,
             )
-            if mm_embeds_e is None or labels_e is None:
-                raise RuntimeError("Failed to build multimodal teacher-forced sequence.")
 
             out = self.model(
                 inputs_embeds=mm_embeds_e,
