@@ -459,6 +459,14 @@ class CleanroomLlavaRuntime:
                 image_sizes=image_sizes,
             )
 
+            # Call the language-model backbone directly. VGA_origin's
+            # LlavaLlamaForCausalLM.forward() always re-enters
+            # prepare_inputs_labels_for_multimodal(..., images), which breaks
+            # teacher-forced replay with pre-expanded multimodal embeddings.
+            backbone = self.model.get_model() if hasattr(self.model, "get_model") else getattr(self.model, "model", None)
+            if backbone is None:
+                raise RuntimeError("Could not resolve language-model backbone for teacher-forced replay.")
+
             forward_kwargs = {
                 "inputs_embeds": mm_embeds_e,
                 "attention_mask": attn_mask_e,
@@ -470,12 +478,13 @@ class CleanroomLlavaRuntime:
             if pos_ids_e is not None:
                 forward_kwargs["position_ids"] = pos_ids_e
             try:
-                out = self.model(**forward_kwargs)
+                outputs = backbone(**forward_kwargs)
             except TypeError as exc:
                 if "position_ids" not in str(exc):
                     raise
                 forward_kwargs.pop("position_ids", None)
-                out = self.model(**forward_kwargs)
+                outputs = backbone(**forward_kwargs)
+            logits = self.model.lm_head(outputs[0])
 
         labels_exp = labels_e[0]
         text_positions = torch.where(labels_exp != int(IGNORE_INDEX))[0]
@@ -499,8 +508,8 @@ class CleanroomLlavaRuntime:
             decision_positions=decision_positions.detach().cpu(),
             vision_positions=vision_positions.detach().cpu(),
             text_positions=text_positions.detach().cpu(),
-            logits=out.logits[0].detach().cpu(),
-            attentions=None if out.attentions is None else tuple(att.detach().cpu() for att in out.attentions),
+            logits=logits[0].detach().cpu(),
+            attentions=None if outputs.attentions is None else tuple(att.detach().cpu() for att in outputs.attentions),
         )
 
     def generate_baseline(
