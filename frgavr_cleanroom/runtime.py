@@ -447,15 +447,23 @@ class CleanroomLlavaRuntime:
                 image_sizes=image_sizes,
             )
 
-            out = self.model(
-                inputs_embeds=mm_embeds_e,
-                attention_mask=attn_mask_e,
-                position_ids=pos_ids_e,
-                use_cache=False,
-                output_attentions=bool(output_attentions),
-                output_hidden_states=False,
-                return_dict=True,
-            )
+            forward_kwargs = {
+                "inputs_embeds": mm_embeds_e,
+                "attention_mask": attn_mask_e,
+                "use_cache": False,
+                "output_attentions": bool(output_attentions),
+                "output_hidden_states": False,
+                "return_dict": True,
+            }
+            if pos_ids_e is not None:
+                forward_kwargs["position_ids"] = pos_ids_e
+            try:
+                out = self.model(**forward_kwargs)
+            except TypeError as exc:
+                if "position_ids" not in str(exc):
+                    raise
+                forward_kwargs.pop("position_ids", None)
+                out = self.model(**forward_kwargs)
 
         labels_exp = labels_e[0]
         text_positions = torch.where(labels_exp != int(IGNORE_INDEX))[0]
