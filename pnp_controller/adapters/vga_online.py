@@ -1600,13 +1600,14 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
     ) -> Dict[str, Any]:
         gen_kwargs = dict(gen_kwargs)
         gen_kwargs["use_add"] = bool(use_add)
+        if bool(capture_proxy):
+            gen_kwargs["output_scores"] = True
+            gen_kwargs["return_dict_in_generate"] = True
         gen_kwargs["enable_proxy_trace"] = bool(capture_proxy and self.cfg.proxy_trace_enabled)
         if bool(capture_proxy and self.cfg.proxy_trace_enabled):
             gen_kwargs["proxy_late_start"] = int(self.cfg.proxy_trace_late_start)
             gen_kwargs["proxy_late_end"] = int(self.cfg.proxy_trace_late_end)
             gen_kwargs["ais_headset_json"] = str(self.cfg.headset_json or "")
-            gen_kwargs["output_scores"] = True
-            gen_kwargs["return_dict_in_generate"] = True
             gen_kwargs["ais_sample_ids"] = [prepared["sample_id"]]
             _ = getattr(self.model, "get_proxy_trace_rows", lambda reset=False: [])(reset=True)
         with torch.inference_mode():
@@ -1617,11 +1618,13 @@ class VGAOnlineAdapter(OnlineMethodAdapter):
         output_ids = output_obj.sequences if hasattr(output_obj, "sequences") else output_obj
         output_text = self._decode_generated_text(output_ids, prepared["stop_str"])
         pred_row = self._build_prediction_row(sample=sample, prepared=prepared, output_text=output_text, use_add=use_add)
-        if not bool(capture_proxy and self.cfg.proxy_trace_enabled):
+        if not bool(capture_proxy):
             return pred_row
 
         score_list = list(getattr(output_obj, "scores", []) or [])
-        proxy_trace_rows = list(getattr(self.model, "get_proxy_trace_rows", lambda reset=False: [])(reset=True))
+        proxy_trace_rows = []
+        if bool(self.cfg.proxy_trace_enabled):
+            proxy_trace_rows = list(getattr(self.model, "get_proxy_trace_rows", lambda reset=False: [])(reset=True))
         proxy_row = self._build_decode_time_proxy_row(
             sample=sample,
             prepared=prepared,

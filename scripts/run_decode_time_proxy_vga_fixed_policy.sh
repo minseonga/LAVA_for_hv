@@ -40,7 +40,7 @@ OUT_ROOT="${OUT_ROOT:-$ROOT_DIR/experiments/decode_time_proxy_vga}"
 DISCOVERY_OUT_DIR="${DISCOVERY_OUT_DIR:-$OUT_ROOT/discovery}"
 TEST_OUT_DIR="${TEST_OUT_DIR:-$OUT_ROOT/test}"
 
-FEATURE_COLS="${FEATURE_COLS:-proxy_gap_content_mean,proxy_gap_content_std,proxy_gap_content_lastk_mean,proxy_gap_content_lastk_std,proxy_faithful_content_std,proxy_lp_content_min,proxy_margin_content_min,proxy_entropy_content_mean,proxy_low_gap_ratio_content,proxy_low_margin_ratio_content,proxy_gap_sign_flip_count_content}"
+FEATURE_COLS="${FEATURE_COLS:-proxy_lp_content_mean,proxy_lp_content_std,proxy_lp_content_min,proxy_lp_content_lastk_mean,proxy_lp_content_lastk_std,proxy_margin_content_mean,proxy_margin_content_min,proxy_margin_content_lastk_mean,proxy_margin_content_lastk_std,proxy_entropy_content_mean,proxy_entropy_content_std,proxy_low_margin_ratio_content}"
 PAIR_FEATURE_TOPN="${PAIR_FEATURE_TOPN:-6}"
 MAX_RESCUE_RATE="${MAX_RESCUE_RATE:-0.03}"
 
@@ -59,6 +59,8 @@ PROXY_TRACE_LATE_START="${PROXY_TRACE_LATE_START:-16}"
 PROXY_TRACE_LATE_END="${PROXY_TRACE_LATE_END:-24}"
 PROXY_TRACE_LAST_K="${PROXY_TRACE_LAST_K:-8}"
 PROXY_TRACE_MARGIN_LOW="${PROXY_TRACE_MARGIN_LOW:-1.0}"
+PREFER_LOCAL_LLAVA="${PREFER_LOCAL_LLAVA:-false}"
+PROXY_TRACE_ENABLED="${PROXY_TRACE_ENABLED:-false}"
 SEED="${SEED:-42}"
 MAX_SAMPLES="${MAX_SAMPLES:--1}"
 LOG_EVERY="${LOG_EVERY:-25}"
@@ -116,6 +118,8 @@ python scripts/extract_decode_time_proxy_vga.py \
   --proxy_trace_late_end "$PROXY_TRACE_LATE_END" \
   --proxy_trace_last_k "$PROXY_TRACE_LAST_K" \
   --proxy_trace_margin_low "$PROXY_TRACE_MARGIN_LOW" \
+  --prefer_local_llava "$PREFER_LOCAL_LLAVA" \
+  --proxy_trace_enabled "$PROXY_TRACE_ENABLED" \
   --seed "$SEED" \
   --max_samples "$MAX_SAMPLES" \
   --log_every "$LOG_EVERY"
@@ -159,6 +163,8 @@ python scripts/extract_decode_time_proxy_vga.py \
   --proxy_trace_late_end "$PROXY_TRACE_LATE_END" \
   --proxy_trace_last_k "$PROXY_TRACE_LAST_K" \
   --proxy_trace_margin_low "$PROXY_TRACE_MARGIN_LOW" \
+  --prefer_local_llava "$PREFER_LOCAL_LLAVA" \
+  --proxy_trace_enabled "$PROXY_TRACE_ENABLED" \
   --seed "$SEED" \
   --max_samples "$MAX_SAMPLES" \
   --log_every "$LOG_EVERY"

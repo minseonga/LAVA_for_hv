@@ -285,9 +285,12 @@ def calibrate(args: argparse.Namespace) -> None:
     if not rows:
         raise RuntimeError("No merged rows for calibration.")
     if not feature_names:
+        available = sorted({k for row in rows for k in row.keys()})
+        proxy_like = [k for k in available if str(k).startswith("proxy_")]
         raise RuntimeError(
             "No requested proxy features were found after merging. "
-            "Check --feature_cols names against decode_time_proxy_features.csv."
+            f"Check --feature_cols names against decode_time_proxy_features.csv. "
+            f"Available proxy-like columns: {proxy_like[:40]}"
         )
 
     candidates: List[Dict[str, Any]] = []

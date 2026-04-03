@@ -99,6 +99,8 @@ def main() -> None:
     ap.add_argument("--proxy_trace_late_end", type=int, default=24)
     ap.add_argument("--proxy_trace_last_k", type=int, default=8)
     ap.add_argument("--proxy_trace_margin_low", type=float, default=1.0)
+    ap.add_argument("--prefer_local_llava", type=lambda x: str(x).lower() == "true", default=False)
+    ap.add_argument("--proxy_trace_enabled", type=lambda x: str(x).lower() == "true", default=False)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--max_samples", type=int, default=-1)
     ap.add_argument("--log_every", type=int, default=25)
@@ -126,8 +128,8 @@ def main() -> None:
             attn_norm=args.attn_norm,
             headset_json=args.headset_json,
             seed=args.seed,
-            prefer_local_llava=True,
-            proxy_trace_enabled=True,
+            prefer_local_llava=args.prefer_local_llava,
+            proxy_trace_enabled=args.proxy_trace_enabled,
             proxy_trace_late_start=args.proxy_trace_late_start,
             proxy_trace_late_end=args.proxy_trace_late_end,
             proxy_trace_last_k=args.proxy_trace_last_k,
@@ -209,6 +211,8 @@ def main() -> None:
                 "proxy_trace_late_start": int(args.proxy_trace_late_start),
                 "proxy_trace_late_end": int(args.proxy_trace_late_end),
                 "proxy_trace_last_k": int(args.proxy_trace_last_k),
+                "prefer_local_llava": bool(args.prefer_local_llava),
+                "proxy_trace_enabled": bool(args.proxy_trace_enabled),
             },
             "counts": {
                 "n_samples": int(len(samples)),
