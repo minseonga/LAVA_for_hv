@@ -9,14 +9,13 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import torch
-import torch.nn.functional as F
-
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from extract_c_stage_cheap_online_features import build_feature_row
 from frgavr_cleanroom.runtime import (
+    CleanroomLlavaRuntime,
     load_label_map,
     load_prediction_text_map,
     load_question_rows,
@@ -115,117 +114,6 @@ def apply_policy(policy: Dict[str, Any], row: Dict[str, Any]) -> Tuple[Optional[
 
 def normalize_text(text: str) -> str:
     return " ".join(str(text or "").strip().split())
-
-
-def build_cheap_feature_row_from_prepared(
-    adapter: VGAOnlineAdapter,
-    prepared: Dict[str, Any],
-    candidate_text: str,
-) -> Dict[str, Any]:
-    if str(candidate_text or "").strip() == "":
-        raise ValueError("Missing candidate text for cheap feature extraction.")
-
-    prompt_ids = prepared["input_ids"]
-    cont_ids = adapter.tokenizer(
-        str(candidate_text),
-        add_special_tokens=False,
-        return_tensors="pt",
-    ).input_ids[0].to(adapter.device)
-    if int(cont_ids.numel()) <= 0:
-        raise ValueError("Candidate tokenization is empty.")
-
-    full_ids = torch.cat([prompt_ids[0], cont_ids], dim=0).unsqueeze(0)
-    base_mask = torch.ones_like(full_ids, dtype=torch.long, device=adapter.device)
-    images_tensor = prepared["image_tensor"].unsqueeze(0)
-    image_sizes = [prepared["image_size"]]
-
-    with torch.no_grad():
-        _, pos_ids_e, attn_mask_e, _, mm_embeds_e, labels_e = adapter.model.prepare_inputs_labels_for_multimodal(
-            full_ids,
-            None,
-            base_mask,
-            None,
-            full_ids,
-            images_tensor,
-            image_sizes,
-        )
-        if mm_embeds_e is None or labels_e is None:
-            raise RuntimeError("Failed to build multimodal teacher-forced sequence.")
-        out = adapter.model(
-            inputs_embeds=mm_embeds_e,
-            attention_mask=attn_mask_e,
-            position_ids=pos_ids_e,
-            use_cache=False,
-            output_attentions=False,
-            output_hidden_states=False,
-            return_dict=True,
-        )
-
-    labels_exp = labels_e[0]
-    text_positions = torch.where(labels_exp != int(adapter.IGNORE_INDEX))[0]
-    if int(text_positions.numel()) < int(cont_ids.numel()):
-        raise RuntimeError("Expanded sequence shorter than continuation token count.")
-    cont_label_positions = text_positions[-int(cont_ids.numel()):]
-    decision_positions = cont_label_positions - 1
-    target_ids = labels_exp[cont_label_positions].long()
-
-    token_logits = out.logits[0][decision_positions].to(torch.float32)
-    log_probs = F.log_softmax(token_logits, dim=-1)
-    probs = torch.softmax(token_logits, dim=-1)
-    token_ent = -(probs * log_probs).sum(dim=-1)
-    target_lp = log_probs.gather(1, target_ids.unsqueeze(-1)).squeeze(-1)
-
-    top2_vals, top2_idx = torch.topk(token_logits, k=2, dim=-1)
-    top1_logit = top2_vals[:, 0]
-    top2_logit = top2_vals[:, 1]
-    top1_id = top2_idx[:, 0]
-    top1_margin = top1_logit - top2_logit
-    target_logit = token_logits.gather(1, target_ids.unsqueeze(-1)).squeeze(-1)
-    best_other_logit = torch.where(top1_id == target_ids, top2_logit, top1_logit)
-    target_gap = target_logit - best_other_logit
-    target_is_argmax = (top1_id == target_ids).to(torch.float32)
-
-    cont_token_ids = [int(x) for x in cont_ids.tolist()]
-    cont_idx = list(range(int(len(cont_token_ids))))
-    pick = adapter._select_content_token_indices(cont_token_ids)
-    if not pick:
-        pick = cont_idx
-
-    def pick_values(t: torch.Tensor, idxs: Sequence[int]) -> List[float]:
-        return [float(t[int(i)].item()) for i in idxs]
-
-    lp_all = pick_values(target_lp, cont_idx)
-    lp_content = pick_values(target_lp, pick)
-    ent_all = pick_values(token_ent, cont_idx)
-    ent_content = pick_values(token_ent, pick)
-    margin_all = pick_values(top1_margin, cont_idx)
-    margin_content = pick_values(top1_margin, pick)
-    gap_all = pick_values(target_gap, cont_idx)
-    gap_content = pick_values(target_gap, pick)
-    argmax_all = pick_values(target_is_argmax, cont_idx)
-    argmax_content = pick_values(target_is_argmax, pick)
-
-    row: Dict[str, Any] = {
-        "id": prepared["sample_id"],
-        "image": prepared["image_file"],
-        "question": prepared["question"],
-        "n_cont_tokens": int(len(cont_idx)),
-        "n_content_tokens": int(len(pick)),
-        "cheap_content_fraction": float(len(pick) / max(1, len(cont_idx))),
-        "cheap_conflict_lp_minus_entropy": float(mean_or_zero(lp_content) - mean_or_zero(ent_content)),
-        "cheap_conflict_gap_minus_entropy": float(mean_or_zero(gap_content) - mean_or_zero(ent_content)),
-    }
-    row.update(summarize(lp_all, "cheap_lp_all"))
-    row.update(summarize(lp_content, "cheap_lp_content"))
-    row.update(summarize(ent_all, "cheap_entropy_all"))
-    row.update(summarize(ent_content, "cheap_entropy_content"))
-    row.update(summarize(margin_all, "cheap_margin_all"))
-    row.update(summarize(margin_content, "cheap_margin_content"))
-    row.update(summarize(gap_all, "cheap_target_gap_all"))
-    row.update(summarize(gap_content, "cheap_target_gap_content"))
-    row.update(summarize(argmax_all, "cheap_target_argmax_all"))
-    row.update(summarize(argmax_content, "cheap_target_argmax_content"))
-    return row
 
 
 def compute_binary_metrics(rows: Sequence[Dict[str, Any]], label_key: str) -> Dict[str, Any]:
@@ -336,6 +224,12 @@ def main() -> None:
             proxy_trace_enabled=False,
         )
     )
+    runtime = CleanroomLlavaRuntime(
+        model_path=args.model_path,
+        model_base=(args.model_base or None),
+        conv_mode=args.conv_mode,
+        device=args.device,
+    )
 
     rows: List[Dict[str, Any]] = []
     vga_secs: List[float] = []
@@ -405,10 +299,13 @@ def main() -> None:
                 vga_ref_label_match += int(row["reference_vga_label_match"] or 0)
 
             cheap_t0 = time.perf_counter()
-            feature_row = build_cheap_feature_row_from_prepared(
-                adapter=adapter,
-                prepared=ctx["prepared"],
+            feature_row = build_feature_row(
+                runtime=runtime,
+                image_path=os.path.join(args.image_folder, row["image"]),
+                question=row["question"],
                 candidate_text=intervention_text,
+                sample_id=sample_id,
+                image_name=row["image"],
             )
             cheap_dt = time.perf_counter() - cheap_t0
             cheap_secs.append(float(cheap_dt))
@@ -438,16 +335,14 @@ def main() -> None:
             final_correct = intervention_correct
             if int(rescue) == 1:
                 base_t0 = time.perf_counter()
-                base_pred = adapter._generate_from_prepared(
-                    sample=sample,
-                    prepared=ctx["prepared"],
-                    gen_kwargs=ctx["base_gen_kwargs"],
-                    use_add=False,
-                    capture_proxy=False,
+                image = runtime.load_image(os.path.join(args.image_folder, row["image"]))
+                baseline_text_live = runtime.generate_baseline(
+                    image=image,
+                    question=row["question"],
+                    max_new_tokens=int(args.max_gen_len),
                 )
                 base_dt = time.perf_counter() - base_t0
                 baseline_secs.append(float(base_dt))
-                baseline_text_live = str(base_pred.get("output", "")).strip()
                 baseline_label_live = parse_yes_no(baseline_text_live) if baseline_text_live else ""
                 baseline_correct_live = (
                     None if gt_label not in {"yes", "no"} or baseline_label_live == ""
