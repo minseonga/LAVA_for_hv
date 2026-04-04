@@ -99,6 +99,12 @@ def std(seq: Sequence[float]) -> float:
     return float(max(math.sqrt(max(var, 0.0)), 1e-6))
 
 
+def safe_div(num: float, den: float) -> float:
+    if float(den) == 0.0:
+        return 0.0
+    return float(num / den)
+
+
 def feature_cols(rows: Sequence[Dict[str, str]], allowlist: Optional[Sequence[str]] = None) -> List[str]:
     reserved = {
         "id",
@@ -184,9 +190,13 @@ def evaluate_tau(rows: Sequence[Dict[str, str]], features: Sequence[Dict[str, An
     n = 0
     route_baseline = 0
     final_correct = 0
+    baseline_correct_total = 0
+    intervention_correct_total = 0
     selected_harm = 0
     selected_help = 0
     selected_neutral = 0
+    total_harm = 0
+    total_help = 0
     for row in rows:
         score = build_score_row(row, features)
         if score is None:
@@ -196,6 +206,10 @@ def evaluate_tau(rows: Sequence[Dict[str, str]], features: Sequence[Dict[str, An
         intervention_correct = int(maybe_int(row.get("intervention_correct")) or 0)
         harm = int(maybe_int(row.get("harm")) or 0)
         help_ = int(maybe_int(row.get("help")) or 0)
+        baseline_correct_total += baseline_correct
+        intervention_correct_total += intervention_correct
+        total_harm += harm
+        total_help += help_
         use_baseline = bool(score >= tau)
         if use_baseline:
             route_baseline += 1
@@ -207,18 +221,60 @@ def evaluate_tau(rows: Sequence[Dict[str, str]], features: Sequence[Dict[str, An
             final_correct += intervention_correct
     baseline_rate = float(route_baseline / float(max(1, n)))
     acc = float(final_correct / float(max(1, n)))
+    precision = safe_div(float(selected_harm), float(route_baseline))
+    recall = safe_div(float(selected_harm), float(total_harm))
+    f1 = safe_div(2.0 * precision * recall, precision + recall)
+    delta_vs_intervention = safe_div(float(final_correct - intervention_correct_total), float(max(1, n)))
     return {
         "tau": float(tau),
         "n_eval": int(n),
         "baseline_rate": baseline_rate,
         "method_rate": float(1.0 - baseline_rate),
         "final_acc": acc,
+        "baseline_acc": safe_div(float(baseline_correct_total), float(max(1, n))),
+        "intervention_acc": safe_div(float(intervention_correct_total), float(max(1, n))),
+        "delta_vs_intervention": delta_vs_intervention,
+        "selected_count": int(route_baseline),
+        "total_harm": int(total_harm),
+        "total_help": int(total_help),
         "selected_harm": int(selected_harm),
         "selected_help": int(selected_help),
         "selected_neutral": int(selected_neutral),
-        "selected_harm_precision": float(selected_harm / float(max(1, route_baseline))),
-        "selected_help_precision": float(selected_help / float(max(1, route_baseline))),
+        "selected_harm_precision": precision,
+        "selected_help_precision": safe_div(float(selected_help), float(route_baseline)),
+        "selected_harm_recall": recall,
+        "selected_harm_f1": f1,
     }
+
+
+def selection_key(result: Dict[str, Any], objective: str) -> Sequence[float]:
+    if objective == "harm_f1":
+        return (
+            float(result["selected_harm_f1"]),
+            float(result["selected_harm_precision"]),
+            float(result["delta_vs_intervention"]),
+            -float(result["baseline_rate"]),
+        )
+    if objective == "harm_precision":
+        return (
+            float(result["selected_harm_precision"]),
+            float(result["selected_harm_recall"]),
+            float(result["delta_vs_intervention"]),
+            -float(result["baseline_rate"]),
+        )
+    if objective == "harm_recall":
+        return (
+            float(result["selected_harm_recall"]),
+            float(result["selected_harm_precision"]),
+            float(result["delta_vs_intervention"]),
+            -float(result["baseline_rate"]),
+        )
+    return (
+        float(result["final_acc"]),
+        float(result["delta_vs_intervention"]),
+        float(result["selected_harm_precision"]),
+        -float(result["baseline_rate"]),
+    )
 
 
 def main() -> None:
@@ -229,6 +285,14 @@ def main() -> None:
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
     ap.add_argument("--top_k", type=int, default=3)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
+    ap.add_argument("--min_baseline_rate", type=float, default=0.0)
+    ap.add_argument("--min_selected_count", type=int, default=0)
+    ap.add_argument(
+        "--tau_objective",
+        type=str,
+        default="final_acc",
+        choices=["final_acc", "harm_f1", "harm_precision", "harm_recall"],
+    )
     ap.add_argument("--feature_cols", type=str, default="")
     args = ap.parse_args()
 
@@ -297,20 +361,16 @@ def main() -> None:
         result = evaluate_tau(all_rows, selected, tau)
         if float(result["baseline_rate"]) > float(args.max_baseline_rate):
             continue
+        if float(result["baseline_rate"]) < float(args.min_baseline_rate):
+            continue
+        if int(result["selected_count"]) < int(args.min_selected_count):
+            continue
         sweep_rows.append(result)
         if best is None:
             best = result
             continue
-        cand_key = (
-            float(result["final_acc"]),
-            -float(result["baseline_rate"]),
-            float(result["selected_harm_precision"]),
-        )
-        best_key = (
-            float(best["final_acc"]),
-            -float(best["baseline_rate"]),
-            float(best["selected_harm_precision"]),
-        )
+        cand_key = selection_key(result, str(args.tau_objective))
+        best_key = selection_key(best, str(args.tau_objective))
         if cand_key > best_key:
             best = result
     if best is None:
@@ -321,6 +381,10 @@ def main() -> None:
         "target_label": args.target_label,
         "features": selected,
         "tau": float(best["tau"]),
+        "tau_objective": str(args.tau_objective),
+        "min_baseline_rate": float(args.min_baseline_rate),
+        "max_baseline_rate": float(args.max_baseline_rate),
+        "min_selected_count": int(args.min_selected_count),
         "route_policy": "baseline if harm_score >= tau else method",
     }
 
@@ -341,7 +405,10 @@ def main() -> None:
             "target_label": args.target_label,
             "min_feature_auroc": float(args.min_feature_auroc),
             "top_k": int(args.top_k),
+            "tau_objective": str(args.tau_objective),
+            "min_baseline_rate": float(args.min_baseline_rate),
             "max_baseline_rate": float(args.max_baseline_rate),
+            "min_selected_count": int(args.min_selected_count),
             "feature_cols": allowlist,
         },
         "n_rows": int(len(all_rows)),
