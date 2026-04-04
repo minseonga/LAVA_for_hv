@@ -34,4 +34,9 @@ PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/compare_vga_pregate_v3_summaries.py
   --pope_only_summary_json "$OUT_ROOT/pope_only/discovery/unified_controller/summary.json" \
   --out_json "$OUT_ROOT/comparison/summary.json"
 
+PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/collect_vga_pregate_v3_compact.py \
+  --root "$OUT_ROOT" \
+  --out_json "$OUT_ROOT/summary_compact.json"
+
 echo "[done] $OUT_ROOT/comparison/summary.json"
+echo "[done] $OUT_ROOT/summary_compact.json"

@@ -63,7 +63,11 @@ PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/build_vga_pregate_v3_controller.py 
   --min_selected_count "$MIN_SELECTED_COUNT"
 
 if [[ "$DISCOVERY_ONLY" == "true" ]]; then
+  PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/collect_vga_pregate_v3_compact.py \
+    --root "$OUT_ROOT" \
+    --out_json "$OUT_ROOT/summary_compact.json"
   echo "[done] $OUT_ROOT/discovery/unified_controller/summary.json"
+  echo "[done] $OUT_ROOT/summary_compact.json"
   exit 0
 fi
 
@@ -86,5 +90,10 @@ PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/apply_vga_pregate_v3_controller.py 
   --policy_json "$OUT_ROOT/discovery/unified_controller/selected_policy.json" \
   --out_dir "$OUT_ROOT/test/amber_disc/apply"
 
+PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/collect_vga_pregate_v3_compact.py \
+  --root "$OUT_ROOT" \
+  --out_json "$OUT_ROOT/summary_compact.json"
+
 echo "[done] $OUT_ROOT/test/pope/apply/summary.json"
 echo "[done] $OUT_ROOT/test/amber_disc/apply/summary.json"
+echo "[done] $OUT_ROOT/summary_compact.json"
