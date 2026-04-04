@@ -112,13 +112,15 @@ def main() -> None:
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
+    model_base = str(args.model_base or "").strip() or None
+
     adapter = VGAOnlineAdapter(
         VGAOnlineConfig(
             vga_root=args.vga_root,
             model_path=args.model_path,
             image_folder=args.image_folder,
             conv_mode=args.conv_mode,
-            model_base=args.model_base,
+            model_base=model_base,
             device=args.device,
             temperature=args.temperature,
             top_p=args.top_p,
