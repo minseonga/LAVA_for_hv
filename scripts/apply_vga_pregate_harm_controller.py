@@ -7,6 +7,12 @@ import json
 import os
 from typing import Any, Dict, List, Sequence
 
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    def tqdm(iterable, **_: Any):
+        return iterable
+
 
 def read_csv_rows(path: str) -> List[Dict[str, str]]:
     with open(path, "r", encoding="utf-8", newline="") as f:
@@ -17,7 +23,7 @@ def write_csv(path: str, rows: Sequence[Dict[str, Any]]) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     cols: List[str] = []
     seen = set()
-    for row in rows:
+    for row in tqdm(rows, desc="pregate-apply", unit="sample"):
         for key in row.keys():
             if key not in seen:
                 seen.add(key)

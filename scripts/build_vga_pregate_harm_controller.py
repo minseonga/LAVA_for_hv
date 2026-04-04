@@ -8,6 +8,12 @@ import math
 import os
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    def tqdm(iterable, **_: Any):
+        return iterable
+
 
 def read_csv_rows(path: str) -> List[Dict[str, str]]:
     with open(path, "r", encoding="utf-8", newline="") as f:
@@ -230,7 +236,7 @@ def main() -> None:
 
     all_rows: List[Dict[str, str]] = []
     source_rows: Dict[str, List[Dict[str, str]]] = {}
-    for path in args.discovery_table_csvs:
+    for path in tqdm(args.discovery_table_csvs, desc="controller-load", unit="table"):
         rows = read_csv_rows(path)
         if not rows:
             continue
@@ -241,8 +247,8 @@ def main() -> None:
 
     per_source_metrics: List[Dict[str, Any]] = []
     by_feature: Dict[str, List[Dict[str, Any]]] = {}
-    for source, rows in source_rows.items():
-        for feat in feats:
+    for source, rows in tqdm(source_rows.items(), total=len(source_rows), desc="controller-source", unit="source"):
+        for feat in tqdm(feats, desc=f"controller-features:{source}", unit="feature", leave=False):
             result = evaluate_feature(rows, feat, target=args.target_label)
             if result is None:
                 continue
@@ -287,7 +293,7 @@ def main() -> None:
     tau_grid = [float("-inf")] + uniq_scores + [float("inf")]
     sweep_rows: List[Dict[str, Any]] = []
     best: Optional[Dict[str, Any]] = None
-    for tau in tau_grid:
+    for tau in tqdm(tau_grid, desc="controller-tau", unit="tau"):
         result = evaluate_tau(all_rows, selected, tau)
         if float(result["baseline_rate"]) > float(args.max_baseline_rate):
             continue

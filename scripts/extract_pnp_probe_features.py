@@ -8,6 +8,12 @@ import os
 import sys
 from typing import Any, Dict, List
 
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    def tqdm(iterable, **_: Any):
+        return iterable
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -159,7 +165,7 @@ def main() -> None:
         branch_text_map = build_branch_text_map(args.branch_text_jsonl)
 
     rows: List[Dict[str, Any]] = []
-    for sample in samples:
+    for sample in tqdm(samples, desc="probe", unit="sample"):
         baseline_pred = None
         branch_source = str(args.probe_branch_source).strip().lower()
         if branch_source == "baseline_output":

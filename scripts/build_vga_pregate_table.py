@@ -8,6 +8,12 @@ import os
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    def tqdm(iterable, **_: Any):
+        return iterable
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -159,7 +165,7 @@ def main() -> None:
     rows: List[Dict[str, Any]] = []
     missing_probe = 0
     missing_pred = 0
-    for sid, gt in gt_map.items():
+    for sid, gt in tqdm(gt_map.items(), total=len(gt_map), desc="pregate-table", unit="sample"):
         q = question_map.get(sid, {})
         probe = probe_map.get(sid)
         baseline_text = str(baseline_map.get(sid, "")).strip()

@@ -67,6 +67,8 @@ AMBER_INTERVENTION_JSONL="${AMBER_INTERVENTION_JSONL:-$CAL_ROOT/experiments/ambe
 
 HEADSET_JSON="${HEADSET_JSON:-$CAL_ROOT/experiments/pope_discovery/discovery_headset.json}"
 
+POPE_DISC_FALLBACK_ROOT="$CAL_ROOT/experiments/pope_discovery/tau_c_calibration_adversarial"
+
 POPE_DISC_PROBE_DIR="$OUT_ROOT/discovery/pope/probe"
 POPE_DISC_TABLE_DIR="$OUT_ROOT/discovery/pope/table"
 AMBER_DISC_PROBE_DIR="$OUT_ROOT/discovery/amber_disc/probe"
@@ -83,6 +85,20 @@ AMBER_TEST_APPLY_DIR="$OUT_ROOT/test/amber_disc/apply"
 
 mkdir -p "$OUT_ROOT"
 cd "$ROOT_DIR"
+
+if [[ ! -f "$POPE_DISC_Q_FILE" || ! -f "$POPE_DISC_GT_CSV" || ! -f "$POPE_DISC_BASELINE_JSONL" || ! -f "$POPE_DISC_INTERVENTION_JSONL" ]]; then
+  FALLBACK_Q="$POPE_DISC_FALLBACK_ROOT/assets/discovery_q_with_object.jsonl"
+  FALLBACK_GT="$POPE_DISC_FALLBACK_ROOT/assets/discovery_gt.csv"
+  FALLBACK_BASELINE="$POPE_DISC_FALLBACK_ROOT/baseline/pred_baseline.jsonl"
+  FALLBACK_INTERVENTION="$POPE_DISC_FALLBACK_ROOT/vga/pred_vga.jsonl"
+  if [[ -f "$FALLBACK_Q" && -f "$FALLBACK_GT" && -f "$FALLBACK_BASELINE" && -f "$FALLBACK_INTERVENTION" ]]; then
+    echo "[config] fallback to POPE adversarial discovery assets"
+    POPE_DISC_Q_FILE="$FALLBACK_Q"
+    POPE_DISC_GT_CSV="$FALLBACK_GT"
+    POPE_DISC_BASELINE_JSONL="$FALLBACK_BASELINE"
+    POPE_DISC_INTERVENTION_JSONL="$FALLBACK_INTERVENTION"
+  fi
+fi
 
 if [[ ! -f "$AMBER_DISC_Q_FILE" || ! -f "$AMBER_TEST_Q_FILE" ]]; then
   echo "[0/10] prepare AMBER discriminative split assets"

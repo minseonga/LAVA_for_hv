@@ -8,6 +8,12 @@ import os
 import tempfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+try:
+    from tqdm.auto import tqdm
+except Exception:
+    def tqdm(iterable, **_: Any):
+        return iterable
+
 
 def read_csv_rows(path: str) -> List[Dict[str, str]]:
     with open(path, "r", encoding="utf-8", newline="") as f:
@@ -188,14 +194,14 @@ def main() -> None:
     metric_rows: List[Dict[str, Any]] = []
     by_benchmark_best: Dict[str, Dict[str, Any]] = {}
     consistency_map: Dict[str, List[Dict[str, Any]]] = {}
-    for path in args.table_csvs:
+    for path in tqdm(args.table_csvs, desc="analysis-benchmark", unit="table"):
         rows = read_csv_rows(path)
         if not rows:
             continue
         benchmark = str(rows[0].get("benchmark", os.path.basename(path)))
         feats = feature_cols(rows, allowlist=allowlist if allowlist else None)
         bench_rows: List[Dict[str, Any]] = []
-        for feat in feats:
+        for feat in tqdm(feats, desc=f"harm-features:{benchmark}", unit="feature", leave=False):
             result = analyze_feature(rows, feat, target="harm")
             if result is None:
                 continue
