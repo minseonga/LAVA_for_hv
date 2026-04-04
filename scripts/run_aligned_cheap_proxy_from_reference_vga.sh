@@ -24,7 +24,7 @@ TEST_TAX_DIR="${TEST_TAX_DIR:-$OUT_ROOT/test/taxonomy_fresh}"
 DISCOVERY_CAL_DIR="${DISCOVERY_CAL_DIR:-$OUT_ROOT/discovery/calibration_actual}"
 TEST_EVAL_DIR="${TEST_EVAL_DIR:-$OUT_ROOT/test/fixed_eval_actual}"
 
-FEATURE_COLS="${FEATURE_COLS:-cheap_lp_content_mean,cheap_lp_content_std,cheap_lp_content_min,cheap_entropy_content_mean,cheap_entropy_content_std,cheap_margin_content_mean,cheap_margin_content_std,cheap_margin_content_min,cheap_target_gap_content_mean,cheap_target_gap_content_std,cheap_target_gap_content_min,cheap_target_argmax_content_mean,cheap_conflict_lp_minus_entropy,cheap_conflict_gap_minus_entropy,cheap_content_fraction}"
+FEATURE_COLS="${FEATURE_COLS:-cheap_lp_content_mean,cheap_lp_content_std,cheap_lp_content_min,cheap_lp_content_tail_gap,cheap_lp_content_tail_z,cheap_lp_content_q10,cheap_lp_content_min_len_corr,cheap_entropy_content_mean,cheap_entropy_content_std,cheap_margin_content_mean,cheap_margin_content_std,cheap_margin_content_min,cheap_target_gap_content_mean,cheap_target_gap_content_std,cheap_target_gap_content_min,cheap_target_argmax_content_mean,cheap_conflict_lp_minus_entropy,cheap_conflict_gap_minus_entropy,cheap_content_fraction}"
 PAIR_FEATURE_TOPN="${PAIR_FEATURE_TOPN:-6}"
 MAX_RESCUE_RATE="${MAX_RESCUE_RATE:-0.03}"
 TARGET_LABEL="${TARGET_LABEL:-actual_rescue}"

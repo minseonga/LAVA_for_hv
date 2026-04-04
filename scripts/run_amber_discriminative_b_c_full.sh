@@ -42,7 +42,7 @@ REUSE_CHEAP="${REUSE_CHEAP:-false}"
 MAKE_PLOTS="${MAKE_PLOTS:-false}"
 
 SUBSET_PERCENTS="${SUBSET_PERCENTS:-1,2,5}"
-FEATURE_COLS="${FEATURE_COLS:-cheap_lp_content_min,cheap_target_gap_content_min,cheap_lp_content_std,cheap_entropy_content_mean,cheap_margin_content_mean,cheap_target_gap_content_std,cheap_conflict_lp_minus_entropy}"
+FEATURE_COLS="${FEATURE_COLS:-cheap_lp_content_min,cheap_lp_content_tail_gap,cheap_lp_content_tail_z,cheap_lp_content_q10,cheap_lp_content_min_len_corr,cheap_target_gap_content_min,cheap_lp_content_std,cheap_entropy_content_mean,cheap_margin_content_mean,cheap_target_gap_content_std,cheap_conflict_lp_minus_entropy}"
 MAX_RESCUE_RATE="${MAX_RESCUE_RATE:-0.03}"
 LOG_EVERY="${LOG_EVERY:-25}"
 RUN_ALIGNED_PROXY="${RUN_ALIGNED_PROXY:-true}"

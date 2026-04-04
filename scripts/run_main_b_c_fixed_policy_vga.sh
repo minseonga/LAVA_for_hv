@@ -29,7 +29,7 @@ DISCOVERY_CHEAP_CSV="${DISCOVERY_CHEAP_CSV:-$DISCOVERY_OUT_DIR/cheap_online_feat
 TEST_CHEAP_CSV="${TEST_CHEAP_CSV:-$TEST_OUT_DIR/cheap_online_features.csv}"
 
 SUBSET_PERCENTS="${SUBSET_PERCENTS:-1,2,5}"
-FEATURE_COLS="${FEATURE_COLS:-cheap_lp_content_min,cheap_target_gap_content_min,cheap_lp_content_std,cheap_entropy_content_mean,cheap_margin_content_mean,cheap_target_gap_content_std,cheap_conflict_lp_minus_entropy}"
+FEATURE_COLS="${FEATURE_COLS:-cheap_lp_content_min,cheap_lp_content_tail_gap,cheap_lp_content_tail_z,cheap_lp_content_q10,cheap_lp_content_min_len_corr,cheap_target_gap_content_min,cheap_lp_content_std,cheap_entropy_content_mean,cheap_margin_content_mean,cheap_target_gap_content_std,cheap_conflict_lp_minus_entropy}"
 MAX_RESCUE_RATE="${MAX_RESCUE_RATE:-0.03}"
 REUSE_CHEAP="${REUSE_CHEAP:-true}"
 LOG_EVERY="${LOG_EVERY:-25}"

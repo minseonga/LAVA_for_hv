@@ -56,6 +56,22 @@ def max_or_zero(values: Sequence[float]) -> float:
     return float(max(seq))
 
 
+def quantile_or_zero(values: Sequence[float], q: float) -> float:
+    seq = sorted(float(v) for v in values)
+    if not seq:
+        return 0.0
+    if len(seq) == 1:
+        return float(seq[0])
+    qq = float(min(max(q, 0.0), 1.0))
+    pos = qq * float(len(seq) - 1)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return float(seq[lo])
+    w = pos - float(lo)
+    return float((1.0 - w) * seq[lo] + w * seq[hi])
+
+
 def summarize(values: Sequence[float], prefix: str) -> Dict[str, float]:
     seq = [float(v) for v in values]
     return {
@@ -73,6 +89,10 @@ def build_feature_row(
     candidate_text: str,
     sample_id: str,
     image_name: str,
+    *,
+    lp_tail_quantile: float = 0.10,
+    lp_tail_eps: float = 1e-6,
+    lp_len_corr_alpha: float = 0.35,
 ) -> Dict[str, Any]:
     image = runtime.load_image(image_path)
     pack = runtime.teacher_force_candidate(
@@ -120,6 +140,16 @@ def build_feature_row(
     argmax_all = pick_values(target_is_argmax, cont_idx)
     argmax_content = pick_values(target_is_argmax, pick)
 
+    lp_content_mean = mean_or_zero(lp_content)
+    lp_content_std = std_or_zero(lp_content)
+    lp_content_min = min_or_zero(lp_content)
+    lp_content_tail_gap = float(lp_content_min - lp_content_mean)
+    lp_content_tail_z = float(lp_content_tail_gap / float(max(lp_content_std, float(lp_tail_eps))))
+    lp_content_q10 = quantile_or_zero(lp_content, float(lp_tail_quantile))
+    lp_content_min_len_corr = float(
+        lp_content_min + float(lp_len_corr_alpha) * math.log(max(1, len(pick)))
+    )
+
     row: Dict[str, Any] = {
         "id": sample_id,
         "image": image_name,
@@ -129,6 +159,10 @@ def build_feature_row(
         "cheap_content_fraction": float(len(pick) / max(1, len(cont_idx))),
         "cheap_conflict_lp_minus_entropy": float(mean_or_zero(lp_content) - mean_or_zero(ent_content)),
         "cheap_conflict_gap_minus_entropy": float(mean_or_zero(gap_content) - mean_or_zero(ent_content)),
+        "cheap_lp_content_tail_gap": lp_content_tail_gap,
+        "cheap_lp_content_tail_z": lp_content_tail_z,
+        "cheap_lp_content_q10": lp_content_q10,
+        "cheap_lp_content_min_len_corr": lp_content_min_len_corr,
     }
     row.update(summarize(lp_all, "cheap_lp_all"))
     row.update(summarize(lp_content, "cheap_lp_content"))
@@ -158,6 +192,9 @@ def main() -> None:
     ap.add_argument("--pred_text_key", type=str, default="auto")
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=True)
     ap.add_argument("--log_every", type=int, default=25)
+    ap.add_argument("--lp_tail_quantile", type=float, default=0.10)
+    ap.add_argument("--lp_tail_eps", type=float, default=1e-6)
+    ap.add_argument("--lp_len_corr_alpha", type=float, default=0.35)
     args = ap.parse_args()
 
     if bool(args.reuse_if_exists) and os.path.isfile(args.out_csv):
@@ -208,6 +245,9 @@ def main() -> None:
                     candidate_text=intervention_text,
                     sample_id=sample_id,
                     image_name=image_name,
+                    lp_tail_quantile=float(args.lp_tail_quantile),
+                    lp_tail_eps=float(args.lp_tail_eps),
+                    lp_len_corr_alpha=float(args.lp_len_corr_alpha),
                 )
             )
         except Exception as exc:
@@ -232,6 +272,9 @@ def main() -> None:
                     "model_base": args.model_base,
                     "conv_mode": args.conv_mode,
                     "device": args.device,
+                    "lp_tail_quantile": float(args.lp_tail_quantile),
+                    "lp_tail_eps": float(args.lp_tail_eps),
+                    "lp_len_corr_alpha": float(args.lp_len_corr_alpha),
                 },
                 "counts": {
                     "n_questions": int(len(question_rows)),

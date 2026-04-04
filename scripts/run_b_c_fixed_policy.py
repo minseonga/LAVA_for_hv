@@ -12,6 +12,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 DEFAULT_CHEAP_FEATURES = [
     "cheap_lp_content_min",
+    "cheap_lp_content_tail_gap",
+    "cheap_lp_content_tail_z",
+    "cheap_lp_content_q10",
+    "cheap_lp_content_min_len_corr",
     "cheap_target_gap_content_min",
     "cheap_lp_content_std",
     "cheap_entropy_content_mean",
