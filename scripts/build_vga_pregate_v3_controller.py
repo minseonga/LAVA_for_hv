@@ -311,6 +311,11 @@ def evaluate_tau(
 
         src_n = int(src["n"])
         src_method = int(src["method_count"])
+        src_veto = int(src_n - src_method)
+        src_total_neutral = int(src_n - int(src["total_harm"]) - int(src["total_help"]))
+        src_veto_harm = int(int(src["total_harm"]) - int(src["applied_harm"]))
+        src_veto_help = int(int(src["total_help"]) - int(src["applied_help"]))
+        src_veto_neutral = int(src_total_neutral - int(src["applied_neutral"]))
         src["method_rate"] = safe_div(float(src_method), float(max(1, src_n)))
         src["baseline_rate"] = float(1.0 - float(src["method_rate"]))
         src["final_acc"] = safe_div(float(src["final_correct"]), float(max(1, src_n)))
@@ -325,14 +330,26 @@ def evaluate_tau(
             float(src["final_correct"] - src["intervention_correct_total"]),
             float(max(1, src_n)),
         )
+        src["veto_count"] = src_veto
+        src["veto_harm"] = src_veto_harm
+        src["veto_help"] = src_veto_help
+        src["veto_neutral"] = src_veto_neutral
         src["applied_help_precision"] = safe_div(float(src["applied_help"]), float(max(1, src_method)))
         src["applied_harm_precision"] = safe_div(float(src["applied_harm"]), float(max(1, src_method)))
         src["applied_help_recall"] = safe_div(float(src["applied_help"]), float(max(1, int(src["total_help"]))))
         src["applied_harm_recall"] = safe_div(float(src["applied_harm"]), float(max(1, int(src["total_harm"]))))
+        src["veto_harm_precision"] = safe_div(float(src_veto_harm), float(max(1, src_veto)))
+        src["veto_help_precision"] = safe_div(float(src_veto_help), float(max(1, src_veto)))
+        src["veto_harm_recall"] = safe_div(float(src_veto_harm), float(max(1, int(src["total_harm"]))))
         per_source[source] = src
 
     method_rate = safe_div(float(method_count), float(max(1, n)))
     baseline_rate = float(1.0 - float(method_rate))
+    veto_count = int(n - method_count)
+    total_neutral = int(n - total_harm - total_help)
+    veto_harm = int(total_harm - applied_harm)
+    veto_help = int(total_help - applied_help)
+    veto_neutral = int(total_neutral - applied_neutral)
     help_precision = safe_div(float(applied_help), float(max(1, method_count)))
     harm_precision = safe_div(float(applied_harm), float(max(1, method_count)))
     help_recall = safe_div(float(applied_help), float(max(1, total_help)))
@@ -361,10 +378,17 @@ def evaluate_tau(
         "applied_harm": int(applied_harm),
         "applied_help": int(applied_help),
         "applied_neutral": int(applied_neutral),
+        "veto_count": int(veto_count),
+        "veto_harm": int(veto_harm),
+        "veto_help": int(veto_help),
+        "veto_neutral": int(veto_neutral),
         "applied_help_precision": help_precision,
         "applied_harm_precision": harm_precision,
         "applied_help_recall": help_recall,
         "applied_harm_recall": harm_recall,
+        "veto_harm_precision": safe_div(float(veto_harm), float(max(1, veto_count))),
+        "veto_help_precision": safe_div(float(veto_help), float(max(1, veto_count))),
+        "veto_harm_recall": safe_div(float(veto_harm), float(max(1, total_harm))),
         "per_source": per_source,
     }
 

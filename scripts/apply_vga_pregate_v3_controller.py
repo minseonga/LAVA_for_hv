@@ -102,6 +102,8 @@ def main() -> None:
     applied_harm = 0
     applied_help = 0
     applied_neutral = 0
+    total_harm = 0
+    total_help = 0
 
     for row in tqdm(rows, desc="v3-apply", unit="sample"):
         help_score = build_family_score(row, help_features)
@@ -115,6 +117,8 @@ def main() -> None:
         oracle_correct = int(maybe_int(row.get("oracle_correct")) or max(baseline_correct, intervention_correct))
         harm = int(maybe_int(row.get("harm")) or 0)
         help_ = int(maybe_int(row.get("help")) or 0)
+        total_harm += harm
+        total_help += help_
 
         use_method = bool(apply_score > tau)
         route = "method" if use_method else "baseline"
@@ -142,6 +146,11 @@ def main() -> None:
 
     method_rate = float(method_count / float(max(1, n)))
     baseline_rate = float(1.0 - method_rate)
+    total_neutral = int(n - total_harm - total_help)
+    veto_count = int(n - method_count)
+    veto_harm = int(total_harm - applied_harm)
+    veto_help = int(total_help - applied_help)
+    veto_neutral = int(total_neutral - applied_neutral)
     summary = {
         "inputs": {
             "table_csv": os.path.abspath(args.table_csv),
@@ -164,6 +173,13 @@ def main() -> None:
             "applied_neutral": int(applied_neutral),
             "applied_help_precision": float(applied_help / float(max(1, method_count))),
             "applied_harm_precision": float(applied_harm / float(max(1, method_count))),
+            "veto_count": int(veto_count),
+            "veto_harm": int(veto_harm),
+            "veto_help": int(veto_help),
+            "veto_neutral": int(veto_neutral),
+            "veto_harm_precision": float(veto_harm / float(max(1, veto_count))),
+            "veto_help_precision": float(veto_help / float(max(1, veto_count))),
+            "veto_harm_recall": float(veto_harm / float(max(1, total_harm))),
         },
         "outputs": {
             "decision_rows_csv": os.path.abspath(os.path.join(args.out_dir, "decision_rows.csv")),

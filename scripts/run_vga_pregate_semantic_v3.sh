@@ -8,6 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 SOURCE_ROOT="${SOURCE_ROOT:-$CAL_ROOT/experiments/vga_pregate_semantic_harm_v1}"
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/vga_pregate_semantic_v3}"
 DISCOVERY_ONLY="${DISCOVERY_ONLY:-true}"
+INCLUDE_AMBER_DISCOVERY="${INCLUDE_AMBER_DISCOVERY:-false}"
 
 MIN_FEATURE_AUROC="${MIN_FEATURE_AUROC:-0.55}"
 HELP_FEATURE_COLS="${HELP_FEATURE_COLS:-base_lp_content_mean,base_target_argmax_content_mean,base_target_gap_content_min,base_entropy_content_mean,base_conflict_lp_minus_entropy}"
@@ -30,16 +31,24 @@ mkdir -p "$OUT_ROOT"
 cd "$ROOT_DIR"
 
 for path in "$POPE_DISC_TABLE" "$AMBER_DISC_TABLE"; do
+  if [[ "$path" == "$AMBER_DISC_TABLE" && "$INCLUDE_AMBER_DISCOVERY" != "true" ]]; then
+    continue
+  fi
   if [[ ! -f "$path" ]]; then
     echo "[error] missing required table: $path" >&2
     exit 1
   fi
 done
 
+DISCOVERY_TABLES=("$POPE_DISC_TABLE")
+if [[ "$INCLUDE_AMBER_DISCOVERY" == "true" ]]; then
+  DISCOVERY_TABLES+=("$AMBER_DISC_TABLE")
+fi
+
 echo "[1/3] build unified pre-gating v3 controller"
 mkdir -p "$OUT_ROOT/discovery/unified_controller"
 PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/build_vga_pregate_v3_controller.py \
-  --discovery_table_csvs "$POPE_DISC_TABLE" "$AMBER_DISC_TABLE" \
+  --discovery_table_csvs "${DISCOVERY_TABLES[@]}" \
   --out_dir "$OUT_ROOT/discovery/unified_controller" \
   --help_feature_cols "$HELP_FEATURE_COLS" \
   --harm_feature_cols "$HARM_FEATURE_COLS" \
