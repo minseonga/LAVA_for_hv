@@ -63,14 +63,40 @@ conda env update -n vista_base -f environment.yml --prune
 
 ```bash
 cd ~/EAZY_origin
-conda env create -n eazy_base -f environment.yml
+python - <<'PY'
+from pathlib import Path
+src = Path("environment.yml")
+dst = Path("/tmp/eazy_base.environment.yml")
+text = src.read_text()
+if "\n  - pytorch\n" not in text.split("dependencies:", 1)[0]:
+    text = text.replace("channels:\n", "channels:\n  - pytorch\n", 1)
+text = text.replace("      - sklearn==0.0.post5\n", "")
+text = text.replace("      - spacy==3.7.0.dev0\n", "      - spacy==3.7.0\n")
+dst.write_text(text)
+print(dst)
+PY
+
+conda env create -n eazy_base -f /tmp/eazy_base.environment.yml
 ```
 
 이미 env가 있으면:
 
 ```bash
 cd ~/EAZY_origin
-conda env update -n eazy_base -f environment.yml --prune
+python - <<'PY'
+from pathlib import Path
+src = Path("environment.yml")
+dst = Path("/tmp/eazy_base.environment.yml")
+text = src.read_text()
+if "\n  - pytorch\n" not in text.split("dependencies:", 1)[0]:
+    text = text.replace("channels:\n", "channels:\n  - pytorch\n", 1)
+text = text.replace("      - sklearn==0.0.post5\n", "")
+text = text.replace("      - spacy==3.7.0.dev0\n", "      - spacy==3.7.0\n")
+dst.write_text(text)
+print(dst)
+PY
+
+conda env update -n eazy_base -f /tmp/eazy_base.environment.yml --prune
 ```
 
 ## Local Push

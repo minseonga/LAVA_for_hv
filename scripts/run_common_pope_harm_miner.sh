@@ -16,9 +16,10 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-$GPU}"
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
 DISCOVERY_ASSET_ROOT="${DISCOVERY_ASSET_ROOT:-$CAL_ROOT/experiments/tau_c_calibration_mix_train2014_2785/assets}"
-Q_NOOBJ="${Q_NOOBJ:-$DISCOVERY_ASSET_ROOT/discovery_q.jsonl}"
-Q_WITHOBJ="${Q_WITHOBJ:-$DISCOVERY_ASSET_ROOT/discovery_q_with_object.jsonl}"
-GT_CSV="${GT_CSV:-$DISCOVERY_ASSET_ROOT/discovery_gt.csv}"
+DISCOVERY_ASSET_FALLBACK_ROOT="${DISCOVERY_ASSET_FALLBACK_ROOT:-$CAL_ROOT/experiments/pope_discovery/tau_c_calibration_adversarial/assets}"
+Q_NOOBJ="${Q_NOOBJ:-}"
+Q_WITHOBJ="${Q_WITHOBJ:-}"
+GT_CSV="${GT_CSV:-}"
 COCO_ANN_ROOT="${COCO_ANN_ROOT:-/home/kms/data/COCO/annotations_trainval2014/annotations}"
 
 LEGACY_FEATURES_CSV="${LEGACY_FEATURES_CSV:-$CAL_ROOT/experiments/pope_feature_screen_v1_e1_4_l16_24/features/features_unified_table.csv}"
@@ -78,6 +79,48 @@ fi
 if [[ "$VISTA_ENABLE_LOGITS_AUG" == "1" ]]; then
   VISTA_FLAGS+=(--logits_aug)
 fi
+
+if [[ ! -d "$DISCOVERY_ASSET_ROOT" && -d "$DISCOVERY_ASSET_FALLBACK_ROOT" ]]; then
+  DISCOVERY_ASSET_ROOT="$DISCOVERY_ASSET_FALLBACK_ROOT"
+fi
+
+if [[ -z "$Q_NOOBJ" ]]; then
+  if [[ -f "$DISCOVERY_ASSET_ROOT/discovery_q.jsonl" ]]; then
+    Q_NOOBJ="$DISCOVERY_ASSET_ROOT/discovery_q.jsonl"
+  elif [[ -f "$DISCOVERY_ASSET_ROOT/discovery_q_with_object.jsonl" ]]; then
+    Q_NOOBJ="$DISCOVERY_ASSET_ROOT/discovery_q_with_object.jsonl"
+  fi
+fi
+
+if [[ -z "$Q_WITHOBJ" ]]; then
+  if [[ -f "$DISCOVERY_ASSET_ROOT/discovery_q_with_object.jsonl" ]]; then
+    Q_WITHOBJ="$DISCOVERY_ASSET_ROOT/discovery_q_with_object.jsonl"
+  elif [[ -f "$DISCOVERY_ASSET_ROOT/discovery_q.jsonl" ]]; then
+    Q_WITHOBJ="$DISCOVERY_ASSET_ROOT/discovery_q.jsonl"
+  fi
+fi
+
+if [[ -z "$GT_CSV" ]]; then
+  GT_CSV="$DISCOVERY_ASSET_ROOT/discovery_gt.csv"
+fi
+
+if [[ ! -f "$Q_NOOBJ" ]]; then
+  echo "[error] missing discovery question file for caption prompts: $Q_NOOBJ" >&2
+  exit 1
+fi
+if [[ ! -f "$Q_WITHOBJ" ]]; then
+  echo "[error] missing discovery question file for discriminative run: $Q_WITHOBJ" >&2
+  exit 1
+fi
+if [[ ! -f "$GT_CSV" ]]; then
+  echo "[error] missing discovery gt csv: $GT_CSV" >&2
+  exit 1
+fi
+
+echo "[assets] root=$DISCOVERY_ASSET_ROOT"
+echo "[assets] q_noobj=$Q_NOOBJ"
+echo "[assets] q_withobj=$Q_WITHOBJ"
+echo "[assets] gt_csv=$GT_CSV"
 
 mkdir -p "$BASELINE_DIR" "$VGA_DIR" "$VISTA_DIR" "$EAZY_DIR" "$TABLE_DIR" "$ANALYSIS_DIR"
 mkdir -p "$GEN_ASSET_DIR" "$GEN_BASELINE_DIR" "$GEN_VGA_DIR" "$GEN_VISTA_DIR" "$GEN_EAZY_DIR" "$GEN_TABLE_DIR" "$GEN_ANALYSIS_DIR"
