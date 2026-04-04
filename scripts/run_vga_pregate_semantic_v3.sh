@@ -8,7 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 SOURCE_ROOT="${SOURCE_ROOT:-$CAL_ROOT/experiments/vga_pregate_semantic_harm_v1}"
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/vga_pregate_semantic_v3}"
 DISCOVERY_ONLY="${DISCOVERY_ONLY:-true}"
-INCLUDE_AMBER_DISCOVERY="${INCLUDE_AMBER_DISCOVERY:-false}"
+INCLUDE_AMBER_DISCOVERY="${INCLUDE_AMBER_DISCOVERY:-true}"
 
 MIN_FEATURE_AUROC="${MIN_FEATURE_AUROC:-0.55}"
 HELP_FEATURE_COLS="${HELP_FEATURE_COLS:-base_lp_content_mean,base_target_argmax_content_mean,base_target_gap_content_min,base_entropy_content_mean,base_conflict_lp_minus_entropy}"
