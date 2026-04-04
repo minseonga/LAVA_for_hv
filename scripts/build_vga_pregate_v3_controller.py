@@ -254,6 +254,8 @@ def evaluate_tau(
     total_harm = 0
     total_help = 0
     per_source: Dict[str, Dict[str, float]] = {}
+    overall_harm_help_apply_scores: List[float] = []
+    overall_harm_help_labels_harm: List[int] = []
 
     for source, rows in source_rows.items():
         src = {
@@ -269,6 +271,8 @@ def evaluate_tau(
             "total_harm": 0,
             "total_help": 0,
         }
+        src_harm_help_apply_scores: List[float] = []
+        src_harm_help_labels_harm: List[int] = []
         for row in rows:
             scores = build_apply_score(row, help_features, harm_features, lam)
             if scores is None:
@@ -293,6 +297,11 @@ def evaluate_tau(
             src["oracle_correct_total"] += oracle_correct
             src["total_harm"] += harm
             src["total_help"] += help_
+            if harm or help_:
+                src_harm_help_apply_scores.append(float(-apply_score))
+                src_harm_help_labels_harm.append(int(harm))
+                overall_harm_help_apply_scores.append(float(-apply_score))
+                overall_harm_help_labels_harm.append(int(harm))
 
             if use_method:
                 method_count += 1
@@ -341,6 +350,9 @@ def evaluate_tau(
         src["veto_harm_precision"] = safe_div(float(src_veto_harm), float(max(1, src_veto)))
         src["veto_help_precision"] = safe_div(float(src_veto_help), float(max(1, src_veto)))
         src["veto_harm_recall"] = safe_div(float(src_veto_harm), float(max(1, int(src["total_harm"]))))
+        harm_vs_help_auroc = binary_auroc(src_harm_help_apply_scores, src_harm_help_labels_harm)
+        src["harm_vs_help_auroc"] = None if harm_vs_help_auroc is None else float(harm_vs_help_auroc)
+        src["help_vs_harm_auroc"] = None if harm_vs_help_auroc is None else float(harm_vs_help_auroc)
         per_source[source] = src
 
     method_rate = safe_div(float(method_count), float(max(1, n)))
@@ -356,6 +368,7 @@ def evaluate_tau(
     harm_recall = safe_div(float(applied_harm), float(max(1, total_harm)))
     source_balanced_utility = mean([float(v["delta_vs_baseline"]) for v in per_source.values()]) if per_source else 0.0
     worst_source_utility = min((float(v["delta_vs_baseline"]) for v in per_source.values()), default=0.0)
+    harm_vs_help_auroc = binary_auroc(overall_harm_help_apply_scores, overall_harm_help_labels_harm)
 
     return {
         "lambda_harm": float(lam),
@@ -389,6 +402,8 @@ def evaluate_tau(
         "veto_harm_precision": safe_div(float(veto_harm), float(max(1, veto_count))),
         "veto_help_precision": safe_div(float(veto_help), float(max(1, veto_count))),
         "veto_harm_recall": safe_div(float(veto_harm), float(max(1, total_harm))),
+        "harm_vs_help_auroc": None if harm_vs_help_auroc is None else float(harm_vs_help_auroc),
+        "help_vs_harm_auroc": None if harm_vs_help_auroc is None else float(harm_vs_help_auroc),
         "per_source": per_source,
     }
 

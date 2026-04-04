@@ -44,6 +44,8 @@ def metric_subset(summary: Dict[str, Any]) -> Dict[str, Any]:
         "applied_harm_precision",
         "applied_help_recall",
         "applied_harm_recall",
+        "harm_vs_help_auroc",
+        "help_vs_harm_auroc",
         "veto_count",
         "veto_harm",
         "veto_help",
