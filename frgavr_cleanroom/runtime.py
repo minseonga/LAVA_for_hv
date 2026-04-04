@@ -530,8 +530,7 @@ class CleanroomLlavaRuntime:
         ).unsqueeze(0).to(self.device)
         image_tensor, image_sizes = self._process_image(image)
         with torch.inference_mode():
-            output_ids = self.model.generate(
-                input_ids,
+            gen_kwargs = dict(
                 images=image_tensor,
                 image_sizes=image_sizes,
                 do_sample=False,
@@ -540,6 +539,19 @@ class CleanroomLlavaRuntime:
                 max_new_tokens=int(max_new_tokens),
                 use_cache=True,
             )
+            try:
+                output_ids = self.model.generate(
+                    input_ids,
+                    **gen_kwargs,
+                )
+            except Exception as exc:
+                if "image_sizes" not in str(exc):
+                    raise
+                gen_kwargs.pop("image_sizes", None)
+                output_ids = self.model.generate(
+                    input_ids,
+                    **gen_kwargs,
+                )
         gen_ids = output_ids[:, input_ids.shape[1]:]
         return self.tokenizer.batch_decode(gen_ids, skip_special_tokens=True)[0].strip()
 
