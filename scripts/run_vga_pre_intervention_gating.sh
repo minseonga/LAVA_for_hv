@@ -25,6 +25,7 @@ AMBER_BASELINE_JSONL="${AMBER_BASELINE_JSONL:-$CAL_ROOT/experiments/amber_fixed_
 AMBER_INTERVENTION_JSONL="${AMBER_INTERVENTION_JSONL:-$CAL_ROOT/experiments/amber_fixed_transfer_from_pope/discriminative/pred_vga.jsonl}"
 
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/vga_pre_intervention_gating}"
+DISCOVERY_PROBE_DIR="${DISCOVERY_PROBE_DIR:-$(dirname "$DISCOVERY_PROBE_CSV")}"
 DISCOVERY_ROUTER_DIR="${DISCOVERY_ROUTER_DIR:-$OUT_ROOT/discovery/router}"
 POPE_PROBE_DIR="${POPE_PROBE_DIR:-$OUT_ROOT/pope_test/probe}"
 POPE_APPLY_DIR="${POPE_APPLY_DIR:-$OUT_ROOT/pope_test/apply}"
@@ -33,6 +34,7 @@ AMBER_APPLY_DIR="${AMBER_APPLY_DIR:-$OUT_ROOT/amber_discriminative/apply}"
 
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 MODEL_BASE="${MODEL_BASE:-}"
+IMAGE_FOLDER_DISCOVERY="${IMAGE_FOLDER_DISCOVERY:-/home/kms/data/images/mscoco/images/train2014}"
 IMAGE_FOLDER_POPE="${IMAGE_FOLDER_POPE:-/home/kms/data/pope/val2014}"
 IMAGE_FOLDER_AMBER="${IMAGE_FOLDER_AMBER:-$AMBER_ROOT/image}"
 CONV_MODE="${CONV_MODE:-llava_v1}"
@@ -73,8 +75,49 @@ if [[ ! -f "$AMBER_DISC_Q_FILE" ]]; then
     --out_dir "$AMBER_ASSET_DIR"
 fi
 
+if [[ "$REUSE_IF_EXISTS" != "true" || ! -f "$DISCOVERY_PROBE_CSV" ]]; then
+  echo "[1/6] extract POPE-discovery pre-intervention probe features"
+  mkdir -p "$DISCOVERY_PROBE_DIR"
+  PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/extract_pnp_probe_features.py \
+    --backend vga \
+    --vga_root "$VGA_ROOT" \
+    --model_path "$MODEL_PATH" \
+    --model_base "$MODEL_BASE" \
+    --image_folder "$IMAGE_FOLDER_DISCOVERY" \
+    --question_file "$DISCOVERY_Q_FILE" \
+    --out_dir "$DISCOVERY_PROBE_DIR" \
+    --conv_mode "$CONV_MODE" \
+    --device "$DEVICE" \
+    --temperature "$TEMPERATURE" \
+    --top_p "$TOP_P" \
+    --sampling "$SAMPLING" \
+    --max_gen_len "$MAX_GEN_LEN" \
+    --num_beams "$NUM_BEAMS" \
+    --cd_alpha "$CD_ALPHA" \
+    --attn_coef "$ATTN_COEF" \
+    --start_layer "$START_LAYER" \
+    --end_layer "$END_LAYER" \
+    --head_balancing "$HEAD_BALANCING" \
+    --attn_norm "$ATTN_NORM" \
+    --late_start "$LATE_START" \
+    --late_end "$LATE_END" \
+    --probe_feature_mode "$PROBE_FEATURE_MODE" \
+    --headset_json "$HEADSET_JSON" \
+    --probe_position_mode "$PROBE_POSITION_MODE" \
+    --probe_branch_source "$PROBE_BRANCH_SOURCE" \
+    --branch_text_jsonl "$DISCOVERY_BASELINE_JSONL" \
+    --probe_force_manual_fullseq "$PROBE_FORCE_MANUAL_FULLSEQ" \
+    --probe_preview_max_new_tokens "$PROBE_PREVIEW_MAX_NEW_TOKENS" \
+    --probe_preview_reuse_baseline "$PROBE_PREVIEW_REUSE_BASELINE" \
+    --probe_preview_fallback_to_prompt_last "$PROBE_PREVIEW_FALLBACK_TO_PROMPT_LAST" \
+    --seed "$SEED" \
+    --max_samples "$MAX_SAMPLES"
+else
+  echo "[1/6] reuse discovery probe features -> $DISCOVERY_PROBE_CSV"
+fi
+
 if [[ "$REUSE_IF_EXISTS" != "true" || ! -f "$DISCOVERY_ROUTER_DIR/router_metadata.json" ]]; then
-  echo "[1/5] build POPE-discovery pre-intervention router"
+  echo "[2/6] build POPE-discovery pre-intervention router"
   mkdir -p "$DISCOVERY_ROUTER_DIR"
   PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/build_cost_aware_gain_router.py \
     --probe_log_csv "$DISCOVERY_PROBE_CSV" \
@@ -87,11 +130,11 @@ if [[ "$REUSE_IF_EXISTS" != "true" || ! -f "$DISCOVERY_ROUTER_DIR/router_metadat
     --feature_variant "$FEATURE_VARIANT" \
     --save_router_artifact
 else
-  echo "[1/5] reuse discovery router -> $DISCOVERY_ROUTER_DIR"
+  echo "[2/6] reuse discovery router -> $DISCOVERY_ROUTER_DIR"
 fi
 
 if [[ "$REUSE_IF_EXISTS" != "true" || ! -f "$POPE_PROBE_DIR/probe_features.csv" ]]; then
-  echo "[2/5] extract POPE held-out pre-intervention probe features"
+  echo "[3/6] extract POPE held-out pre-intervention probe features"
   mkdir -p "$POPE_PROBE_DIR"
   PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/extract_pnp_probe_features.py \
     --backend vga \
@@ -128,10 +171,10 @@ if [[ "$REUSE_IF_EXISTS" != "true" || ! -f "$POPE_PROBE_DIR/probe_features.csv" 
     --seed "$SEED" \
     --max_samples "$MAX_SAMPLES"
 else
-  echo "[2/5] reuse POPE held-out probe features -> $POPE_PROBE_DIR/probe_features.csv"
+  echo "[3/6] reuse POPE held-out probe features -> $POPE_PROBE_DIR/probe_features.csv"
 fi
 
-echo "[3/5] apply pre-intervention router on POPE held-out"
+echo "[4/6] apply pre-intervention router on POPE held-out"
 mkdir -p "$POPE_APPLY_DIR"
 PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/apply_vga_pre_intervention_router.py \
   --router_dir "$DISCOVERY_ROUTER_DIR" \
@@ -143,7 +186,7 @@ PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/apply_vga_pre_intervention_router.p
   --out_dir "$POPE_APPLY_DIR"
 
 if [[ "$REUSE_IF_EXISTS" != "true" || ! -f "$AMBER_PROBE_DIR/probe_features.csv" ]]; then
-  echo "[4/5] extract AMBER-discriminative pre-intervention probe features"
+  echo "[5/6] extract AMBER-discriminative pre-intervention probe features"
   mkdir -p "$AMBER_PROBE_DIR"
   PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/extract_pnp_probe_features.py \
     --backend vga \
@@ -180,10 +223,10 @@ if [[ "$REUSE_IF_EXISTS" != "true" || ! -f "$AMBER_PROBE_DIR/probe_features.csv"
     --seed "$SEED" \
     --max_samples "$MAX_SAMPLES"
 else
-  echo "[4/5] reuse AMBER-discriminative probe features -> $AMBER_PROBE_DIR/probe_features.csv"
+  echo "[5/6] reuse AMBER-discriminative probe features -> $AMBER_PROBE_DIR/probe_features.csv"
 fi
 
-echo "[5/5] apply pre-intervention router on AMBER-discriminative"
+echo "[6/6] apply pre-intervention router on AMBER-discriminative"
 mkdir -p "$AMBER_APPLY_DIR"
 PYTHONPATH="$ROOT_DIR" "$PYTHON_BIN" scripts/apply_vga_pre_intervention_router.py \
   --router_dir "$DISCOVERY_ROUTER_DIR" \
