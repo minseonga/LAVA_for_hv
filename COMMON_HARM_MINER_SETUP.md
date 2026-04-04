@@ -31,7 +31,7 @@ conda activate model_base
 cd ~/LLaVA_calibration
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e .
-python -m pip install pandas pycocotools tqdm seaborn statsmodels
+python -m pip install pandas pycocotools tqdm seaborn statsmodels protobuf sentencepiece
 ```
 
 ### 2. `vga_base`
@@ -144,6 +144,7 @@ CAL_PYTHON_BIN=/home/kms/miniconda3/envs/model_base/bin/python \
 VISTA_PYTHON_BIN=/home/kms/miniconda3/envs/vista_base/bin/python \
 EAZY_PYTHON_BIN=/home/kms/miniconda3/envs/eazy_base/bin/python \
 VGA_ENV=vga_base \
+IMAGE_FOLDER=/home/kms/data/images/mscoco/images/train2014 \
 OUT_ROOT=/home/kms/LLaVA_calibration/experiments/common_pope_discovery_harm_miner_v1 \
 REUSE_IF_EXISTS=true \
 bash scripts/run_common_pope_harm_miner.sh
@@ -172,6 +173,7 @@ cat /home/kms/LLaVA_calibration/experiments/common_pope_discovery_harm_miner_v1/
 ## Notes
 
 - `run_common_pope_harm_miner.sh`는 discovery split을 기본으로 쓴다.
+- discovery split 이미지는 `train2014`를 쓴다. `val2014`가 아니다.
 - discriminative table은 `help / harm / both_correct / both_wrong / neutral`을 기록한다.
 - generative table은 sample-level `CHAIRi` delta로:
   - `help`: intervention CHAIRi < baseline CHAIRi

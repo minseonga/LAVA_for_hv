@@ -14,7 +14,7 @@ GPU="${GPU:-${CUDA_VISIBLE_DEVICES:-6}}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-$GPU}"
 
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
-IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/images/mscoco/images/train2014}"
 DISCOVERY_ASSET_ROOT="${DISCOVERY_ASSET_ROOT:-$CAL_ROOT/experiments/tau_c_calibration_mix_train2014_2785/assets}"
 DISCOVERY_ASSET_FALLBACK_ROOT="${DISCOVERY_ASSET_FALLBACK_ROOT:-$CAL_ROOT/experiments/pope_discovery/tau_c_calibration_adversarial/assets}"
 Q_NOOBJ="${Q_NOOBJ:-}"
