@@ -147,7 +147,7 @@ def main() -> None:
                         use_nucleus_sampling=bool(args.sample),
                         num_beams=int(args.beam),
                         max_new_tokens=int(args.max_new_tokens),
-                        output_attentions=False,
+                        output_attentions=True,
                         opera_decoding=True,
                         scale_factor=float(args.scale_factor),
                         threshold=int(args.threshold),
