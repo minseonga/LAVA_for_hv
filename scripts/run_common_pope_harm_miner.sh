@@ -206,6 +206,10 @@ GEN_VGA_CHAIR_JSON="$GEN_VGA_DIR/chair_vga.json"
 GEN_VISTA_CHAIR_JSON="$GEN_VISTA_DIR/chair_vista.json"
 GEN_EAZY_CHAIR_JSON="$GEN_EAZY_DIR/chair_eazy.json"
 GEN_CHAIR_CACHE="$GEN_ROOT/chair_cache.pkl"
+GEN_BASELINE_CHAIR_INPUT="$GEN_BASELINE_DIR/chair_input.jsonl"
+GEN_VGA_CHAIR_INPUT="$GEN_VGA_DIR/chair_input.jsonl"
+GEN_VISTA_CHAIR_INPUT="$GEN_VISTA_DIR/chair_input.jsonl"
+GEN_EAZY_CHAIR_INPUT="$GEN_EAZY_DIR/chair_input.jsonl"
 
 reuse_file() {
   local path="$1"
@@ -220,12 +224,18 @@ run_chair_eval() {
   local image_id_key="$2"
   local caption_key="$3"
   local save_path="$4"
+  local prepared_cap_file="$5"
   if reuse_file "$save_path"; then
     echo "[reuse] $save_path"
     return
   fi
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/prepare_chair_caption_jsonl.py \
+    --in_file "$cap_file" \
+    --out_file "$prepared_cap_file" \
+    --image_id_key "$image_id_key" \
+    --image_key image
   PYTHONPATH="$EAZY_ROOT:${PYTHONPATH:-}" "$EAZY_PYTHON_BIN" "$EAZY_ROOT/eval_script/chair.py" \
-    --cap_file "$cap_file" \
+    --cap_file "$prepared_cap_file" \
     --image_id_key "$image_id_key" \
     --caption_key "$caption_key" \
     --coco_path "$COCO_ANN_ROOT" \
@@ -506,10 +516,10 @@ if [[ "${#DISC_TABLES[@]}" -gt 0 ]]; then
 fi
 
 echo "[13/14] score generative CHAIR and build method tables"
-run_chair_eval "$GEN_BASELINE_JSONL" image_id text "$GEN_BASELINE_CHAIR_JSON"
+run_chair_eval "$GEN_BASELINE_JSONL" image_id text "$GEN_BASELINE_CHAIR_JSON" "$GEN_BASELINE_CHAIR_INPUT"
 GEN_TABLES=()
 if [[ "$RUN_VGA" == "1" ]]; then
-  run_chair_eval "$GEN_VGA_JSONL" image_id output "$GEN_VGA_CHAIR_JSON"
+  run_chair_eval "$GEN_VGA_JSONL" image_id output "$GEN_VGA_CHAIR_JSON" "$GEN_VGA_CHAIR_INPUT"
   PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
     --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
     --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
@@ -528,7 +538,7 @@ if [[ "$RUN_VGA" == "1" ]]; then
 fi
 
 if [[ "$RUN_VISTA" == "1" ]]; then
-  run_chair_eval "$GEN_VISTA_JSONL" image_id caption "$GEN_VISTA_CHAIR_JSON"
+  run_chair_eval "$GEN_VISTA_JSONL" image_id caption "$GEN_VISTA_CHAIR_JSON" "$GEN_VISTA_CHAIR_INPUT"
   PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
     --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
     --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
@@ -547,7 +557,7 @@ if [[ "$RUN_VISTA" == "1" ]]; then
 fi
 
 if [[ "$RUN_EAZY" == "1" ]]; then
-  run_chair_eval "$GEN_EAZY_JSONL" image_id caption "$GEN_EAZY_CHAIR_JSON"
+  run_chair_eval "$GEN_EAZY_JSONL" image_id caption "$GEN_EAZY_CHAIR_JSON" "$GEN_EAZY_CHAIR_INPUT"
   PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
     --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
     --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
