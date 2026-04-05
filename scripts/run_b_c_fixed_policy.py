@@ -98,14 +98,22 @@ def infer_case_type(base_correct: Optional[int], int_correct: Optional[int]) -> 
     if base_correct is None or int_correct is None:
         return "unknown"
     if int(base_correct) == 1 and int(int_correct) == 0:
-        return "vga_regression"
+        return "regression"
     if int(base_correct) == 0 and int(int_correct) == 1:
-        return "vga_improvement"
+        return "improvement"
     if int(base_correct) == 1 and int(int_correct) == 1:
         return "both_correct"
     if int(base_correct) == 0 and int(int_correct) == 0:
         return "both_wrong"
     return "unknown"
+
+
+def is_regression(case_type: object) -> bool:
+    return str(case_type or "").strip() in {"regression", "vga_regression"}
+
+
+def is_improvement(case_type: object) -> bool:
+    return str(case_type or "").strip() in {"improvement", "vga_improvement"}
 
 
 def merge_rows(
@@ -217,10 +225,10 @@ def orient_single_feature(
 ) -> Tuple[str, Optional[float], Optional[float]]:
     feat_rows = [row for row in rows if maybe_float(row.get(feature)) is not None]
     values = [float(row[feature]) for row in feat_rows]
-    imp_rows = [row for row in feat_rows if row["case_type"] in {"vga_regression", "vga_improvement"}]
+    imp_rows = [row for row in feat_rows if is_regression(row["case_type"]) or is_improvement(row["case_type"])]
     imp_values = [float(row[feature]) for row in imp_rows]
-    imp_labels = [1 if row["case_type"] == "vga_regression" else 0 for row in imp_rows]
-    reg_labels = [1 if row["case_type"] == "vga_regression" else 0 for row in feat_rows]
+    imp_labels = [1 if is_regression(row["case_type"]) else 0 for row in imp_rows]
+    reg_labels = [1 if is_regression(row["case_type"]) else 0 for row in feat_rows]
 
     high_auc_imp = binary_auc(imp_values, imp_labels) if imp_rows else None
     low_auc_imp = binary_auc([-float(v) for v in imp_values], imp_labels) if imp_rows else None
@@ -290,7 +298,7 @@ def evaluate_policy(
         in_subset = score_b is not None and float(score_b) <= float(tau_b)
         if in_subset:
             subset_count += 1
-            if row["case_type"] == "vga_regression":
+            if is_regression(row["case_type"]):
                 subset_regression_total += 1
 
         rescue = False
@@ -301,9 +309,9 @@ def evaluate_policy(
         if rescue:
             rescue_count += 1
             final_correct += int(bc)
-            if row["case_type"] == "vga_regression":
+            if is_regression(row["case_type"]):
                 rescued_regression += 1
-            elif row["case_type"] == "vga_improvement":
+            elif is_improvement(row["case_type"]):
                 rescued_improvement += 1
             elif row["case_type"] == "both_wrong":
                 rescued_both_wrong += 1
