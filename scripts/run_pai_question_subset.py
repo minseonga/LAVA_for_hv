@@ -63,7 +63,12 @@ def prepare_model_image(image_processor: Any, raw_image: Image.Image) -> Any:
             pixel_values = torch.as_tensor(pixel_values)
         if torch.is_tensor(pixel_values) and pixel_values.ndim == 3:
             pixel_values = pixel_values.unsqueeze(0)
-        image["pixel_values"] = pixel_values
+        # PAI's original DataLoader path yields image["pixel_values"][0] with shape [1, 3, H, W].
+        # Recreate that structure here for single-sample inference.
+        if torch.is_tensor(pixel_values) and pixel_values.ndim == 4:
+            image["pixel_values"] = [pixel_values]
+        else:
+            image["pixel_values"] = pixel_values
 
     return image
 
