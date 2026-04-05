@@ -337,6 +337,11 @@ def is_attribute_word(word: str) -> bool:
     return bool(w and (w in ATTRIBUTE_WORDS or w in QUANTIFIER_WORDS or w.isdigit()))
 
 
+def is_count_word(word: str) -> bool:
+    w = normalize_word(word)
+    return bool(w and (w in QUANTIFIER_WORDS or w.isdigit()))
+
+
 def is_object_word(word: str) -> bool:
     w = normalize_word(word)
     return bool(w and (w in COCO_OBJECT_WORDS or (len(w) >= 4 and w not in STOPWORDS and w not in RELATION_WORDS)))
@@ -386,6 +391,8 @@ def extract_mentions(
         add_mention(mention_map, span_start, span_end, "noun_phrase", text[span_start:span_end])
         if left < idx:
             add_mention(mention_map, span_start, span_end, "attribute_phrase", text[span_start:span_end])
+        if any(is_count_word(words[j][2]) for j in range(left, idx)):
+            add_mention(mention_map, span_start, span_end, "count_phrase", text[span_start:span_end])
 
     for idx, (start, _, word) in enumerate(words):
         if word not in RELATION_WORDS:
@@ -526,6 +533,7 @@ def build_feature_row(
     noun_mentions = sum(1 for row in mention_rows if "noun_phrase" in str(row["kinds"]).split("|"))
     attr_mentions = sum(1 for row in mention_rows if "attribute_phrase" in str(row["kinds"]).split("|"))
     relation_mentions = sum(1 for row in mention_rows if "relation_phrase" in str(row["kinds"]).split("|"))
+    count_mentions = sum(1 for row in mention_rows if "count_phrase" in str(row["kinds"]).split("|"))
 
     return {
         "id": sample_id,
@@ -542,6 +550,7 @@ def build_feature_row(
         "probe_n_noun_phrases": int(noun_mentions),
         "probe_n_attribute_phrases": int(attr_mentions),
         "probe_n_relation_phrases": int(relation_mentions),
+        "probe_n_count_phrases": int(count_mentions),
         "probe_mention_lp_min_real": float(weakest_lp["lp_min"]),
         "probe_mention_target_gap_min_real": float(weakest_gap["gap_min"]),
         "probe_mention_entropy_max_real": float(weakest_ent["ent_max"]),
