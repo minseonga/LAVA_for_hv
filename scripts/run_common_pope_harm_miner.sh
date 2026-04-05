@@ -122,6 +122,21 @@ echo "[assets] q_noobj=$Q_NOOBJ"
 echo "[assets] q_withobj=$Q_WITHOBJ"
 echo "[assets] gt_csv=$GT_CSV"
 
+DISC_METHODS=()
+GEN_METHODS=()
+if [[ "$RUN_VGA" == "1" ]]; then
+  DISC_METHODS+=(vga)
+  GEN_METHODS+=(vga)
+fi
+if [[ "$RUN_VISTA" == "1" ]]; then
+  DISC_METHODS+=(vista)
+  GEN_METHODS+=(vista)
+fi
+if [[ "$RUN_EAZY" == "1" ]]; then
+  DISC_METHODS+=(eazy)
+  GEN_METHODS+=(eazy)
+fi
+
 mkdir -p "$BASELINE_DIR" "$VGA_DIR" "$VISTA_DIR" "$EAZY_DIR" "$TABLE_DIR" "$ANALYSIS_DIR"
 mkdir -p "$GEN_ASSET_DIR" "$GEN_BASELINE_DIR" "$GEN_VGA_DIR" "$GEN_VISTA_DIR" "$GEN_EAZY_DIR" "$GEN_TABLE_DIR" "$GEN_ANALYSIS_DIR"
 
@@ -382,106 +397,129 @@ fi
 
 echo "[12/14] build discriminative method tables"
 cd "$CAL_ROOT"
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_harm_table.py \
-  --baseline_features_csv "$BASELINE_FEATURES_CSV" \
-  --baseline_pred_jsonl "$BASELINE_JSONL" \
-  --intervention_pred_jsonl "$VGA_JSONL" \
-  --gt_csv "$GT_CSV" \
-  --method_name vga \
-  --benchmark_name pope \
-  --split_name discovery \
-  --out_csv "$TABLE_DIR/vga_table.csv" \
-  --out_summary_json "$TABLE_DIR/vga_table.summary.json" \
-  --baseline_pred_text_key auto \
-  --intervention_pred_text_key output
+DISC_TABLES=()
+if [[ "$RUN_VGA" == "1" ]]; then
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_harm_table.py \
+    --baseline_features_csv "$BASELINE_FEATURES_CSV" \
+    --baseline_pred_jsonl "$BASELINE_JSONL" \
+    --intervention_pred_jsonl "$VGA_JSONL" \
+    --gt_csv "$GT_CSV" \
+    --method_name vga \
+    --benchmark_name pope \
+    --split_name discovery \
+    --out_csv "$TABLE_DIR/vga_table.csv" \
+    --out_summary_json "$TABLE_DIR/vga_table.summary.json" \
+    --baseline_pred_text_key auto \
+    --intervention_pred_text_key output
+  DISC_TABLES+=("$TABLE_DIR/vga_table.csv")
+fi
 
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_harm_table.py \
-  --baseline_features_csv "$BASELINE_FEATURES_CSV" \
-  --baseline_pred_jsonl "$BASELINE_JSONL" \
-  --intervention_pred_jsonl "$VISTA_JSONL" \
-  --gt_csv "$GT_CSV" \
-  --method_name vista \
-  --benchmark_name pope \
-  --split_name discovery \
-  --out_csv "$TABLE_DIR/vista_table.csv" \
-  --out_summary_json "$TABLE_DIR/vista_table.summary.json" \
-  --baseline_pred_text_key auto \
-  --intervention_pred_text_key output
+if [[ "$RUN_VISTA" == "1" ]]; then
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_harm_table.py \
+    --baseline_features_csv "$BASELINE_FEATURES_CSV" \
+    --baseline_pred_jsonl "$BASELINE_JSONL" \
+    --intervention_pred_jsonl "$VISTA_JSONL" \
+    --gt_csv "$GT_CSV" \
+    --method_name vista \
+    --benchmark_name pope \
+    --split_name discovery \
+    --out_csv "$TABLE_DIR/vista_table.csv" \
+    --out_summary_json "$TABLE_DIR/vista_table.summary.json" \
+    --baseline_pred_text_key auto \
+    --intervention_pred_text_key output
+  DISC_TABLES+=("$TABLE_DIR/vista_table.csv")
+fi
 
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_harm_table.py \
-  --baseline_features_csv "$BASELINE_FEATURES_CSV" \
-  --baseline_pred_jsonl "$BASELINE_JSONL" \
-  --intervention_pred_jsonl "$EAZY_JSONL" \
-  --gt_csv "$GT_CSV" \
-  --method_name eazy \
-  --benchmark_name pope \
-  --split_name discovery \
-  --out_csv "$TABLE_DIR/eazy_table.csv" \
-  --out_summary_json "$TABLE_DIR/eazy_table.summary.json" \
-  --baseline_pred_text_key auto \
-  --intervention_pred_text_key output
+if [[ "$RUN_EAZY" == "1" ]]; then
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_harm_table.py \
+    --baseline_features_csv "$BASELINE_FEATURES_CSV" \
+    --baseline_pred_jsonl "$BASELINE_JSONL" \
+    --intervention_pred_jsonl "$EAZY_JSONL" \
+    --gt_csv "$GT_CSV" \
+    --method_name eazy \
+    --benchmark_name pope \
+    --split_name discovery \
+    --out_csv "$TABLE_DIR/eazy_table.csv" \
+    --out_summary_json "$TABLE_DIR/eazy_table.summary.json" \
+    --baseline_pred_text_key auto \
+    --intervention_pred_text_key output
+  DISC_TABLES+=("$TABLE_DIR/eazy_table.csv")
+fi
 
 echo "[12.5/14] shared discriminative harm analysis"
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/analyze_common_method_harm_miner.py \
-  --table_csvs "$TABLE_DIR/vga_table.csv" "$TABLE_DIR/vista_table.csv" "$TABLE_DIR/eazy_table.csv" \
-  --feature_cols "$FEATURE_COLS" \
-  --out_dir "$ANALYSIS_DIR"
+if [[ "${#DISC_TABLES[@]}" -gt 0 ]]; then
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/analyze_common_method_harm_miner.py \
+    --table_csvs "${DISC_TABLES[@]}" \
+    --feature_cols "$FEATURE_COLS" \
+    --out_dir "$ANALYSIS_DIR"
+fi
 
 echo "[13/14] score generative CHAIR and build method tables"
 run_chair_eval "$GEN_BASELINE_JSONL" image_id text "$GEN_BASELINE_CHAIR_JSON"
-run_chair_eval "$GEN_VGA_JSONL" image_id output "$GEN_VGA_CHAIR_JSON"
-run_chair_eval "$GEN_VISTA_JSONL" image_id caption "$GEN_VISTA_CHAIR_JSON"
-run_chair_eval "$GEN_EAZY_JSONL" image_id caption "$GEN_EAZY_CHAIR_JSON"
+GEN_TABLES=()
+if [[ "$RUN_VGA" == "1" ]]; then
+  run_chair_eval "$GEN_VGA_JSONL" image_id output "$GEN_VGA_CHAIR_JSON"
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
+    --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
+    --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
+    --intervention_pred_jsonl "$GEN_VGA_JSONL" \
+    --baseline_chair_json "$GEN_BASELINE_CHAIR_JSON" \
+    --intervention_chair_json "$GEN_VGA_CHAIR_JSON" \
+    --method_name vga \
+    --benchmark_name pope_discovery_caption \
+    --split_name discovery \
+    --chair_metric CHAIRi \
+    --out_csv "$GEN_TABLE_DIR/vga_table.csv" \
+    --out_summary_json "$GEN_TABLE_DIR/vga_table.summary.json" \
+    --baseline_pred_text_key auto \
+    --intervention_pred_text_key output
+  GEN_TABLES+=("$GEN_TABLE_DIR/vga_table.csv")
+fi
 
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
-  --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
-  --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
-  --intervention_pred_jsonl "$GEN_VGA_JSONL" \
-  --baseline_chair_json "$GEN_BASELINE_CHAIR_JSON" \
-  --intervention_chair_json "$GEN_VGA_CHAIR_JSON" \
-  --method_name vga \
-  --benchmark_name pope_discovery_caption \
-  --split_name discovery \
-  --chair_metric CHAIRi \
-  --out_csv "$GEN_TABLE_DIR/vga_table.csv" \
-  --out_summary_json "$GEN_TABLE_DIR/vga_table.summary.json" \
-  --baseline_pred_text_key auto \
-  --intervention_pred_text_key output
+if [[ "$RUN_VISTA" == "1" ]]; then
+  run_chair_eval "$GEN_VISTA_JSONL" image_id caption "$GEN_VISTA_CHAIR_JSON"
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
+    --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
+    --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
+    --intervention_pred_jsonl "$GEN_VISTA_JSONL" \
+    --baseline_chair_json "$GEN_BASELINE_CHAIR_JSON" \
+    --intervention_chair_json "$GEN_VISTA_CHAIR_JSON" \
+    --method_name vista \
+    --benchmark_name pope_discovery_caption \
+    --split_name discovery \
+    --chair_metric CHAIRi \
+    --out_csv "$GEN_TABLE_DIR/vista_table.csv" \
+    --out_summary_json "$GEN_TABLE_DIR/vista_table.summary.json" \
+    --baseline_pred_text_key auto \
+    --intervention_pred_text_key output
+  GEN_TABLES+=("$GEN_TABLE_DIR/vista_table.csv")
+fi
 
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
-  --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
-  --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
-  --intervention_pred_jsonl "$GEN_VISTA_JSONL" \
-  --baseline_chair_json "$GEN_BASELINE_CHAIR_JSON" \
-  --intervention_chair_json "$GEN_VISTA_CHAIR_JSON" \
-  --method_name vista \
-  --benchmark_name pope_discovery_caption \
-  --split_name discovery \
-  --chair_metric CHAIRi \
-  --out_csv "$GEN_TABLE_DIR/vista_table.csv" \
-  --out_summary_json "$GEN_TABLE_DIR/vista_table.summary.json" \
-  --baseline_pred_text_key auto \
-  --intervention_pred_text_key output
-
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
-  --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
-  --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
-  --intervention_pred_jsonl "$GEN_EAZY_JSONL" \
-  --baseline_chair_json "$GEN_BASELINE_CHAIR_JSON" \
-  --intervention_chair_json "$GEN_EAZY_CHAIR_JSON" \
-  --method_name eazy \
-  --benchmark_name pope_discovery_caption \
-  --split_name discovery \
-  --chair_metric CHAIRi \
-  --out_csv "$GEN_TABLE_DIR/eazy_table.csv" \
-  --out_summary_json "$GEN_TABLE_DIR/eazy_table.summary.json" \
-  --baseline_pred_text_key auto \
-  --intervention_pred_text_key output
+if [[ "$RUN_EAZY" == "1" ]]; then
+  run_chair_eval "$GEN_EAZY_JSONL" image_id caption "$GEN_EAZY_CHAIR_JSON"
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
+    --baseline_features_csv "$GEN_BASELINE_FEATURES_CSV" \
+    --baseline_pred_jsonl "$GEN_BASELINE_JSONL" \
+    --intervention_pred_jsonl "$GEN_EAZY_JSONL" \
+    --baseline_chair_json "$GEN_BASELINE_CHAIR_JSON" \
+    --intervention_chair_json "$GEN_EAZY_CHAIR_JSON" \
+    --method_name eazy \
+    --benchmark_name pope_discovery_caption \
+    --split_name discovery \
+    --chair_metric CHAIRi \
+    --out_csv "$GEN_TABLE_DIR/eazy_table.csv" \
+    --out_summary_json "$GEN_TABLE_DIR/eazy_table.summary.json" \
+    --baseline_pred_text_key auto \
+    --intervention_pred_text_key output
+  GEN_TABLES+=("$GEN_TABLE_DIR/eazy_table.csv")
+fi
 
 echo "[14/14] shared generative harm analysis"
-PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/analyze_common_method_harm_miner.py \
-  --table_csvs "$GEN_TABLE_DIR/vga_table.csv" "$GEN_TABLE_DIR/vista_table.csv" "$GEN_TABLE_DIR/eazy_table.csv" \
-  --feature_cols "$FEATURE_COLS" \
-  --out_dir "$GEN_ANALYSIS_DIR"
+if [[ "${#GEN_TABLES[@]}" -gt 0 ]]; then
+  PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/analyze_common_method_harm_miner.py \
+    --table_csvs "${GEN_TABLES[@]}" \
+    --feature_cols "$FEATURE_COLS" \
+    --out_dir "$GEN_ANALYSIS_DIR"
+fi
 
 echo "[done] $OUT_ROOT"
