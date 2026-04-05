@@ -97,6 +97,7 @@ def main() -> None:
     ap.add_argument("--cd_alpha", type=float, default=1.0)
     ap.add_argument("--cd_beta", type=float, default=0.1)
     ap.add_argument("--max_new_tokens", type=int, default=8)
+    ap.add_argument("--question_suffix", type=str, default=" Please answer this question with one word.")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
@@ -152,8 +153,9 @@ def main() -> None:
             else:
                 qs = DEFAULT_IMAGE_TOKEN + "\n" + query
 
+            suffix = str(args.question_suffix or "")
             conv = conv_templates[args.conv_mode].copy()
-            conv.append_message(conv.roles[0], qs + " Please answer this question with one word.")
+            conv.append_message(conv.roles[0], qs + suffix)
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
 
