@@ -6,6 +6,7 @@ import json
 import os
 import random
 import sys
+from collections.abc import Mapping
 from typing import Any, Dict, List
 
 import numpy as np
@@ -53,7 +54,7 @@ def prepare_model_image(image_processor: Any, raw_image: Image.Image) -> Any:
         except TypeError:
             image = image_processor(raw_image)
 
-    if isinstance(image, dict) and "pixel_values" in image:
+    if isinstance(image, Mapping) and "pixel_values" in image:
         pixel_values = image["pixel_values"]
         if isinstance(pixel_values, np.ndarray):
             pixel_values = torch.from_numpy(pixel_values)
@@ -63,12 +64,12 @@ def prepare_model_image(image_processor: Any, raw_image: Image.Image) -> Any:
             pixel_values = torch.as_tensor(pixel_values)
         if torch.is_tensor(pixel_values) and pixel_values.ndim == 3:
             pixel_values = pixel_values.unsqueeze(0)
-        # PAI's original DataLoader path yields image["pixel_values"][0] with shape [1, 3, H, W].
-        # Recreate that structure here for single-sample inference.
         if torch.is_tensor(pixel_values) and pixel_values.ndim == 4:
-            image["pixel_values"] = [pixel_values]
-        else:
-            image["pixel_values"] = pixel_values
+            # PAI's original batch_size=1 DataLoader path turns a single sample
+            # [1, 3, H, W] into [1, 1, 3, H, W], and prepare_llava_inputs then
+            # indexes [0] to recover [1, 3, H, W].
+            pixel_values = pixel_values.unsqueeze(0)
+        image["pixel_values"] = pixel_values
 
     return image
 
