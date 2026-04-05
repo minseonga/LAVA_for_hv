@@ -303,6 +303,8 @@ def main() -> None:
             end_layer=int(args.strong_end_layer),
             head_balancing=str(args.head_balancing),
             attn_norm=bool(args.attn_norm),
+            probe_feature_mode="aggregate",
+            use_gmi=False,
             seed=int(args.seed),
             prefer_local_llava=False,
         )
