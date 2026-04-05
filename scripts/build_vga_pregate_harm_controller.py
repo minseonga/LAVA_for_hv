@@ -281,6 +281,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Build a unified pre-intervention VGA harm gate from discovery tables.")
     ap.add_argument("--discovery_table_csvs", type=str, nargs="+", required=True)
     ap.add_argument("--out_dir", type=str, required=True)
+    ap.add_argument("--source_key", type=str, default="benchmark")
     ap.add_argument("--target_label", type=str, default="harm", choices=["harm"])
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
     ap.add_argument("--top_k", type=int, default=3)
@@ -304,7 +305,9 @@ def main() -> None:
         rows = read_csv_rows(path)
         if not rows:
             continue
-        source = str(rows[0].get("benchmark", os.path.basename(path)))
+        source = str(rows[0].get(str(args.source_key), os.path.basename(path)))
+        if not str(source).strip():
+            source = os.path.basename(path)
         source_rows[source] = rows
         all_rows.extend(rows)
     feats = feature_cols(all_rows, allowlist=allowlist if allowlist else None)
@@ -402,6 +405,7 @@ def main() -> None:
     summary = {
         "inputs": {
             "discovery_table_csvs": [os.path.abspath(x) for x in args.discovery_table_csvs],
+            "source_key": str(args.source_key),
             "target_label": args.target_label,
             "min_feature_auroc": float(args.min_feature_auroc),
             "top_k": int(args.top_k),
