@@ -28,6 +28,57 @@ def read_jsonl(path: str) -> List[Dict[str, Any]]:
     return rows
 
 
+def _to_hw(size_like: Any) -> tuple[int, int]:
+    if isinstance(size_like, dict):
+        h = int(size_like.get("height", size_like.get("shortest_edge", 224)))
+        w = int(size_like.get("width", size_like.get("shortest_edge", h)))
+        return h, w
+    if isinstance(size_like, (list, tuple)) and len(size_like) >= 2:
+        return int(size_like[0]), int(size_like[1])
+    size = int(size_like or 224)
+    return size, size
+
+
+def preprocess_image_no_numpy(image: Image.Image, image_processor: Any) -> torch.Tensor:
+    image = image.convert("RGB")
+    resize_h, resize_w = _to_hw(getattr(image_processor, "size", 224))
+    crop_h, crop_w = _to_hw(getattr(image_processor, "crop_size", (resize_h, resize_w)))
+
+    if bool(getattr(image_processor, "do_resize", True)):
+        if isinstance(getattr(image_processor, "size", None), dict) and "shortest_edge" in getattr(image_processor, "size", {}):
+            target = int(getattr(image_processor, "size", {}).get("shortest_edge", min(resize_h, resize_w)))
+            w, h = image.size
+            if min(w, h) > 0:
+                if w <= h:
+                    new_w = target
+                    new_h = int(round(h * float(target) / float(w)))
+                else:
+                    new_h = target
+                    new_w = int(round(w * float(target) / float(h)))
+                image = image.resize((new_w, new_h), resample=Image.BICUBIC)
+        else:
+            image = image.resize((resize_w, resize_h), resample=Image.BICUBIC)
+
+    if bool(getattr(image_processor, "do_center_crop", True)):
+        w, h = image.size
+        left = max(0, int(round((w - crop_w) / 2.0)))
+        top = max(0, int(round((h - crop_h) / 2.0)))
+        image = image.crop((left, top, min(w, left + crop_w), min(h, top + crop_h)))
+        if image.size != (crop_w, crop_h):
+            canvas = Image.new("RGB", (crop_w, crop_h))
+            canvas.paste(image, (0, 0))
+            image = canvas
+
+    byte_tensor = torch.ByteTensor(torch.ByteStorage.from_buffer(image.tobytes()))
+    tensor = byte_tensor.view(image.size[1], image.size[0], 3).permute(2, 0, 1).to(torch.float32) / 255.0
+
+    if bool(getattr(image_processor, "do_normalize", True)):
+        mean = torch.tensor(getattr(image_processor, "image_mean", [0.48145466, 0.4578275, 0.40821073]), dtype=tensor.dtype).view(3, 1, 1)
+        std = torch.tensor(getattr(image_processor, "image_std", [0.26862954, 0.26130258, 0.27577711]), dtype=tensor.dtype).view(3, 1, 1)
+        tensor = (tensor - mean) / std
+    return tensor
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run VCD on an arbitrary question subset jsonl.")
     ap.add_argument("--vcd_root", type=str, required=True)
@@ -108,7 +159,7 @@ def main() -> None:
 
             input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
             image = Image.open(os.path.join(args.image_folder, image_name)).convert("RGB")
-            image_tensor = image_processor.preprocess(image, return_tensors="pt")["pixel_values"][0]
+            image_tensor = preprocess_image_no_numpy(image, image_processor)
             if args.use_cd:
                 image_tensor_cd = add_diffusion_noise(image_tensor, int(args.noise_step))
             else:
