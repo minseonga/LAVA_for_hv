@@ -422,6 +422,8 @@ def main() -> None:
         )
 
     quantiles = parse_quantiles(args.quantiles)
+    if not quantiles:
+        quantiles = [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
     score_names = [
         "trust_g_top1",
         "trust_g_top5",
@@ -478,16 +480,50 @@ def main() -> None:
                     best_policy = {k: v for k, v in result.items() if k != "decision_rows"}
                     best_decisions = result["decision_rows"]
 
-    if best_policy is None:
-        raise RuntimeError("Failed to select an adaptive VGA policy.")
-
-    branch_rows = sorted(rows, key=lambda row: str(row.get("id", "")))
-    selected_rows = sorted(best_decisions, key=lambda row: str(row.get("id", "")))
-    candidate_rows.sort(key=lambda row: (-float(row.get("final_acc", -1.0) or -1.0), str(row.get("policy_type", "")), str(row.get("score_name", ""))))
-
     baseline_acc = None if n_eval_baseline == 0 else float(baseline_correct_sum / float(n_eval_baseline))
     weak_acc = None if n_eval_weak == 0 else float(weak_correct_sum / float(n_eval_weak))
     strong_acc = None if n_eval_strong == 0 else float(strong_correct_sum / float(n_eval_strong))
+    branch_rows = sorted(rows, key=lambda row: str(row.get("id", "")))
+
+    if best_policy is None:
+        static_candidates: List[Tuple[str, Optional[float]]] = [
+            ("baseline", baseline_acc),
+            ("weak", weak_acc),
+            ("strong", strong_acc),
+        ]
+        static_candidates = [(name, acc) for name, acc in static_candidates if acc is not None]
+        if static_candidates:
+            best_branch, best_branch_acc = max(static_candidates, key=lambda item: float(item[1]))
+            best_policy = {
+                "policy_type": "static",
+                "selected_branch": str(best_branch),
+                "final_acc": float(best_branch_acc),
+                "baseline_rate": float(1.0 if best_branch == "baseline" else 0.0),
+                "weak_rate": float(1.0 if best_branch == "weak" else 0.0),
+                "strong_rate": float(1.0 if best_branch == "strong" else 0.0),
+                "selection_note": "No valid threshold policy was found; fell back to best static branch.",
+            }
+            best_decisions = []
+            for row in branch_rows:
+                chosen = str(best_branch)
+                out = dict(row)
+                out["policy_type"] = "static"
+                out["route"] = chosen
+                out["final_text"] = str(row.get(f"{chosen}_text", ""))
+                out["final_label"] = str(row.get(f"{chosen}_label", ""))
+                out["final_correct"] = maybe_int(row.get(f"{chosen}_correct"))
+                best_decisions.append(out)
+        else:
+            write_csv(branch_rows_csv, branch_rows)
+            write_csv(policy_sweep_csv, candidate_rows)
+            raise RuntimeError(
+                "Failed to select an adaptive VGA policy because no branch produced evaluable correctness. "
+                f"n_errors={n_errors}, n_eval_baseline={n_eval_baseline}, n_eval_weak={n_eval_weak}, n_eval_strong={n_eval_strong}, "
+                f"partial rows saved to {branch_rows_csv}."
+            )
+
+    selected_rows = sorted(best_decisions, key=lambda row: str(row.get("id", "")))
+    candidate_rows.sort(key=lambda row: (-float(row.get("final_acc", -1.0) or -1.0), str(row.get("policy_type", "")), str(row.get("score_name", ""))))
     final_acc = float(best_policy["final_acc"])
 
     write_csv(branch_rows_csv, branch_rows)
