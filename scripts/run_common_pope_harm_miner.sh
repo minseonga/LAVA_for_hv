@@ -233,7 +233,8 @@ run_chair_eval() {
     --in_file "$cap_file" \
     --out_file "$prepared_cap_file" \
     --image_id_key "$image_id_key" \
-    --image_key image
+    --image_key image \
+    --drop_missing
   PYTHONPATH="$EAZY_ROOT:${PYTHONPATH:-}" "$EAZY_PYTHON_BIN" "$EAZY_ROOT/eval_script/chair.py" \
     --cap_file "$prepared_cap_file" \
     --image_id_key "$image_id_key" \
