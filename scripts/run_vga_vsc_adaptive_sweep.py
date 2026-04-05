@@ -132,7 +132,13 @@ def build_profile_kwargs(
     weak_end_layer: int,
 ) -> Tuple[Dict[str, Any], bool]:
     if profile == "baseline":
-        return dict(ctx["base_gen_kwargs"]), False
+        kwargs = dict(ctx["base_gen_kwargs"])
+        kwargs["cd_alpha"] = 0.0
+        kwargs["attn_coef"] = 0.0
+        kwargs["add_layer"] = []
+        kwargs["head_balancing"] = "none"
+        kwargs["attn_norm"] = False
+        return kwargs, False
     kwargs = dict(ctx["method_gen_kwargs"])
     if profile == "weak":
         kwargs["attn_coef"] = float(weak_attn_coef)
@@ -362,28 +368,41 @@ def main() -> None:
             )
 
             for profile in ("baseline", "weak", "strong"):
-                gen_kwargs, use_add = build_profile_kwargs(
-                    ctx,
-                    profile=profile,
-                    weak_attn_coef=float(args.weak_attn_coef),
-                    weak_cd_alpha=float(args.weak_cd_alpha),
-                    weak_start_layer=int(args.weak_start_layer),
-                    weak_end_layer=int(args.weak_end_layer),
-                )
-                t1 = time.perf_counter()
-                pred = adapter._generate_from_prepared(
-                    sample=sample,
-                    prepared=ctx["prepared"],
-                    gen_kwargs=gen_kwargs,
-                    use_add=bool(use_add),
-                    capture_proxy=False,
-                )
-                decode_secs.append(float(time.perf_counter() - t1))
-                text = str(pred.get("output", "")).strip()
-                label, correct = compute_branch_correct(text, gt_label)
-                row[f"{profile}_text"] = text
-                row[f"{profile}_label"] = label
-                row[f"{profile}_correct"] = correct
+                row[f"{profile}_error"] = ""
+                row[f"{profile}_error_traceback"] = ""
+                try:
+                    # VGA generate can mutate cached decode state; rebuild branch
+                    # context per profile instead of reusing one prefill across
+                    # baseline/weak/strong branches.
+                    branch_ctx = adapter._prepare_runtime_context(sample)
+                    gen_kwargs, use_add = build_profile_kwargs(
+                        branch_ctx,
+                        profile=profile,
+                        weak_attn_coef=float(args.weak_attn_coef),
+                        weak_cd_alpha=float(args.weak_cd_alpha),
+                        weak_start_layer=int(args.weak_start_layer),
+                        weak_end_layer=int(args.weak_end_layer),
+                    )
+                    t1 = time.perf_counter()
+                    pred = adapter._generate_from_prepared(
+                        sample=sample,
+                        prepared=branch_ctx["prepared"],
+                        gen_kwargs=gen_kwargs,
+                        use_add=bool(use_add),
+                        capture_proxy=False,
+                    )
+                    decode_secs.append(float(time.perf_counter() - t1))
+                    text = str(pred.get("output", "")).strip()
+                    label, correct = compute_branch_correct(text, gt_label)
+                    row[f"{profile}_text"] = text
+                    row[f"{profile}_label"] = label
+                    row[f"{profile}_correct"] = correct
+                except Exception as branch_exc:
+                    row[f"{profile}_text"] = ""
+                    row[f"{profile}_label"] = ""
+                    row[f"{profile}_correct"] = None
+                    row[f"{profile}_error"] = str(branch_exc)
+                    row[f"{profile}_error_traceback"] = traceback.format_exc()
 
             if row["baseline_correct"] is not None:
                 baseline_correct_sum += int(row["baseline_correct"])
@@ -394,6 +413,13 @@ def main() -> None:
             if row["strong_correct"] is not None:
                 strong_correct_sum += int(row["strong_correct"])
                 n_eval_strong += 1
+            if (
+                row.get("baseline_correct") is None
+                and row.get("weak_correct") is None
+                and row.get("strong_correct") is None
+            ):
+                n_errors += 1
+                row["error"] = "all_branches_failed"
         except Exception as exc:
             n_errors += 1
             row["error"] = str(exc)
