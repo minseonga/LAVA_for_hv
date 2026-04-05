@@ -83,12 +83,22 @@ chair_ann_ready() {
 resolve_coco_ann_root() {
   local raw="$1"
   local candidates=()
+  local image_parent=""
+  local image_grandparent=""
+  image_parent="$(dirname "$IMAGE_FOLDER")"
+  image_grandparent="$(dirname "$image_parent")"
   candidates+=("$raw")
   candidates+=("$raw/annotations")
   candidates+=("$raw/annotations_trainval2014")
   candidates+=("$raw/annotations_trainval2014/annotations")
+  candidates+=("$image_parent/annotations")
+  candidates+=("$image_parent/annotations_trainval2014/annotations")
+  candidates+=("$image_grandparent/annotations")
+  candidates+=("$image_grandparent/annotations_trainval2014/annotations")
   candidates+=("/home/kms/data/COCO/annotations")
   candidates+=("/home/kms/data/COCO/annotations_trainval2014/annotations")
+  candidates+=("/home/kms/data/images/mscoco/annotations")
+  candidates+=("/home/kms/data/images/mscoco/annotations_trainval2014/annotations")
   candidates+=("/home/kms/data/coco/annotations")
   candidates+=("/home/kms/data/mscoco/annotations")
   local cand
