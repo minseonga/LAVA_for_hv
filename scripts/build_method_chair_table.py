@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -68,6 +69,16 @@ def load_chair_map(path: str, metric: str) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def parse_image_id(value: object) -> str:
+    s = safe_id(value)
+    if not s:
+        return ""
+    digits = re.findall(r"(\d+)", s)
+    if not digits:
+        return ""
+    return str(int(digits[-1]))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build generative method tables from sample-level CHAIR deltas.")
     ap.add_argument("--baseline_features_csv", type=str, required=True)
@@ -94,9 +105,15 @@ def main() -> None:
 
     rows: List[Dict[str, Any]] = []
     missing_chair = 0
+    missing_image_id = 0
     for sid, feat in feature_map.items():
-        image_id = safe_id(feat.get("image_id"))
+        image_id = (
+            safe_id(feat.get("image_id"))
+            or parse_image_id(feat.get("image"))
+            or parse_image_id(feat.get("id"))
+        )
         if not image_id:
+            missing_image_id += 1
             continue
         base_score = chair_base.get(image_id, {}).get("score")
         int_score = chair_int.get(image_id, {}).get("score")
@@ -155,6 +172,7 @@ def main() -> None:
         "counts": {
             "n_rows": int(n),
             "missing_chair": int(missing_chair),
+            "missing_image_id": int(missing_image_id),
             "baseline_mean_chair": float(sum(float(r["baseline_chair"]) for r in rows) / float(max(1, n))),
             "intervention_mean_chair": float(sum(float(r["intervention_chair"]) for r in rows) / float(max(1, n))),
             "harm_rate": float(sum(int(r["harm"]) for r in rows) / float(max(1, n))),
