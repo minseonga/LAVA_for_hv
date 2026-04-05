@@ -448,6 +448,18 @@ def mention_token_indices(
     return sorted(set(keep))
 
 
+def unique_nonempty(values: Iterable[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for value in values:
+        text = str(value).strip().lower()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
 def compute_pack_values(pack: Any) -> Dict[str, List[float]]:
     logits = pack.logits.to(torch.float32)
     decision_positions = pack.decision_positions.long()
@@ -514,6 +526,8 @@ def build_feature_row(
                 "text": str(mention["text"]),
                 "kinds": "|".join(str(x) for x in mention["kinds"]),
                 "n_tokens": int(len(idxs)),
+                "first_idx": int(min(idxs)),
+                "last_idx": int(max(idxs)),
                 "lp_min": min_or_zero(lp_vals),
                 "gap_min": min_or_zero(gap_vals),
                 "ent_max": max_or_zero(ent_vals),
@@ -534,6 +548,37 @@ def build_feature_row(
     attr_mentions = sum(1 for row in mention_rows if "attribute_phrase" in str(row["kinds"]).split("|"))
     relation_mentions = sum(1 for row in mention_rows if "relation_phrase" in str(row["kinds"]).split("|"))
     count_mentions = sum(1 for row in mention_rows if "count_phrase" in str(row["kinds"]).split("|"))
+    object_texts = unique_nonempty(row["text"] for row in mention_rows if "object_mention" in str(row["kinds"]).split("|"))
+    mention_texts = unique_nonempty(row["text"] for row in mention_rows)
+
+    ordered_content = sorted(int(x) for x in content_indices)
+    n_content = len(ordered_content)
+    head_n = max(1, n_content // 3) if n_content > 0 else 0
+    tail_n = head_n
+    head_slice = ordered_content[:head_n]
+    tail_slice = ordered_content[-tail_n:] if tail_n > 0 else []
+    lp_head = pick(values["lp"], head_slice)
+    lp_tail = pick(values["lp"], tail_slice)
+    gap_head = pick(values["gap"], head_slice)
+    gap_tail = pick(values["gap"], tail_slice)
+    ent_head = pick(values["ent"], head_slice)
+    ent_tail = pick(values["ent"], tail_slice)
+
+    midpoint = (n_content - 1) / 2.0 if n_content > 0 else 0.0
+    first_half_object_mentions = sum(
+        1
+        for row in mention_rows
+        if "object_mention" in str(row["kinds"]).split("|") and float(row["last_idx"]) <= midpoint
+    )
+    second_half_object_mentions = sum(
+        1
+        for row in mention_rows
+        if "object_mention" in str(row["kinds"]).split("|") and float(row["first_idx"]) > midpoint
+    )
+    last_mention_idx = max(int(row["last_idx"]) for row in mention_rows)
+    max_content_idx = max(ordered_content) if ordered_content else 0
+    tail_tokens_after_last_mention = max(0, int(max_content_idx - last_mention_idx))
+    last_mention_pos_frac = float(last_mention_idx / float(max(1, max_content_idx))) if max_content_idx > 0 else 0.0
 
     return {
         "id": sample_id,
@@ -551,6 +596,21 @@ def build_feature_row(
         "probe_n_attribute_phrases": int(attr_mentions),
         "probe_n_relation_phrases": int(relation_mentions),
         "probe_n_count_phrases": int(count_mentions),
+        "probe_object_diversity": int(len(object_texts)),
+        "probe_mention_diversity": int(len(mention_texts)),
+        "probe_first_half_object_mentions": int(first_half_object_mentions),
+        "probe_second_half_object_mentions": int(second_half_object_mentions),
+        "probe_tail_tokens_after_last_mention": int(tail_tokens_after_last_mention),
+        "probe_last_mention_pos_frac": float(last_mention_pos_frac),
+        "probe_lp_head_mean_real": float(mean_or_zero(lp_head)),
+        "probe_lp_tail_mean_real": float(mean_or_zero(lp_tail)),
+        "probe_lp_tail_minus_head_real": float(mean_or_zero(lp_tail) - mean_or_zero(lp_head)),
+        "probe_gap_head_mean_real": float(mean_or_zero(gap_head)),
+        "probe_gap_tail_mean_real": float(mean_or_zero(gap_tail)),
+        "probe_gap_tail_minus_head_real": float(mean_or_zero(gap_tail) - mean_or_zero(gap_head)),
+        "probe_entropy_head_mean_real": float(mean_or_zero(ent_head)),
+        "probe_entropy_tail_mean_real": float(mean_or_zero(ent_tail)),
+        "probe_entropy_tail_minus_head_real": float(mean_or_zero(ent_tail) - mean_or_zero(ent_head)),
         "probe_mention_lp_min_real": float(weakest_lp["lp_min"]),
         "probe_mention_target_gap_min_real": float(weakest_gap["gap_min"]),
         "probe_mention_entropy_max_real": float(weakest_ent["ent_max"]),
