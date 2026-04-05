@@ -39,6 +39,35 @@ def setup_seeds(seed: int) -> None:
     cudnn.deterministic = True
 
 
+def prepare_model_image(image_processor: Any, raw_image: Image.Image) -> Any:
+    image = None
+    if hasattr(image_processor, "preprocess"):
+        try:
+            image = image_processor.preprocess(raw_image, return_tensors="pt")
+        except TypeError:
+            image = None
+
+    if image is None:
+        try:
+            image = image_processor(raw_image, return_tensors="pt")
+        except TypeError:
+            image = image_processor(raw_image)
+
+    if isinstance(image, dict) and "pixel_values" in image:
+        pixel_values = image["pixel_values"]
+        if isinstance(pixel_values, np.ndarray):
+            pixel_values = torch.from_numpy(pixel_values)
+        elif isinstance(pixel_values, (list, tuple)) and pixel_values and isinstance(pixel_values[0], np.ndarray):
+            pixel_values = torch.from_numpy(np.stack(pixel_values))
+        elif not torch.is_tensor(pixel_values):
+            pixel_values = torch.as_tensor(pixel_values)
+        if torch.is_tensor(pixel_values) and pixel_values.ndim == 3:
+            pixel_values = pixel_values.unsqueeze(0)
+        image["pixel_values"] = pixel_values
+
+    return image
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run PAI on an arbitrary question subset jsonl.")
     ap.add_argument("--pai_root", type=str, required=True)
@@ -104,7 +133,7 @@ def main() -> None:
                 continue
 
             raw_image = Image.open(os.path.join(args.image_folder, image_name)).convert("RGB")
-            image = model_loader.image_processor(raw_image)
+            image = prepare_model_image(model_loader.image_processor, raw_image)
             questions, kwargs = model_loader.prepare_inputs_for_model(template, [query], image)
 
             llama_modify(
@@ -142,7 +171,8 @@ def main() -> None:
                     **kwargs,
                 )
 
-            output_text = str(model_loader.decode(outputs)[0]).strip()
+            generated_ids = getattr(outputs, "sequences", outputs)
+            output_text = str(model_loader.decode(generated_ids)[0]).strip()
             f.write(
                 json.dumps(
                     {
