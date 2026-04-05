@@ -435,6 +435,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Build unified pre-gating v3 controller with baseline-default opt-in routing.")
     ap.add_argument("--discovery_table_csvs", type=str, nargs="+", required=True)
     ap.add_argument("--out_dir", type=str, required=True)
+    ap.add_argument("--source_key", type=str, default="benchmark")
     ap.add_argument("--help_feature_cols", type=str, required=True)
     ap.add_argument("--harm_feature_cols", type=str, required=True)
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
@@ -463,7 +464,9 @@ def main() -> None:
         rows = read_csv_rows(path)
         if not rows:
             continue
-        source = str(rows[0].get("benchmark", os.path.basename(path)))
+        source = str(rows[0].get(str(args.source_key), "")).strip()
+        if not source:
+            source = os.path.splitext(os.path.basename(path))[0]
         source_rows[source] = rows
         all_rows.extend(rows)
 
@@ -547,6 +550,7 @@ def main() -> None:
     summary = {
         "inputs": {
             "discovery_table_csvs": [os.path.abspath(x) for x in args.discovery_table_csvs],
+            "source_key": str(args.source_key),
             "help_feature_cols": help_features_raw,
             "harm_feature_cols": harm_features_raw,
             "min_feature_auroc": float(args.min_feature_auroc),
