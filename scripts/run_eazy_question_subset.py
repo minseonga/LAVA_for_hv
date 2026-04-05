@@ -88,6 +88,9 @@ def main() -> None:
 
     eazy_root = os.path.abspath(args.eazy_root)
     os.chdir(eazy_root)
+    local_transformers_src = os.path.join(eazy_root, "transformers-4.29.2", "src")
+    if os.path.isdir(local_transformers_src) and local_transformers_src not in sys.path:
+        sys.path.insert(0, local_transformers_src)
     if eazy_root not in sys.path:
         sys.path.insert(0, eazy_root)
 
