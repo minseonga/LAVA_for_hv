@@ -72,6 +72,35 @@ EAZY_REQUIRE_CHAIR="${EAZY_REQUIRE_CHAIR:-1}"
 
 FEATURE_COLS="${FEATURE_COLS:-base_lp_content_mean,base_target_argmax_content_mean,base_target_gap_content_min,base_entropy_content_mean,base_conflict_lp_minus_entropy}"
 
+chair_ann_ready() {
+  local root="$1"
+  [[ -f "$root/instances_val2014.json" ]] && \
+  [[ -f "$root/instances_train2014.json" ]] && \
+  [[ -f "$root/captions_val2014.json" ]] && \
+  [[ -f "$root/captions_train2014.json" ]]
+}
+
+resolve_coco_ann_root() {
+  local raw="$1"
+  local candidates=()
+  candidates+=("$raw")
+  candidates+=("$raw/annotations")
+  candidates+=("$raw/annotations_trainval2014")
+  candidates+=("$raw/annotations_trainval2014/annotations")
+  candidates+=("/home/kms/data/COCO/annotations")
+  candidates+=("/home/kms/data/COCO/annotations_trainval2014/annotations")
+  candidates+=("/home/kms/data/coco/annotations")
+  candidates+=("/home/kms/data/mscoco/annotations")
+  local cand
+  for cand in "${candidates[@]}"; do
+    if chair_ann_ready "$cand"; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
 VISTA_FLAGS=()
 if [[ "$VISTA_ENABLE_VSV" == "1" ]]; then
   VISTA_FLAGS+=(--vsv)
@@ -117,10 +146,18 @@ if [[ ! -f "$GT_CSV" ]]; then
   exit 1
 fi
 
+COCO_ANN_ROOT="$(resolve_coco_ann_root "$COCO_ANN_ROOT" || true)"
+if [[ -z "$COCO_ANN_ROOT" ]]; then
+  echo "[error] could not locate COCO annotation root containing train/val 2014 instances+captions jsons" >&2
+  echo "[hint] set COCO_ANN_ROOT to the directory that directly contains instances_val2014.json and captions_val2014.json" >&2
+  exit 1
+fi
+
 echo "[assets] root=$DISCOVERY_ASSET_ROOT"
 echo "[assets] q_noobj=$Q_NOOBJ"
 echo "[assets] q_withobj=$Q_WITHOBJ"
 echo "[assets] gt_csv=$GT_CSV"
+echo "[assets] coco_ann_root=$COCO_ANN_ROOT"
 
 DISC_METHODS=()
 GEN_METHODS=()
@@ -361,38 +398,42 @@ else
   echo "[reuse] $GEN_VISTA_JSONL"
 fi
 
-echo "[10/14] EAZY discriminative prediction"
-if [[ "$RUN_EAZY" == "1" ]] && ! reuse_file "$EAZY_JSONL"; then
-  cd "$CAL_ROOT"
-  PYTHONPATH="$CAL_ROOT" "$EAZY_PYTHON_BIN" "$CAL_ROOT/scripts/run_eazy_question_subset.py" \
-    --eazy_root "$EAZY_ROOT" \
-    --question_file "$Q_WITHOBJ" \
-    --image_folder "$IMAGE_FOLDER" \
-    --answers_file "$EAZY_JSONL" \
-    --model "$EAZY_MODEL" \
-    --gpu_id 0 \
-    --beam "$EAZY_BEAM" \
-    --k "$EAZY_TOPK_K" \
-    --seed "$SEED"
-else
-  echo "[reuse] $EAZY_JSONL"
-fi
+if [[ "$RUN_EAZY" == "1" ]]; then
+  echo "[10/14] EAZY discriminative prediction"
+  if ! reuse_file "$EAZY_JSONL"; then
+    cd "$CAL_ROOT"
+    PYTHONPATH="$CAL_ROOT" "$EAZY_PYTHON_BIN" "$CAL_ROOT/scripts/run_eazy_question_subset.py" \
+      --eazy_root "$EAZY_ROOT" \
+      --question_file "$Q_WITHOBJ" \
+      --image_folder "$IMAGE_FOLDER" \
+      --answers_file "$EAZY_JSONL" \
+      --model "$EAZY_MODEL" \
+      --gpu_id 0 \
+      --beam "$EAZY_BEAM" \
+      --k "$EAZY_TOPK_K" \
+      --seed "$SEED"
+  else
+    echo "[reuse] $EAZY_JSONL"
+  fi
 
-echo "[11/14] EAZY generative prediction"
-if [[ "$RUN_EAZY" == "1" ]] && ! reuse_file "$GEN_EAZY_JSONL"; then
-  cd "$CAL_ROOT"
-  PYTHONPATH="$CAL_ROOT" "$EAZY_PYTHON_BIN" "$CAL_ROOT/scripts/run_eazy_question_subset.py" \
-    --eazy_root "$EAZY_ROOT" \
-    --question_file "$CAPTION_Q_JSONL" \
-    --image_folder "$IMAGE_FOLDER" \
-    --answers_file "$GEN_EAZY_JSONL" \
-    --model "$EAZY_MODEL" \
-    --gpu_id 0 \
-    --beam "$EAZY_BEAM" \
-    --k "$EAZY_TOPK_K" \
-    --seed "$SEED"
+  echo "[11/14] EAZY generative prediction"
+  if ! reuse_file "$GEN_EAZY_JSONL"; then
+    cd "$CAL_ROOT"
+    PYTHONPATH="$CAL_ROOT" "$EAZY_PYTHON_BIN" "$CAL_ROOT/scripts/run_eazy_question_subset.py" \
+      --eazy_root "$EAZY_ROOT" \
+      --question_file "$CAPTION_Q_JSONL" \
+      --image_folder "$IMAGE_FOLDER" \
+      --answers_file "$GEN_EAZY_JSONL" \
+      --model "$EAZY_MODEL" \
+      --gpu_id 0 \
+      --beam "$EAZY_BEAM" \
+      --k "$EAZY_TOPK_K" \
+      --seed "$SEED"
+  else
+    echo "[reuse] $GEN_EAZY_JSONL"
+  fi
 else
-  echo "[reuse] $GEN_EAZY_JSONL"
+  echo "[10/14] EAZY prediction steps skipped (RUN_EAZY=0)"
 fi
 
 echo "[12/14] build discriminative method tables"

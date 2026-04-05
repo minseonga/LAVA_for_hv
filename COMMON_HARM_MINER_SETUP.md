@@ -150,6 +150,19 @@ REUSE_IF_EXISTS=true \
 bash scripts/run_common_pope_harm_miner.sh
 ```
 
+`run_common_pope_harm_miner.sh`는 `COCO_ANN_ROOT`에서 아래 파일 4개를 자동 탐색한다.
+- `instances_val2014.json`
+- `instances_train2014.json`
+- `captions_val2014.json`
+- `captions_train2014.json`
+
+서버 경로가 다르면 직접 지정해도 된다.
+
+```bash
+COCO_ANN_ROOT=/path/to/annotations \
+bash scripts/run_common_pope_harm_miner.sh
+```
+
 ## Important Outputs
 
 ### Discriminative
