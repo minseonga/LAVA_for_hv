@@ -8,6 +8,7 @@ import sys
 from typing import Any, Dict, List
 
 from PIL import Image
+import torch
 
 try:
     from tqdm.auto import tqdm
@@ -92,7 +93,12 @@ def main() -> None:
                     neg_kwargs = model_loader.prepare_neg_prompt(args, questions, template=template)
                     pos_kwargs = model_loader.prepare_pos_prompt(args, kwargs)
                     visual_vector, _ = obtain_vsv(args, model_loader.llm_model, [[neg_kwargs, pos_kwargs]])
-                    add_vsv_layers(model_loader.llm_model, visual_vector.unsqueeze(0).unsqueeze(1).cuda(), [args.vsv_lambda], args.layers)
+                    add_vsv_layers(
+                        model_loader.llm_model,
+                        torch.stack([visual_vector], dim=1).cuda(),
+                        [args.vsv_lambda],
+                        args.layers,
+                    )
 
                 add_logits_flag(model_loader.llm_model, args)
                 if args.do_sample:
