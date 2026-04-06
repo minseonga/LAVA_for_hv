@@ -109,6 +109,7 @@ run_step "01_discovery_stageb" env \
 echo "[2/6] discovery cheap feature extraction"
 run_step "02_discovery_cheap" env \
   CUDA_VISIBLE_DEVICES="$GPU" \
+  PYTHONUNBUFFERED=1 \
   PYTHONPATH="$CAL_ROOT" \
   "$PY_BIN" scripts/extract_c_stage_cheap_online_features.py \
     --question_file "$DISCOVERY_QUESTION_FILE" \
@@ -168,6 +169,7 @@ run_step "04_test_stageb" env \
 echo "[5/6] held-out cheap feature extraction"
 run_step "05_test_cheap" env \
   CUDA_VISIBLE_DEVICES="$GPU" \
+  PYTHONUNBUFFERED=1 \
   PYTHONPATH="$CAL_ROOT" \
   "$PY_BIN" scripts/extract_c_stage_cheap_online_features.py \
     --question_file "$TEST_QUESTION_FILE" \
