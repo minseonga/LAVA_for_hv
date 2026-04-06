@@ -16,6 +16,10 @@ def write_json(path: str, obj: Any) -> None:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
 def parse_float_list(spec: str) -> List[float]:
     out: List[float] = []
     for part in str(spec or "").split(","):
@@ -239,11 +243,14 @@ def main() -> None:
     args = ap.parse_args()
 
     rows = base.load_merged_rows(os.path.abspath(args.scores_csv), os.path.abspath(args.features_csv))
+    log(f"[meta] loaded rows={len(rows)}")
     b_feature_names = [x.strip() for x in str(args.b_feature_cols).split(",") if x.strip()]
     c_feature_names = [x.strip() for x in str(args.c_feature_cols).split(",") if x.strip()]
     weight_grid = [float(x.strip()) for x in str(args.weight_grid).split(",") if x.strip()]
     delta_grid = parse_float_list(args.delta_grid)
     meta_modes = [x.strip() for x in str(args.meta_modes).split(",") if x.strip()]
+    log(f"[meta] b_feature_cols={b_feature_names}")
+    log(f"[meta] c_feature_candidates={len(c_feature_names)}")
 
     b_metrics: List[Dict[str, Any]] = []
     for feat in b_feature_names:
@@ -252,6 +259,7 @@ def main() -> None:
             b_metrics.append(result)
     b_metrics.sort(key=lambda r: (-float(r["auroc"]), str(r["feature"])))
     best_b_feat = b_metrics[0] if b_metrics else None
+    log(f"[meta] best_b_feature={None if best_b_feat is None else best_b_feat['feature']}")
 
     c_metrics: List[Dict[str, Any]] = []
     for feat in c_feature_names:
@@ -262,11 +270,13 @@ def main() -> None:
     selected_c = [r for r in c_metrics if float(r["auroc"]) >= float(args.min_feature_auroc)]
     if int(args.top_k_c) > 0:
         selected_c = selected_c[: int(args.top_k_c)]
+    log(f"[meta] selected_c={[str(r['feature']) for r in selected_c]}")
 
     best_results: Dict[str, Dict[str, Any]] = {}
     fusion_candidates: List[Dict[str, Any]] = []
 
     if best_b_feat is not None:
+        log("[meta] search b_only")
         best, cand = base.search_family(
             rows,
             b_feat=best_b_feat,
@@ -281,8 +291,10 @@ def main() -> None:
         fusion_candidates.extend(cand)
         if best is not None:
             best_results["b_only"] = best
+            log(f"[meta] best b_only delta={float(best['delta_vs_intervention']):.6f}")
 
     if selected_c:
+        log("[meta] search c_only")
         best, cand = base.search_family(
             rows,
             b_feat=None,
@@ -297,8 +309,10 @@ def main() -> None:
         fusion_candidates.extend(cand)
         if best is not None:
             best_results["c_only"] = best
+            log(f"[meta] best c_only delta={float(best['delta_vs_intervention']):.6f}")
 
     if best_b_feat is not None and selected_c:
+        log("[meta] search fusion")
         best, cand = base.search_family(
             rows,
             b_feat=best_b_feat,
@@ -313,11 +327,13 @@ def main() -> None:
         fusion_candidates.extend(cand)
         if best is not None:
             best_results["fusion"] = best
+            log(f"[meta] best fusion delta={float(best['delta_vs_intervention']):.6f}")
 
     if "b_only" not in best_results or "c_only" not in best_results or "fusion" not in best_results:
         raise RuntimeError("Need valid b_only, c_only, and fusion experts before meta arbitration.")
 
     score_map = build_score_maps(rows, best_b_feat, selected_c, best_results.get("fusion"))
+    log("[meta] search meta policies")
 
     meta_candidates: List[Dict[str, Any]] = []
     best_meta: Optional[Dict[str, Any]] = None
@@ -340,6 +356,7 @@ def main() -> None:
 
     if best_meta is None:
         raise RuntimeError("Failed to select a meta-controller.")
+    log(f"[meta] best mode={best_meta['mode']} delta={float(best_meta['delta_vs_intervention']):.6f}")
 
     candidates_csv = os.path.join(args.out_dir, "fusion_candidates.csv")
     meta_candidates_csv = os.path.join(args.out_dir, "meta_candidates.csv")
@@ -403,7 +420,7 @@ def main() -> None:
             },
         },
     )
-    print("[saved]", os.path.abspath(summary_json))
+    log(f"[saved] {os.path.abspath(summary_json)}")
 
 
 if __name__ == "__main__":
