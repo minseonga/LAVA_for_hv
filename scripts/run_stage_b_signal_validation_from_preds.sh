@@ -57,7 +57,7 @@ if [[ ! -f "$BASELINE_PRED_JSONL" ]]; then
 fi
 
 cd "$CAL_ROOT"
-PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_frgavr_cleanroom.py \
+PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_frgavr_cleanroom.py \
   --question_file "$QUESTION_FILE" \
   --image_folder "$IMAGE_FOLDER" \
   --intervention_pred_jsonl "$INTERVENTION_PRED_JSONL" \

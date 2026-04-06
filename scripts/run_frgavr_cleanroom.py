@@ -191,7 +191,7 @@ def compute_score_rows(args: argparse.Namespace) -> List[ScoreRow]:
             row.score_error = str(exc)
         score_rows.append(row)
         if (idx + 1) % max(1, int(args.log_every)) == 0:
-            print(f"[score] {idx + 1}/{len(question_rows)}")
+            print(f"[score] {idx + 1}/{len(question_rows)}", flush=True)
 
     return score_rows
 
