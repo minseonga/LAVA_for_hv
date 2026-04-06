@@ -9,6 +9,10 @@ from typing import Any, Dict, List, Sequence
 
 import torch
 import torch.nn.functional as F
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - optional dependency fallback
+    tqdm = None
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -192,13 +196,14 @@ def main() -> None:
     ap.add_argument("--pred_text_key", type=str, default="auto")
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=True)
     ap.add_argument("--log_every", type=int, default=25)
+    ap.add_argument("--progress_style", type=str, default="tqdm", choices=["tqdm", "log"])
     ap.add_argument("--lp_tail_quantile", type=float, default=0.10)
     ap.add_argument("--lp_tail_eps", type=float, default=1e-6)
     ap.add_argument("--lp_len_corr_alpha", type=float, default=0.35)
     args = ap.parse_args()
 
     if bool(args.reuse_if_exists) and os.path.isfile(args.out_csv):
-        print(f"[reuse] {args.out_csv}")
+        print(f"[reuse] {args.out_csv}", flush=True)
         return
 
     question_rows = load_question_rows(args.question_file, limit=int(args.limit))
@@ -213,6 +218,18 @@ def main() -> None:
 
     rows: List[Dict[str, Any]] = []
     n_errors = 0
+    use_tqdm = args.progress_style == "tqdm" and tqdm is not None
+    progress = (
+        tqdm(
+            total=len(question_rows),
+            desc="cheap-proxy",
+            dynamic_ncols=True,
+            leave=True,
+            file=sys.stdout,
+        )
+        if use_tqdm
+        else None
+    )
     for idx, sample in enumerate(question_rows):
         sample_id = safe_id(sample.get("question_id", sample.get("id")))
         image_name = str(sample.get("image", "")).strip()
@@ -254,11 +271,16 @@ def main() -> None:
             n_errors += 1
             row["score_error"] = str(exc)
         rows.append(row)
-        if (idx + 1) % max(1, int(args.log_every)) == 0:
-            print(f"[cheap-proxy] {idx + 1}/{len(question_rows)}")
+        if progress is not None:
+            progress.update(1)
+        elif (idx + 1) % max(1, int(args.log_every)) == 0:
+            print(f"[cheap-proxy] {idx + 1}/{len(question_rows)}", flush=True)
+
+    if progress is not None:
+        progress.close()
 
     write_csv(args.out_csv, rows)
-    print(f"[saved] {args.out_csv}")
+    print(f"[saved] {args.out_csv}", flush=True)
 
     if str(args.out_summary_json or "").strip():
         write_json(
