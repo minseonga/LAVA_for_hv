@@ -71,6 +71,52 @@ def parse_layers(att_layer: str) -> List[int]:
     return [int(x.strip()) for x in s.split(",") if x.strip()]
 
 
+def token_shift_for_model(model_name: str) -> int:
+    if model_name == "shikra":
+        return 302
+    return 623
+
+
+def safe_get_zero_out_list_from_object(
+    object_list: List[str],
+    initial_response: List[str],
+    tokenizer: Any,
+    attention_scores: Any,
+    *,
+    k: int,
+    object_layer: List[int],
+    model_name: str,
+    find_token_indexes: Any,
+    get_layer_attention: Any,
+    get_topk_img_token_indices: Any,
+) -> tuple[Dict[str, List[int]], int]:
+    obj2zero_out: Dict[str, List[int]] = {}
+    skipped_positions = 0
+    layer_att = get_layer_attention(attention_scores, layer_idx=object_layer)
+    n_rows = int(layer_att.shape[0]) if hasattr(layer_att, "shape") else 0
+    shift_index = token_shift_for_model(model_name)
+
+    for obj_name in object_list:
+        hall_token_index = find_token_indexes(initial_response, obj_name, tokenizer, model_name=model_name)
+        zero_out_list: List[int] = []
+        for hall_token in hall_token_index:
+            row_idx = int(hall_token) - shift_index
+            if row_idx < 0 or row_idx >= n_rows:
+                skipped_positions += 1
+                continue
+            zero_out_list.extend(
+                get_topk_img_token_indices(
+                    layer_att,
+                    hall_token,
+                    k,
+                    model_name=model_name,
+                    return_values=False,
+                )
+            )
+        obj2zero_out[obj_name] = list(set(zero_out_list))
+    return obj2zero_out, skipped_positions
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run EAZY one-pass intervention on an arbitrary question subset jsonl.")
     ap.add_argument("--eazy_root", type=str, required=True)
@@ -107,8 +153,8 @@ def main() -> None:
     from minigpt4.common.config import Config  # type: ignore
     from minigpt4.common.registry import registry  # type: ignore
     from minigpt4.models import load_preprocess  # type: ignore
-    from utils.brute_force_zero_out import get_zero_out_list_from_object  # type: ignore
     from utils.chair_detector import CHAIR_detector  # type: ignore
+    from utils.tool import find_token_indexes, get_layer_attention, get_topk_img_token_indices  # type: ignore
 
     for module_name in [
         "minigpt4.datasets.builders",
@@ -149,6 +195,7 @@ def main() -> None:
         raise SystemExit(f"Output already exists: {out_path}")
 
     rows = read_jsonl(os.path.abspath(args.question_file))
+    skipped_hall_token_positions = 0
     with open(out_path, "w", encoding="utf-8") as f:
         for row in tqdm(rows, desc="eazy-subset", unit="sample"):
             image_name = str(row.get("image", "")).strip()
@@ -192,15 +239,19 @@ def main() -> None:
 
             _, object_list, _, _ = chair_detector.caption_to_words(initial_response[0])
             object_list = list(set(object_list))
-            obj2zero_out = get_zero_out_list_from_object(
+            obj2zero_out, skipped_now = safe_get_zero_out_list_from_object(
                 object_list,
                 initial_response,
                 tokenizer,
                 att,
                 k=args.k,
-                model_name=args.model,
                 object_layer=layer_idx,
+                model_name=args.model,
+                find_token_indexes=find_token_indexes,
+                get_layer_attention=get_layer_attention,
+                get_topk_img_token_indices=get_topk_img_token_indices,
             )
+            skipped_hall_token_positions += int(skipped_now)
 
             one_pass_zero_out_list = list(chain(*obj2zero_out.values()))
             with torch.inference_mode():
@@ -281,6 +332,12 @@ def main() -> None:
                 + "\n"
             )
             f.flush()
+
+    if skipped_hall_token_positions > 0:
+        print(
+            f"[warn] skipped {skipped_hall_token_positions} hallucinated token positions "
+            "whose indices were outside available generated-token attention rows"
+        )
 
 
 if __name__ == "__main__":
