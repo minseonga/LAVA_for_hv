@@ -28,16 +28,14 @@ CONV_MODE="${CONV_MODE:-llava_v1}"
 VCD_USE_CD="${VCD_USE_CD:-1}"
 VCD_NOISE_STEP="${VCD_NOISE_STEP:-500}"
 VCD_CD_ALPHA="${VCD_CD_ALPHA:-1.0}"
-VCD_CD_BETA="${VCD_CD_BETA:-0.1}"
+VCD_CD_BETA="${VCD_CD_BETA:-0.2}"
 
-TEMPERATURE="${TEMPERATURE:-0}"
+TEMPERATURE="${TEMPERATURE:-1.0}"
 TOP_P="${TOP_P:-}"
-NUM_BEAMS="${NUM_BEAMS:-1}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-8}"
 
 SEEDS="${SEEDS:-1994}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
-LOADER_MODULE="${LOADER_MODULE:-llava.eval.model_vqa_loader}"
+OFFICIAL_EVAL_SCRIPT="${OFFICIAL_EVAL_SCRIPT:-$VCD_ROOT/experiments/eval/object_hallucination_vqa_llava.py}"
 
 if [[ -z "$QUESTION_FILE" ]]; then
   echo "[error] QUESTION_FILE is required" >&2
@@ -78,15 +76,13 @@ for seed in "${seed_array[@]}"; do
 
   if ! reuse_file "$pred_jsonl"; then
     loader_args=(
-      -m "$LOADER_MODULE"
+      "$OFFICIAL_EVAL_SCRIPT"
       --model-path "$MODEL_PATH"
       --image-folder "$IMAGE_FOLDER"
       --question-file "$QUESTION_FILE"
       --answers-file "$pred_jsonl"
       --conv-mode "$CONV_MODE"
       --temperature "$TEMPERATURE"
-      --num_beams "$NUM_BEAMS"
-      --max_new_tokens "$MAX_NEW_TOKENS"
     )
     if [[ -n "$MODEL_BASE" ]]; then
       loader_args+=(--model-base "$MODEL_BASE")
