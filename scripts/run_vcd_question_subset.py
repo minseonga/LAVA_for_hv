@@ -92,6 +92,7 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--top_p", type=float, default=1.0)
     ap.add_argument("--top_k", type=int, default=0)
+    ap.add_argument("--do_sample", type=str, default="true", choices=["true", "false"])
     ap.add_argument("--noise_step", type=int, default=500)
     ap.add_argument("--use_cd", action="store_true")
     ap.add_argument("--cd_alpha", type=float, default=1.0)
@@ -100,6 +101,7 @@ def main() -> None:
     ap.add_argument("--question_suffix", type=str, default=" Please answer this question with one word.")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+    do_sample = str(args.do_sample).strip().lower() == "true"
 
     vcd_root = os.path.abspath(args.vcd_root)
     os.chdir(vcd_root)
@@ -177,7 +179,7 @@ def main() -> None:
                     images_cd=(image_tensor_cd.unsqueeze(0).half().cuda() if image_tensor_cd is not None else None),
                     cd_alpha=float(args.cd_alpha),
                     cd_beta=float(args.cd_beta),
-                    do_sample=True,
+                    do_sample=do_sample,
                     temperature=float(args.temperature),
                     top_p=float(args.top_p),
                     top_k=top_k,
