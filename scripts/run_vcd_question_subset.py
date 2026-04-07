@@ -119,7 +119,9 @@ def main() -> None:
     ap.add_argument("--question_suffix", type=str, default=" Please answer this question with one word.")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
-    do_sample = str(args.do_sample).strip().lower() == "true"
+    requested_do_sample = str(args.do_sample).strip().lower() == "true"
+    do_sample = requested_do_sample
+    effective_temperature = float(args.temperature)
 
     vcd_root = os.path.abspath(args.vcd_root)
     os.chdir(vcd_root)
@@ -137,14 +139,40 @@ def main() -> None:
     from llava.mm_utils import tokenizer_image_token, get_model_name_from_path  # type: ignore
     from vcd_utils.vcd_add_noise import add_diffusion_noise  # type: ignore
 
-    if do_sample:
+    patch_name = "none"
+    if requested_do_sample:
         from vcd_utils.vcd_sample import evolve_vcd_sampling  # type: ignore
 
         evolve_vcd_sampling()
+        patch_name = "vcd_sample"
     else:
-        from vcd_utils.greedy_sample import evolve_greedy_sampling  # type: ignore
+        if args.use_cd:
+            try:
+                from vcd_utils.greedy_sample import evolve_greedy_sampling  # type: ignore
+            except ModuleNotFoundError as exc:
+                if exc.name != "vcd_utils.greedy_sample":
+                    raise
+                from vcd_utils.vcd_sample import evolve_vcd_sampling  # type: ignore
 
-        evolve_greedy_sampling()
+                evolve_vcd_sampling()
+                do_sample = True
+                if effective_temperature <= 0.0:
+                    effective_temperature = 1.0
+                patch_name = "vcd_sample_fallback"
+                print(
+                    "[warn] vcd_utils.greedy_sample not found; "
+                    "falling back to sampled VCD.",
+                    file=sys.stderr,
+                )
+            else:
+                evolve_greedy_sampling()
+                patch_name = "vcd_greedy"
+
+    print(
+        f"[vcd] patch={patch_name} use_cd={bool(args.use_cd)} "
+        f"do_sample={do_sample} temperature={effective_temperature}",
+        file=sys.stderr,
+    )
 
     seed_everything(int(args.seed))
     set_seed(int(args.seed))
@@ -207,7 +235,7 @@ def main() -> None:
                     cd_alpha=float(args.cd_alpha),
                     cd_beta=float(args.cd_beta),
                     do_sample=do_sample,
-                    temperature=float(args.temperature),
+                    temperature=effective_temperature,
                     top_p=float(args.top_p),
                     top_k=top_k,
                     max_new_tokens=int(args.max_new_tokens),
