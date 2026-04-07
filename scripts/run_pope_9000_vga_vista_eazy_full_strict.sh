@@ -70,6 +70,7 @@ EAZY_MODEL="${EAZY_MODEL:-llava-1.5}"
 EAZY_BEAM="${EAZY_BEAM:-1}"
 EAZY_TOPK_K="${EAZY_TOPK_K:-2}"
 EAZY_REQUIRE_CHAIR="${EAZY_REQUIRE_CHAIR:-1}"
+EAZY_RUNNER_MODE="${EAZY_RUNNER_MODE:-stable}"
 
 mkdir -p "$BASELINE_DIR" "$VGA_DIR" "$VISTA_DIR" "$EAZY_DIR"
 
@@ -243,23 +244,44 @@ run_vista_full() {
 run_eazy_full() {
   if [[ "$RUN_EAZY" == "1" || ! -f "$EAZY_DIR/pred_eazy_9000.jsonl" || "$FORCE_RERUN" == "1" ]]; then
     echo "[run] EAZY full-9000"
-    GPU="$GPU" \
-    CAL_ROOT="$CAL_ROOT" \
-    EAZY_ROOT="$EAZY_ROOT" \
-    EAZY_PYTHON_BIN="$EAZY_PYTHON_BIN" \
-    CAL_PYTHON_BIN="$CAL_PYTHON_BIN" \
-    DATA_PATH="$IMAGE_FOLDER" \
-    GT_CSV="$GT_CSV" \
-    BASELINE_JSONL="$BASELINE_PRED_JSONL" \
-    FEATURES_CSV="$FEATURES_CSV" \
-    OUT_DIR="$EAZY_DIR" \
-    TAX_OUT_DIR="$EAZY_DIR/taxonomy" \
-    D1D2_OUT_DIR="$EAZY_DIR/d1d2_audit" \
-    MODEL="$EAZY_MODEL" \
-    BEAM="$EAZY_BEAM" \
-    TOPK_K="$EAZY_TOPK_K" \
-    EAZY_REQUIRE_CHAIR="$EAZY_REQUIRE_CHAIR" \
-    bash "$CAL_ROOT/scripts/run_eazy_vs_baseline_taxonomy_9000.sh"
+    if [[ "$EAZY_RUNNER_MODE" == "stable" ]]; then
+      GPU="$GPU" \
+      CAL_ROOT="$CAL_ROOT" \
+      EAZY_ROOT="$EAZY_ROOT" \
+      EAZY_PYTHON_BIN="$EAZY_PYTHON_BIN" \
+      CAL_PYTHON_BIN="$CAL_PYTHON_BIN" \
+      IMAGE_FOLDER="$IMAGE_FOLDER" \
+      Q_WITHOBJ="$Q_WITHOBJ" \
+      GT_CSV="$GT_CSV" \
+      BASELINE_JSONL="$BASELINE_PRED_JSONL" \
+      FEATURES_CSV="$FEATURES_CSV" \
+      OUT_DIR="$EAZY_DIR" \
+      TAX_OUT_DIR="$EAZY_DIR/taxonomy" \
+      D1D2_OUT_DIR="$EAZY_DIR/d1d2_audit" \
+      MODEL="$EAZY_MODEL" \
+      BEAM="$EAZY_BEAM" \
+      TOPK_K="$EAZY_TOPK_K" \
+      MAX_NEW_TOKENS=8 \
+      bash "$CAL_ROOT/scripts/run_eazy_vs_baseline_taxonomy_9000_stable.sh"
+    else
+      GPU="$GPU" \
+      CAL_ROOT="$CAL_ROOT" \
+      EAZY_ROOT="$EAZY_ROOT" \
+      EAZY_PYTHON_BIN="$EAZY_PYTHON_BIN" \
+      CAL_PYTHON_BIN="$CAL_PYTHON_BIN" \
+      DATA_PATH="$IMAGE_FOLDER" \
+      GT_CSV="$GT_CSV" \
+      BASELINE_JSONL="$BASELINE_PRED_JSONL" \
+      FEATURES_CSV="$FEATURES_CSV" \
+      OUT_DIR="$EAZY_DIR" \
+      TAX_OUT_DIR="$EAZY_DIR/taxonomy" \
+      D1D2_OUT_DIR="$EAZY_DIR/d1d2_audit" \
+      MODEL="$EAZY_MODEL" \
+      BEAM="$EAZY_BEAM" \
+      TOPK_K="$EAZY_TOPK_K" \
+      EAZY_REQUIRE_CHAIR="$EAZY_REQUIRE_CHAIR" \
+      bash "$CAL_ROOT/scripts/run_eazy_vs_baseline_taxonomy_9000.sh"
+    fi
   else
     echo "[reuse] EAZY prediction: $EAZY_DIR/pred_eazy_9000.jsonl"
   fi

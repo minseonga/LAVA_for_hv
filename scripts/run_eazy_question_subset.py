@@ -74,6 +74,8 @@ def parse_layers(att_layer: str) -> List[int]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run EAZY one-pass intervention on an arbitrary question subset jsonl.")
     ap.add_argument("--eazy_root", type=str, required=True)
+    ap.add_argument("--runtime_shim_root", type=str, default="", help="Optional runtime shim root prepared by prepare_eazy_origin_runtime.sh")
+    ap.add_argument("--nltk_data_dir", type=str, default="", help="Optional NLTK data directory for EAZY runtime")
     ap.add_argument("--question_file", type=str, required=True)
     ap.add_argument("--image_folder", type=str, required=True)
     ap.add_argument("--answers_file", type=str, required=True)
@@ -83,11 +85,19 @@ def main() -> None:
     ap.add_argument("--sample", action="store_true")
     ap.add_argument("--k", type=int, default=2)
     ap.add_argument("--att_layer", type=str, default="14,15,16,17,18,19,20,21,22,23,24")
+    ap.add_argument("--max_new_tokens", type=int, default=512)
     ap.add_argument("--seed", type=int, default=1994)
     args = ap.parse_args()
 
     eazy_root = os.path.abspath(args.eazy_root)
     os.chdir(eazy_root)
+    runtime_shim_root = os.path.abspath(args.runtime_shim_root) if str(args.runtime_shim_root).strip() else ""
+    nltk_data_dir = os.path.abspath(args.nltk_data_dir) if str(args.nltk_data_dir).strip() else ""
+    if runtime_shim_root and os.path.isdir(runtime_shim_root) and runtime_shim_root not in sys.path:
+        sys.path.insert(0, runtime_shim_root)
+    if nltk_data_dir:
+        prev = os.environ.get("NLTK_DATA", "").strip()
+        os.environ["NLTK_DATA"] = nltk_data_dir if not prev else f"{nltk_data_dir}:{prev}"
     local_transformers_src = os.path.join(eazy_root, "transformers-4.29.2", "src")
     if os.path.isdir(local_transformers_src) and local_transformers_src not in sys.path:
         sys.path.insert(0, local_transformers_src)
@@ -161,7 +171,7 @@ def main() -> None:
                             use_nucleus_sampling=args.sample,
                             do_sample=False,
                             num_beams=args.beam,
-                            max_new_tokens=512,
+                            max_new_tokens=args.max_new_tokens,
                             output_attentions=True,
                             opera_decoding=False,
                             return_dict_in_generate=True,
@@ -173,7 +183,7 @@ def main() -> None:
                             use_nucleus_sampling=args.sample,
                             do_sample=False,
                             num_beams=args.beam,
-                            max_new_tokens=512,
+                            max_new_tokens=args.max_new_tokens,
                             output_attentions=True,
                             opera_decoding=False,
                             return_dict_in_generate=True,
@@ -201,7 +211,7 @@ def main() -> None:
                             use_nucleus_sampling=args.sample,
                             do_sample=False,
                             num_beams=args.beam,
-                            max_new_tokens=512,
+                            max_new_tokens=args.max_new_tokens,
                             output_attentions=True,
                             opera_decoding=False,
                             return_dict_in_generate=True,
@@ -213,7 +223,7 @@ def main() -> None:
                             use_nucleus_sampling=args.sample,
                             do_sample=False,
                             num_beams=args.beam,
-                            max_new_tokens=512,
+                            max_new_tokens=args.max_new_tokens,
                             output_attentions=True,
                             opera_decoding=False,
                             return_dict_in_generate=True,
@@ -234,7 +244,7 @@ def main() -> None:
                             use_nucleus_sampling=args.sample,
                             do_sample=False,
                             num_beams=args.beam,
-                            max_new_tokens=512,
+                            max_new_tokens=args.max_new_tokens,
                             output_attentions=True,
                             opera_decoding=False,
                             return_dict_in_generate=True,
@@ -246,7 +256,7 @@ def main() -> None:
                             use_nucleus_sampling=args.sample,
                             do_sample=False,
                             num_beams=args.beam,
-                            max_new_tokens=512,
+                            max_new_tokens=args.max_new_tokens,
                             output_attentions=True,
                             opera_decoding=False,
                             return_dict_in_generate=True,
