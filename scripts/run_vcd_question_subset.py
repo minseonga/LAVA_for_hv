@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
 from typing import Any, Dict, List
 
@@ -15,6 +16,11 @@ try:
 except Exception:
     def tqdm(iterable, **_: Any):
         return iterable
+
+try:
+    import numpy as np
+except Exception:
+    np = None
 
 
 def read_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -79,6 +85,18 @@ def preprocess_image_no_numpy(image: Image.Image, image_processor: Any) -> torch
     return tensor
 
 
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    if np is not None:
+        np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run VCD on an arbitrary question subset jsonl.")
     ap.add_argument("--vcd_root", type=str, required=True)
@@ -89,10 +107,10 @@ def main() -> None:
     ap.add_argument("--model_base", type=str, default="")
     ap.add_argument("--conv_mode", type=str, default="llava_v1")
     ap.add_argument("--gpu_id", type=int, default=0)
-    ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--top_p", type=float, default=1.0)
     ap.add_argument("--top_k", type=int, default=0)
-    ap.add_argument("--do_sample", type=str, default="true", choices=["true", "false"])
+    ap.add_argument("--do_sample", type=str, default="false", choices=["true", "false"])
     ap.add_argument("--noise_step", type=int, default=500)
     ap.add_argument("--use_cd", action="store_true")
     ap.add_argument("--cd_alpha", type=float, default=1.0)
@@ -118,11 +136,20 @@ def main() -> None:
     from llava.utils import disable_torch_init  # type: ignore
     from llava.mm_utils import tokenizer_image_token, get_model_name_from_path  # type: ignore
     from vcd_utils.vcd_add_noise import add_diffusion_noise  # type: ignore
-    from vcd_utils.vcd_sample import evolve_vcd_sampling  # type: ignore
 
-    evolve_vcd_sampling()
+    if do_sample:
+        from vcd_utils.vcd_sample import evolve_vcd_sampling  # type: ignore
+
+        evolve_vcd_sampling()
+    else:
+        from vcd_utils.greedy_sample import evolve_greedy_sampling  # type: ignore
+
+        evolve_greedy_sampling()
+
+    seed_everything(int(args.seed))
     set_seed(int(args.seed))
     disable_torch_init()
+    device = torch.device(f"cuda:{int(args.gpu_id)}" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
         torch.cuda.set_device(int(args.gpu_id))
 
@@ -161,7 +188,7 @@ def main() -> None:
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
 
-            input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+            input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(device)
             image = Image.open(os.path.join(args.image_folder, image_name)).convert("RGB")
             image_tensor = preprocess_image_no_numpy(image, image_processor)
             if args.use_cd:
@@ -175,8 +202,8 @@ def main() -> None:
             with torch.inference_mode():
                 output_ids = model.generate(
                     input_ids,
-                    images=image_tensor.unsqueeze(0).half().cuda(),
-                    images_cd=(image_tensor_cd.unsqueeze(0).half().cuda() if image_tensor_cd is not None else None),
+                    images=image_tensor.unsqueeze(0).half().to(device),
+                    images_cd=(image_tensor_cd.unsqueeze(0).half().to(device) if image_tensor_cd is not None else None),
                     cd_alpha=float(args.cd_alpha),
                     cd_beta=float(args.cd_beta),
                     do_sample=do_sample,

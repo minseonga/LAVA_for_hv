@@ -30,7 +30,7 @@ VCD_NOISE_STEP="${VCD_NOISE_STEP:-500}"
 VCD_CD_ALPHA="${VCD_CD_ALPHA:-1.0}"
 VCD_CD_BETA="${VCD_CD_BETA:-0.2}"
 
-TEMPERATURE="${TEMPERATURE:-1.0}"
+TEMPERATURE="${TEMPERATURE:-0}"
 TOP_P="${TOP_P:-}"
 
 SEEDS="${SEEDS:-1994}"
@@ -100,7 +100,42 @@ for seed in "${seed_array[@]}"; do
     fi
 
     run_step "officiallike_loader_seed${seed}" "$loader_log" \
-      env CUDA_VISIBLE_DEVICES="$GPU" PYTHONPATH="$VCD_ROOT" "$VCD_PYTHON_BIN" "${loader_args[@]}"
+      env CUDA_VISIBLE_DEVICES="$GPU" PYTHONPATH="$VCD_ROOT" PYTHONHASHSEED="$seed" "$VCD_PYTHON_BIN" -c '
+import random
+import runpy
+import sys
+
+seed = int(sys.argv[1])
+script = sys.argv[2]
+argv = sys.argv[3:]
+
+random.seed(seed)
+try:
+    import numpy as np
+    np.random.seed(seed)
+except Exception:
+    pass
+
+try:
+    import torch
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+except Exception:
+    pass
+
+try:
+    from transformers import set_seed as hf_set_seed
+    hf_set_seed(seed)
+except Exception:
+    pass
+
+sys.argv = [script] + argv
+runpy.run_path(script, run_name="__main__")
+' "$seed" "${loader_args[@]}"
   else
     echo "[reuse] $pred_jsonl"
   fi

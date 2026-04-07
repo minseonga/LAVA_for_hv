@@ -71,7 +71,8 @@ VCD_USE_CD="${VCD_USE_CD:-1}"
 VCD_NOISE_STEP="${VCD_NOISE_STEP:-500}"
 VCD_CD_ALPHA="${VCD_CD_ALPHA:-1.0}"
 VCD_CD_BETA="${VCD_CD_BETA:-0.1}"
-VCD_TEMPERATURE="${VCD_TEMPERATURE:-1.0}"
+VCD_DO_SAMPLE="${VCD_DO_SAMPLE:-false}"
+VCD_TEMPERATURE="${VCD_TEMPERATURE:-0}"
 VCD_TOP_P="${VCD_TOP_P:-1.0}"
 VCD_TOP_K="${VCD_TOP_K:-0}"
 VCD_MAX_NEW_TOKENS="${VCD_MAX_NEW_TOKENS:-128}"
@@ -333,6 +334,7 @@ if [[ "$RUN_VCD" == "1" ]] && ! reuse_file "$VCD_JSONL"; then
       --temperature "$VCD_TEMPERATURE" \
       --top_p "$VCD_TOP_P" \
       --top_k "$VCD_TOP_K" \
+      --do_sample "$VCD_DO_SAMPLE" \
       --noise_step "$VCD_NOISE_STEP" \
       --cd_alpha "$VCD_CD_ALPHA" \
       --cd_beta "$VCD_CD_BETA" \
