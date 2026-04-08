@@ -114,7 +114,9 @@ def main() -> None:
     ]:
         __import__(module_name)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not visible_devices:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
     cfg_ns = argparse.Namespace(
         model=args.model,
         pope_type=args.pope_type,
@@ -144,6 +146,19 @@ def main() -> None:
     cfg = Config(cfg_ns)
     setup_seeds(int(args.seed))
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    if torch.cuda.is_available():
+        torch.cuda.set_device(int(args.gpu_id))
+    print(
+        "[gpu]",
+        json.dumps(
+            {
+                "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+                "gpu_id_arg": int(args.gpu_id),
+                "device_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
+                "current_device": int(torch.cuda.current_device()) if torch.cuda.is_available() else -1,
+            }
+        ),
+    )
     model_config = cfg.model_cfg
     model_config.device_8bit = args.gpu_id
     model_cls = registry.get_model_class(model_config.arch)
