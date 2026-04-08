@@ -80,23 +80,21 @@ run_one_category() {
     return
   fi
   run_step "official_${cat}" "$LOG_DIR/official_${cat}.log" \
-    env EAZY_ROOT="$EAZY_ROOT" \
-        EAZY_PYTHON_BIN="$EAZY_PYTHON_BIN" \
-        POPE_COCO_FALLBACK="$POPE_COCO_FALLBACK" \
-        RUNTIME_SHIM_ROOT="$RUNTIME_SHIM_ROOT" \
-        NLTK_DATA_DIR="$NLTK_DATA_DIR" \
-        DOWNLOAD_NLTK=0 \
-        RUN_PREP=0 \
-        GPU="$GPU" \
-        MODEL="$MODEL" \
-        POPE_TYPE="$cat" \
-        DATA_PATH="$DATA_PATH" \
-        TOPK_K="$TOPK_K" \
-        BEAM="$BEAM" \
-        bash "$SCRIPT_DIR/run_eazy_origin_repo_pope.sh" \
+    env CUDA_VISIBLE_DEVICES="$GPU" \
+        PYTHONPATH="$CAL_ROOT" \
+        "$EAZY_PYTHON_BIN" "$CAL_ROOT/scripts/run_eazy_origin_repo_pope_dump.py" \
+          --eazy_root "$EAZY_ROOT" \
+          --runtime_shim_root "$RUNTIME_SHIM_ROOT" \
+          --nltk_data_dir "$NLTK_DATA_DIR" \
+          --model "$MODEL" \
+          --pope_type "$cat" \
+          --gpu_id 0 \
+          --data_path "$DATA_PATH" \
           --batch_size "$BATCH_SIZE" \
           --num_workers "$NUM_WORKERS" \
-          --save-jsonl "$save_path"
+          --beam "$BEAM" \
+          --k "$TOPK_K" \
+          --save_jsonl "$save_path"
 }
 
 run_one_category adversarial "$ADV_JSONL"
