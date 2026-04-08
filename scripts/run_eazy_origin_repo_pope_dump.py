@@ -238,34 +238,40 @@ def main() -> None:
                 k=int(args.k),
                 model_name=args.model,
             )
+            one_pass_zero_out_list = []
+            for zero_out_list in obj2zero_out.values():
+                one_pass_zero_out_list.extend(zero_out_list)
+            one_pass_zero_out_list = list(set(one_pass_zero_out_list))
+
+            with torch.inference_mode():
+                with torch.no_grad():
+                    if args.model == "shikra":
+                        response_, _, _ = model.generate(
+                            {"image": image, "prompt": describ_qu},
+                            use_nucleus_sampling=bool(args.sample),
+                            do_sample=False,
+                            num_beams=int(args.beam),
+                            max_new_tokens=512,
+                            output_attentions=True,
+                            opera_decoding=False,
+                            return_dict_in_generate=True,
+                            zero_out_list=one_pass_zero_out_list,
+                        )
+                    else:
+                        response_, _, _, _, _ = model.generate(
+                            {"image": image, "prompt": describ_qu},
+                            use_nucleus_sampling=bool(args.sample),
+                            do_sample=False,
+                            num_beams=int(args.beam),
+                            max_new_tokens=512,
+                            output_attentions=True,
+                            opera_decoding=False,
+                            return_dict_in_generate=True,
+                            zero_out_list=one_pass_zero_out_list,
+                        )
+
             zero_out_list_final: List[int] = []
             for obj_name, zero_out_list in obj2zero_out.items():
-                with torch.inference_mode():
-                    with torch.no_grad():
-                        if args.model == "shikra":
-                            response_, _, _ = model.generate(
-                                {"image": image, "prompt": describ_qu},
-                                use_nucleus_sampling=bool(args.sample),
-                                do_sample=False,
-                                num_beams=int(args.beam),
-                                max_new_tokens=512,
-                                output_attentions=True,
-                                opera_decoding=False,
-                                return_dict_in_generate=True,
-                                zero_out_list=zero_out_list,
-                            )
-                        else:
-                            response_, _, _, _, _ = model.generate(
-                                {"image": image, "prompt": describ_qu},
-                                use_nucleus_sampling=bool(args.sample),
-                                do_sample=False,
-                                num_beams=int(args.beam),
-                                max_new_tokens=512,
-                                output_attentions=True,
-                                opera_decoding=False,
-                                return_dict_in_generate=True,
-                                zero_out_list=zero_out_list,
-                            )
                 if obj_name not in response_[0]:
                     zero_out_list_final.extend(zero_out_list)
             zero_out_list_final = list(set(zero_out_list_final))
