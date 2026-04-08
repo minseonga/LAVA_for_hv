@@ -234,8 +234,18 @@ def infer_probe_feature_cols(rows: Sequence[Dict[str, Any]]) -> List[str]:
     if not rows:
         return []
     out: List[str] = []
-    for key in rows[0].keys():
-        if not str(key).startswith("probe_"):
+    seen = set()
+    all_keys: List[str] = []
+    for row in rows:
+        for key in row.keys():
+            skey = str(key)
+            if skey in seen:
+                continue
+            seen.add(skey)
+            all_keys.append(skey)
+    for key in all_keys:
+        skey = str(key)
+        if not (skey.startswith("probe_") or skey.startswith("pair_")):
             continue
         ok = False
         for row in rows:
