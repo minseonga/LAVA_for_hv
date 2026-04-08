@@ -241,6 +241,9 @@ def main() -> None:
     ap.add_argument("--feature_cols", type=str, default="auto")
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
     ap.add_argument("--top_n_features", type=int, default=8)
+    ap.add_argument("--feature_family_mode", type=str, default="overall", choices=["overall", "balanced", "probe_only", "pair_only"])
+    ap.add_argument("--top_n_probe_features", type=int, default=8)
+    ap.add_argument("--top_n_pair_features", type=int, default=8)
     ap.add_argument("--max_depth_values", type=str, default="1,2,3")
     ap.add_argument("--min_leaf_values", type=str, default="3,5,8,10")
     ap.add_argument("--split_quantiles", type=str, default="0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9")
@@ -263,15 +266,21 @@ def main() -> None:
     rows = teacher.attach_teacher_labels(rows, str(args.teacher_mode), float(args.min_f1_gain))
 
     feature_cols = base.infer_probe_feature_cols(rows) if str(args.feature_cols) == "auto" else [x.strip() for x in str(args.feature_cols).split(",") if x.strip()]
-    feature_metrics: List[Dict[str, Any]] = []
+    feature_metrics_all: List[Dict[str, Any]] = []
     for feat in feature_cols:
         res = teacher.evaluate_feature(rows, feat)
         if res is None:
             continue
-        if float(res["auroc"]) < float(args.min_feature_auroc):
-            continue
-        feature_metrics.append(res)
-    feature_metrics.sort(key=lambda r: (-float(r["auroc"]), -float(r["average_precision"] or 0.0), str(r["feature"])))
+        feature_metrics_all.append(res)
+    feature_metrics_all = teacher.sort_feature_metrics(feature_metrics_all)
+    feature_metrics = teacher.select_feature_metrics(
+        feature_metrics_all,
+        min_feature_auroc=float(args.min_feature_auroc),
+        top_n_features=int(args.top_n_features),
+        feature_family_mode=str(args.feature_family_mode),
+        top_n_probe_features=int(args.top_n_probe_features),
+        top_n_pair_features=int(args.top_n_pair_features),
+    )
     if not feature_metrics:
         raise RuntimeError("No feasible features for tree controller.")
 
@@ -348,7 +357,8 @@ def main() -> None:
         decision_rows.append(out)
 
     os.makedirs(args.out_dir, exist_ok=True)
-    base.write_csv(os.path.join(args.out_dir, "feature_metrics.csv"), feature_metrics)
+    base.write_csv(os.path.join(args.out_dir, "feature_metrics.csv"), feature_metrics_all)
+    base.write_csv(os.path.join(args.out_dir, "feature_metrics_selected.csv"), feature_metrics)
     base.write_csv(os.path.join(args.out_dir, "tau_sweep.csv"), sweep_rows)
     base.write_csv(os.path.join(args.out_dir, "decision_rows.csv"), decision_rows)
     base.write_json(
@@ -360,6 +370,7 @@ def main() -> None:
             "constraint_mode": str(args.constraint_mode),
             "chair_eps": float(args.chair_eps),
             "selection_objective": str(args.selection_objective),
+            "feature_family_mode": str(args.feature_family_mode),
             "top_features": selected,
             "feature_names": feature_names,
             "feature_means": means,
@@ -381,9 +392,12 @@ def main() -> None:
                 "constraint_mode": str(args.constraint_mode),
                 "chair_eps": float(args.chair_eps),
                 "selection_objective": str(args.selection_objective),
+                "feature_family_mode": str(args.feature_family_mode),
                 "feature_cols": feature_names,
                 "min_feature_auroc": float(args.min_feature_auroc),
                 "top_n_features": int(args.top_n_features),
+                "top_n_probe_features": int(args.top_n_probe_features),
+                "top_n_pair_features": int(args.top_n_pair_features),
                 "max_depth_values": max_depth_values,
                 "min_leaf_values": min_leaf_values,
                 "split_quantiles": split_quantiles,
@@ -399,6 +413,7 @@ def main() -> None:
             "best_policy": best,
             "outputs": {
                 "feature_metrics_csv": os.path.abspath(os.path.join(args.out_dir, "feature_metrics.csv")),
+                "feature_metrics_selected_csv": os.path.abspath(os.path.join(args.out_dir, "feature_metrics_selected.csv")),
                 "tau_sweep_csv": os.path.abspath(os.path.join(args.out_dir, "tau_sweep.csv")),
                 "decision_rows_csv": os.path.abspath(os.path.join(args.out_dir, "decision_rows.csv")),
                 "selected_tree_json": os.path.abspath(os.path.join(args.out_dir, "selected_tree.json")),

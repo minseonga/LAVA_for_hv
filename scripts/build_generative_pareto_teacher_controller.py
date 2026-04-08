@@ -93,6 +93,76 @@ def evaluate_feature(rows: Sequence[Dict[str, Any]], feature: str) -> Optional[D
     }
 
 
+def feature_family(feature: str) -> str:
+    name = str(feature)
+    if name.startswith("pair_"):
+        return "pair"
+    if name.startswith("probe_"):
+        return "probe"
+    return "other"
+
+
+def sort_feature_metrics(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out = [dict(row) for row in rows]
+    out.sort(key=lambda r: (-float(r["auroc"]), -float(r.get("average_precision") or 0.0), str(r["feature"])))
+    return out
+
+
+def select_feature_metrics(
+    feature_metrics_all: Sequence[Dict[str, Any]],
+    *,
+    min_feature_auroc: float,
+    top_n_features: int,
+    feature_family_mode: str,
+    top_n_probe_features: int,
+    top_n_pair_features: int,
+) -> List[Dict[str, Any]]:
+    filtered = [
+        dict(row)
+        for row in feature_metrics_all
+        if float(row["auroc"]) >= float(min_feature_auroc)
+    ]
+    filtered = sort_feature_metrics(filtered)
+    if not filtered:
+        return []
+
+    mode = str(feature_family_mode)
+    top_n = max(1, int(top_n_features))
+    if mode == "overall":
+        return filtered[:top_n]
+    if mode == "probe_only":
+        return [row for row in filtered if feature_family(str(row["feature"])) == "probe"][:top_n]
+    if mode == "pair_only":
+        return [row for row in filtered if feature_family(str(row["feature"])) == "pair"][:top_n]
+    if mode != "balanced":
+        raise ValueError(f"Unsupported feature_family_mode: {feature_family_mode}")
+
+    selected: List[Dict[str, Any]] = []
+    used = set()
+    probe_rows = [row for row in filtered if feature_family(str(row["feature"])) == "probe"]
+    pair_rows = [row for row in filtered if feature_family(str(row["feature"])) == "pair"]
+
+    for row in probe_rows[: max(0, int(top_n_probe_features))]:
+        feat = str(row["feature"])
+        if feat not in used:
+            used.add(feat)
+            selected.append(row)
+    for row in pair_rows[: max(0, int(top_n_pair_features))]:
+        feat = str(row["feature"])
+        if feat not in used:
+            used.add(feat)
+            selected.append(row)
+    for row in filtered:
+        if len(selected) >= top_n:
+            break
+        feat = str(row["feature"])
+        if feat in used:
+            continue
+        used.add(feat)
+        selected.append(row)
+    return selected
+
+
 def compute_feature_stats(
     rows: Sequence[Dict[str, Any]],
     feature_specs: Sequence[Tuple[str, str]],
@@ -263,6 +333,9 @@ def main() -> None:
     ap.add_argument("--feature_cols", type=str, default="auto")
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
     ap.add_argument("--top_n_features", type=int, default=6)
+    ap.add_argument("--feature_family_mode", type=str, default="overall", choices=["overall", "balanced", "probe_only", "pair_only"])
+    ap.add_argument("--top_n_probe_features", type=int, default=6)
+    ap.add_argument("--top_n_pair_features", type=int, default=6)
     ap.add_argument("--weight_grid", type=str, default="0,0.25,0.5,0.75,1.0,1.5,2.0,3.0")
     ap.add_argument("--num_passes", type=int, default=3)
     ap.add_argument("--tau_quantiles", type=str, default="0.0,0.01,0.02,0.05,0.1,0.15,0.2,0.25,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.98,0.99,1.0")
@@ -283,15 +356,21 @@ def main() -> None:
     )
     rows = attach_teacher_labels(rows, str(args.teacher_mode), float(args.min_f1_gain))
     feature_cols = base.infer_probe_feature_cols(rows) if str(args.feature_cols) == "auto" else [x.strip() for x in str(args.feature_cols).split(",") if x.strip()]
-    feature_metrics = []
+    feature_metrics_all: List[Dict[str, Any]] = []
     for feat in feature_cols:
         res = evaluate_feature(rows, feat)
         if res is None:
             continue
-        if float(res["auroc"]) < float(args.min_feature_auroc):
-            continue
-        feature_metrics.append(res)
-    feature_metrics.sort(key=lambda r: (-float(r["auroc"]), -float(r["average_precision"] or 0.0), str(r["feature"])))
+        feature_metrics_all.append(res)
+    feature_metrics_all = sort_feature_metrics(feature_metrics_all)
+    feature_metrics = select_feature_metrics(
+        feature_metrics_all,
+        min_feature_auroc=float(args.min_feature_auroc),
+        top_n_features=int(args.top_n_features),
+        feature_family_mode=str(args.feature_family_mode),
+        top_n_probe_features=int(args.top_n_probe_features),
+        top_n_pair_features=int(args.top_n_pair_features),
+    )
     if not feature_metrics:
         raise RuntimeError("No feasible features for Pareto-teacher controller.")
 
@@ -349,7 +428,8 @@ def main() -> None:
     teacher_rows["teacher_rate"] = base.safe_div(float(sum(int(base.maybe_int(row.get("teacher_fallback")) or 0) for row in rows)), float(max(1, len(rows))))
 
     os.makedirs(args.out_dir, exist_ok=True)
-    base.write_csv(os.path.join(args.out_dir, "feature_metrics.csv"), feature_metrics)
+    base.write_csv(os.path.join(args.out_dir, "feature_metrics.csv"), feature_metrics_all)
+    base.write_csv(os.path.join(args.out_dir, "feature_metrics_selected.csv"), feature_metrics)
     base.write_csv(os.path.join(args.out_dir, "tau_sweep.csv"), sweep_rows)
     base.write_csv(os.path.join(args.out_dir, "decision_rows.csv"), decision_rows)
     base.write_json(
@@ -361,6 +441,7 @@ def main() -> None:
             "constraint_mode": str(args.constraint_mode),
             "chair_eps": float(args.chair_eps),
             "selection_objective": str(args.selection_objective),
+            "feature_family_mode": str(args.feature_family_mode),
             "feature_specs": [{"feature": f, "direction": d, "weight": w} for (f, d), w in zip(feature_specs, weights)],
             "feature_stats": {
                 str(f): {"mean": float(stats[f][0]), "std": float(stats[f][1])}
@@ -382,9 +463,12 @@ def main() -> None:
                 "constraint_mode": str(args.constraint_mode),
                 "chair_eps": float(args.chair_eps),
                 "selection_objective": str(args.selection_objective),
+                "feature_family_mode": str(args.feature_family_mode),
                 "feature_cols": feature_cols,
                 "min_feature_auroc": float(args.min_feature_auroc),
                 "top_n_features": int(args.top_n_features),
+                "top_n_probe_features": int(args.top_n_probe_features),
+                "top_n_pair_features": int(args.top_n_pair_features),
                 "weight_grid": weight_grid,
                 "num_passes": int(args.num_passes),
                 "tau_quantiles": tau_quantiles,
@@ -400,6 +484,7 @@ def main() -> None:
             "best_policy": best,
             "outputs": {
                 "feature_metrics_csv": os.path.abspath(os.path.join(args.out_dir, "feature_metrics.csv")),
+                "feature_metrics_selected_csv": os.path.abspath(os.path.join(args.out_dir, "feature_metrics_selected.csv")),
                 "tau_sweep_csv": os.path.abspath(os.path.join(args.out_dir, "tau_sweep.csv")),
                 "decision_rows_csv": os.path.abspath(os.path.join(args.out_dir, "decision_rows.csv")),
             },

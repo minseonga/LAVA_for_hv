@@ -13,6 +13,9 @@ MIN_F1_GAIN="${MIN_F1_GAIN:-0.0}"
 FEATURE_COLS="${FEATURE_COLS:-auto}"
 MIN_FEATURE_AUROC="${MIN_FEATURE_AUROC:-0.55}"
 TOP_N_FEATURES="${TOP_N_FEATURES:-8}"
+FEATURE_FAMILY_MODE="${FEATURE_FAMILY_MODE:-overall}"
+TOP_N_PROBE_FEATURES="${TOP_N_PROBE_FEATURES:-8}"
+TOP_N_PAIR_FEATURES="${TOP_N_PAIR_FEATURES:-8}"
 MAX_DEPTH_VALUES="${MAX_DEPTH_VALUES:-1,2,3}"
 MIN_LEAF_VALUES="${MIN_LEAF_VALUES:-3,5,8,10}"
 SPLIT_QUANTILES="${SPLIT_QUANTILES:-0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9}"
@@ -41,6 +44,9 @@ PYTHONPATH="${PYTHONPATH:-.}" "$CAL_PYTHON_BIN" scripts/build_generative_pareto_
   --feature_cols "$FEATURE_COLS" \
   --min_feature_auroc "$MIN_FEATURE_AUROC" \
   --top_n_features "$TOP_N_FEATURES" \
+  --feature_family_mode "$FEATURE_FAMILY_MODE" \
+  --top_n_probe_features "$TOP_N_PROBE_FEATURES" \
+  --top_n_pair_features "$TOP_N_PAIR_FEATURES" \
   --max_depth_values "$MAX_DEPTH_VALUES" \
   --min_leaf_values "$MIN_LEAF_VALUES" \
   --split_quantiles "$SPLIT_QUANTILES" \

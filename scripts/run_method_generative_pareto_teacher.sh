@@ -13,6 +13,9 @@ MIN_F1_GAIN="${MIN_F1_GAIN:-0.0}"
 FEATURE_COLS="${FEATURE_COLS:-auto}"
 MIN_FEATURE_AUROC="${MIN_FEATURE_AUROC:-0.55}"
 TOP_N_FEATURES="${TOP_N_FEATURES:-6}"
+FEATURE_FAMILY_MODE="${FEATURE_FAMILY_MODE:-overall}"
+TOP_N_PROBE_FEATURES="${TOP_N_PROBE_FEATURES:-6}"
+TOP_N_PAIR_FEATURES="${TOP_N_PAIR_FEATURES:-6}"
 WEIGHT_GRID="${WEIGHT_GRID:-0,0.25,0.5,0.75,1.0,1.5,2.0,3.0}"
 NUM_PASSES="${NUM_PASSES:-3}"
 TAU_QUANTILES="${TAU_QUANTILES:-0.0,0.01,0.02,0.05,0.1,0.15,0.2,0.25,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.98,0.99,1.0}"
@@ -40,6 +43,9 @@ PYTHONPATH="${PYTHONPATH:-.}" "$CAL_PYTHON_BIN" scripts/build_generative_pareto_
   --feature_cols "$FEATURE_COLS" \
   --min_feature_auroc "$MIN_FEATURE_AUROC" \
   --top_n_features "$TOP_N_FEATURES" \
+  --feature_family_mode "$FEATURE_FAMILY_MODE" \
+  --top_n_probe_features "$TOP_N_PROBE_FEATURES" \
+  --top_n_pair_features "$TOP_N_PAIR_FEATURES" \
   --weight_grid "$WEIGHT_GRID" \
   --num_passes "$NUM_PASSES" \
   --tau_quantiles "$TAU_QUANTILES" \
