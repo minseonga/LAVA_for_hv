@@ -49,8 +49,9 @@ def quantiles_to_thresholds(values: Sequence[float], quantiles: Sequence[float])
     if not vals:
         return []
     if len(vals) == 1:
-        return [vals[0]]
-    out = set()
+        v = float(vals[0])
+        return [v - 1e-6, v, v + 1e-6]
+    out = {float(vals[0]) - 1e-6, float(vals[-1]) + 1e-6}
     n = len(vals)
     for q in quantiles:
         qq = min(1.0, max(0.0, float(q)))

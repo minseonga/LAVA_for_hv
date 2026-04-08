@@ -14,6 +14,28 @@ MODEL_BASE="${MODEL_BASE:-}"
 CONV_MODE="${CONV_MODE:-llava_v1}"
 MAX_MENTIONS="${MAX_MENTIONS:-12}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
+DISCOVERY_MODE="${DISCOVERY_MODE:-coco_val}"
+
+INTERVENTION_PRED_TEXT_KEY="${INTERVENTION_PRED_TEXT_KEY:-}"
+if [[ -z "$INTERVENTION_PRED_TEXT_KEY" ]]; then
+  if [[ "$METHOD_NAME" == "pai" ]]; then
+    INTERVENTION_PRED_TEXT_KEY="text"
+  else
+    INTERVENTION_PRED_TEXT_KEY="output"
+  fi
+fi
+
+DISCOVERY_FEATURES_CSV="${DISCOVERY_FEATURES_CSV:-}"
+DISCOVERY_CLAIM_TABLE_CSV="${DISCOVERY_CLAIM_TABLE_CSV:-}"
+DISCOVERY_CHAIR_TABLE_CSV="${DISCOVERY_CHAIR_TABLE_CSV:-}"
+DISCOVERY_BASELINE_PRED_JSONL="${DISCOVERY_BASELINE_PRED_JSONL:-}"
+DISCOVERY_INTERVENTION_PRED_JSONL="${DISCOVERY_INTERVENTION_PRED_JSONL:-}"
+DISCOVERY_BASELINE_CHAIR_JSON="${DISCOVERY_BASELINE_CHAIR_JSON:-}"
+DISCOVERY_INTERVENTION_CHAIR_JSON="${DISCOVERY_INTERVENTION_CHAIR_JSON:-}"
+DISCOVERY_BENCHMARK_NAME="${DISCOVERY_BENCHMARK_NAME:-}"
+DISCOVERY_SPLIT_NAME="${DISCOVERY_SPLIT_NAME:-}"
+DISCOVERY_BASELINE_PRED_TEXT_KEY="${DISCOVERY_BASELINE_PRED_TEXT_KEY:-auto}"
+DISCOVERY_INTERVENTION_PRED_TEXT_KEY="${DISCOVERY_INTERVENTION_PRED_TEXT_KEY:-$INTERVENTION_PRED_TEXT_KEY}"
 
 SUPPORTED_WEIGHT="${SUPPORTED_WEIGHT:-1.0}"
 HALL_WEIGHT="${HALL_WEIGHT:-1.0}"
@@ -59,13 +81,25 @@ DISCOVERY_DIR="$OUT_ROOT/discovery"
 TEST_APPLY_DIR="$OUT_ROOT/test_apply"
 mkdir -p "$DISCOVERY_DIR" "$TEST_APPLY_DIR"
 
-for path in \
-  "$VAL_Q" "$TEST_Q" \
-  "$VAL_BASELINE_JSONL" "$TEST_BASELINE_JSONL" \
-  "$VAL_BASELINE_CHAIR_JSON" "$TEST_BASELINE_CHAIR_JSON" \
-  "$VAL_INTERVENTION_JSONL" "$TEST_INTERVENTION_JSONL" \
-  "$VAL_INTERVENTION_CHAIR_JSON" "$TEST_INTERVENTION_CHAIR_JSON"
-do
+REQUIRED_INPUTS=(
+  "$TEST_Q"
+  "$TEST_BASELINE_JSONL"
+  "$TEST_BASELINE_CHAIR_JSON"
+  "$TEST_INTERVENTION_JSONL"
+  "$TEST_INTERVENTION_CHAIR_JSON"
+)
+
+if [[ "$DISCOVERY_MODE" != "legacy_probe_200" ]]; then
+  REQUIRED_INPUTS+=(
+    "$VAL_Q"
+    "$VAL_BASELINE_JSONL"
+    "$VAL_BASELINE_CHAIR_JSON"
+    "$VAL_INTERVENTION_JSONL"
+    "$VAL_INTERVENTION_CHAIR_JSON"
+  )
+fi
+
+for path in "${REQUIRED_INPUTS[@]}"; do
   if [[ ! -f "$path" ]]; then
     echo "[error] missing required input: $path" >&2
     exit 1
@@ -74,12 +108,13 @@ done
 
 build_split_assets() {
   local split_name="$1"
-  local q_jsonl="$2"
-  local split_dir="$3"
-  local baseline_jsonl="$4"
-  local intervention_jsonl="$5"
-  local baseline_chair_json="$6"
-  local intervention_chair_json="$7"
+  local benchmark_name="$2"
+  local q_jsonl="$3"
+  local split_dir="$4"
+  local baseline_jsonl="$5"
+  local intervention_jsonl="$6"
+  local baseline_chair_json="$7"
+  local intervention_chair_json="$8"
 
   local feat_csv="$split_dir/coverage_features.csv"
   local feat_summary="$split_dir/coverage_features.summary.json"
@@ -115,13 +150,13 @@ build_split_assets() {
       --baseline_chair_json "$baseline_chair_json" \
       --intervention_chair_json "$intervention_chair_json" \
       --method_name "$METHOD_NAME" \
-      --benchmark_name coco_chair_random500 \
+      --benchmark_name "$benchmark_name" \
       --split_name "$split_name" \
       --chair_metric CHAIRi \
       --out_csv "$chair_csv" \
       --out_summary_json "$chair_summary" \
       --baseline_pred_text_key auto \
-      --intervention_pred_text_key output
+      --intervention_pred_text_key "$INTERVENTION_PRED_TEXT_KEY"
   )
 
   echo "[split:$split_name] build claim-aware table"
@@ -134,7 +169,7 @@ build_split_assets() {
       --baseline_chair_json "$baseline_chair_json" \
       --intervention_chair_json "$intervention_chair_json" \
       --method_name "$METHOD_NAME" \
-      --benchmark_name coco_chair_random500 \
+      --benchmark_name "$benchmark_name" \
       --split_name "$split_name" \
       --supported_weight "$SUPPORTED_WEIGHT" \
       --hall_weight "$HALL_WEIGHT" \
@@ -142,21 +177,138 @@ build_split_assets() {
       --out_csv "$claim_csv" \
       --out_summary_json "$claim_summary" \
       --baseline_pred_text_key auto \
-      --intervention_pred_text_key output
+      --intervention_pred_text_key "$INTERVENTION_PRED_TEXT_KEY"
   )
 }
 
-build_split_assets "val" "$VAL_Q" "$DISCOVERY_DIR" "$VAL_BASELINE_JSONL" "$VAL_INTERVENTION_JSONL" "$VAL_BASELINE_CHAIR_JSON" "$VAL_INTERVENTION_CHAIR_JSON"
-build_split_assets "test" "$TEST_Q" "$TEST_APPLY_DIR" "$TEST_BASELINE_JSONL" "$TEST_INTERVENTION_JSONL" "$TEST_BASELINE_CHAIR_JSON" "$TEST_INTERVENTION_CHAIR_JSON"
+TREE_DISCOVERY_CLAIM_TABLE_CSV=""
+TREE_DISCOVERY_CHAIR_TABLE_CSV=""
+TREE_DISCOVERY_BASELINE_CHAIR_JSON=""
+TREE_DISCOVERY_INTERVENTION_CHAIR_JSON=""
+
+build_legacy_discovery_assets() {
+  if [[ -z "$DISCOVERY_CLAIM_TABLE_CSV" && -z "$DISCOVERY_FEATURES_CSV" && "$METHOD_NAME" == "vga" ]]; then
+    DISCOVERY_FEATURES_CSV="$CAL_ROOT/experiments/vga_generative_coverage_probe_v1/coverage_features.csv"
+    DISCOVERY_CLAIM_TABLE_CSV="$CAL_ROOT/experiments/vga_generative_coverage_probe_v1/vga_claim_aware_table.csv"
+    DISCOVERY_BASELINE_PRED_JSONL="$CAL_ROOT/experiments/common_pope_discovery_harm_miner_v2/generative/baseline/pred_vanilla_caption.jsonl"
+    DISCOVERY_INTERVENTION_PRED_JSONL="$CAL_ROOT/experiments/common_pope_discovery_harm_miner_v2/generative/vga/pred_vga_caption.jsonl"
+    DISCOVERY_BASELINE_CHAIR_JSON="$CAL_ROOT/experiments/common_pope_discovery_harm_miner_v2/generative/baseline/chair_baseline.json"
+    DISCOVERY_INTERVENTION_CHAIR_JSON="$CAL_ROOT/experiments/common_pope_discovery_harm_miner_v2/generative/vga/chair_vga.json"
+    DISCOVERY_BENCHMARK_NAME="${DISCOVERY_BENCHMARK_NAME:-pope_discovery_caption}"
+    DISCOVERY_SPLIT_NAME="${DISCOVERY_SPLIT_NAME:-coverage_probe}"
+  fi
+
+  DISCOVERY_CHAIR_TABLE_CSV="${DISCOVERY_CHAIR_TABLE_CSV:-$DISCOVERY_DIR/${METHOD_NAME}_chair_table.csv}"
+  DISCOVERY_BENCHMARK_NAME="${DISCOVERY_BENCHMARK_NAME:-legacy_discovery}"
+  DISCOVERY_SPLIT_NAME="${DISCOVERY_SPLIT_NAME:-legacy_discovery}"
+
+  if [[ ! -f "$DISCOVERY_CHAIR_TABLE_CSV" ]]; then
+    for path in \
+      "$DISCOVERY_FEATURES_CSV" \
+      "$DISCOVERY_BASELINE_PRED_JSONL" \
+      "$DISCOVERY_INTERVENTION_PRED_JSONL" \
+      "$DISCOVERY_BASELINE_CHAIR_JSON" \
+      "$DISCOVERY_INTERVENTION_CHAIR_JSON"
+    do
+      if [[ -z "$path" || ! -f "$path" ]]; then
+        echo "[error] legacy discovery chair-table rebuild requires existing file: $path" >&2
+        exit 1
+      fi
+    done
+    echo "[discovery] rebuild legacy chair table"
+    (
+      cd "$CAL_ROOT"
+      PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_chair_table.py \
+        --baseline_features_csv "$DISCOVERY_FEATURES_CSV" \
+        --baseline_pred_jsonl "$DISCOVERY_BASELINE_PRED_JSONL" \
+        --intervention_pred_jsonl "$DISCOVERY_INTERVENTION_PRED_JSONL" \
+        --baseline_chair_json "$DISCOVERY_BASELINE_CHAIR_JSON" \
+        --intervention_chair_json "$DISCOVERY_INTERVENTION_CHAIR_JSON" \
+        --method_name "$METHOD_NAME" \
+        --benchmark_name "$DISCOVERY_BENCHMARK_NAME" \
+        --split_name "$DISCOVERY_SPLIT_NAME" \
+        --chair_metric CHAIRi \
+        --out_csv "$DISCOVERY_CHAIR_TABLE_CSV" \
+        --out_summary_json "$DISCOVERY_DIR/${METHOD_NAME}_chair_table.summary.json" \
+        --baseline_pred_text_key "$DISCOVERY_BASELINE_PRED_TEXT_KEY" \
+        --intervention_pred_text_key "$DISCOVERY_INTERVENTION_PRED_TEXT_KEY"
+    )
+  fi
+
+  if [[ -z "$DISCOVERY_CLAIM_TABLE_CSV" || ! -f "$DISCOVERY_CLAIM_TABLE_CSV" ]]; then
+    for path in \
+      "$DISCOVERY_FEATURES_CSV" \
+      "$DISCOVERY_BASELINE_PRED_JSONL" \
+      "$DISCOVERY_INTERVENTION_PRED_JSONL" \
+      "$DISCOVERY_BASELINE_CHAIR_JSON" \
+      "$DISCOVERY_INTERVENTION_CHAIR_JSON"
+    do
+      if [[ -z "$path" || ! -f "$path" ]]; then
+        echo "[error] legacy discovery claim-table rebuild requires existing file: $path" >&2
+        exit 1
+      fi
+    done
+    DISCOVERY_CLAIM_TABLE_CSV="$DISCOVERY_DIR/${METHOD_NAME}_claim_table.csv"
+    echo "[discovery] rebuild legacy claim-aware table"
+    (
+      cd "$CAL_ROOT"
+      PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/build_method_claim_aware_table.py \
+        --baseline_features_csv "$DISCOVERY_FEATURES_CSV" \
+        --baseline_pred_jsonl "$DISCOVERY_BASELINE_PRED_JSONL" \
+        --intervention_pred_jsonl "$DISCOVERY_INTERVENTION_PRED_JSONL" \
+        --baseline_chair_json "$DISCOVERY_BASELINE_CHAIR_JSON" \
+        --intervention_chair_json "$DISCOVERY_INTERVENTION_CHAIR_JSON" \
+        --method_name "$METHOD_NAME" \
+        --benchmark_name "$DISCOVERY_BENCHMARK_NAME" \
+        --split_name "$DISCOVERY_SPLIT_NAME" \
+        --supported_weight "$SUPPORTED_WEIGHT" \
+        --hall_weight "$HALL_WEIGHT" \
+        --length_weight "$LENGTH_WEIGHT" \
+        --out_csv "$DISCOVERY_CLAIM_TABLE_CSV" \
+        --out_summary_json "$DISCOVERY_DIR/${METHOD_NAME}_claim_table.summary.json" \
+        --baseline_pred_text_key "$DISCOVERY_BASELINE_PRED_TEXT_KEY" \
+        --intervention_pred_text_key "$DISCOVERY_INTERVENTION_PRED_TEXT_KEY"
+    )
+  fi
+
+  for path in \
+    "$DISCOVERY_CLAIM_TABLE_CSV" \
+    "$DISCOVERY_CHAIR_TABLE_CSV" \
+    "$DISCOVERY_BASELINE_CHAIR_JSON" \
+    "$DISCOVERY_INTERVENTION_CHAIR_JSON"
+  do
+    if [[ -z "$path" || ! -f "$path" ]]; then
+      echo "[error] missing legacy discovery input: $path" >&2
+      exit 1
+    fi
+  done
+
+  TREE_DISCOVERY_CLAIM_TABLE_CSV="$DISCOVERY_CLAIM_TABLE_CSV"
+  TREE_DISCOVERY_CHAIR_TABLE_CSV="$DISCOVERY_CHAIR_TABLE_CSV"
+  TREE_DISCOVERY_BASELINE_CHAIR_JSON="$DISCOVERY_BASELINE_CHAIR_JSON"
+  TREE_DISCOVERY_INTERVENTION_CHAIR_JSON="$DISCOVERY_INTERVENTION_CHAIR_JSON"
+}
+
+if [[ "$DISCOVERY_MODE" == "legacy_probe_200" ]]; then
+  build_legacy_discovery_assets
+else
+  build_split_assets "val" "coco_chair_random500" "$VAL_Q" "$DISCOVERY_DIR" "$VAL_BASELINE_JSONL" "$VAL_INTERVENTION_JSONL" "$VAL_BASELINE_CHAIR_JSON" "$VAL_INTERVENTION_CHAIR_JSON"
+  TREE_DISCOVERY_CLAIM_TABLE_CSV="$DISCOVERY_DIR/${METHOD_NAME}_claim_table.csv"
+  TREE_DISCOVERY_CHAIR_TABLE_CSV="$DISCOVERY_DIR/${METHOD_NAME}_chair_table.csv"
+  TREE_DISCOVERY_BASELINE_CHAIR_JSON="$VAL_BASELINE_CHAIR_JSON"
+  TREE_DISCOVERY_INTERVENTION_CHAIR_JSON="$VAL_INTERVENTION_CHAIR_JSON"
+fi
+
+build_split_assets "test" "coco_chair_random500" "$TEST_Q" "$TEST_APPLY_DIR" "$TEST_BASELINE_JSONL" "$TEST_INTERVENTION_JSONL" "$TEST_BASELINE_CHAIR_JSON" "$TEST_INTERVENTION_CHAIR_JSON"
 
 echo "[tree] fit on val"
 (
   cd "$CAL_ROOT"
   CAL_PYTHON_BIN="$CAL_PYTHON_BIN" \
-  CLAIM_TABLE_CSV="$DISCOVERY_DIR/${METHOD_NAME}_claim_table.csv" \
-  CHAIR_TABLE_CSV="$DISCOVERY_DIR/${METHOD_NAME}_chair_table.csv" \
-  BASELINE_CHAIR_JSON="$VAL_BASELINE_CHAIR_JSON" \
-  INTERVENTION_CHAIR_JSON="$VAL_INTERVENTION_CHAIR_JSON" \
+  CLAIM_TABLE_CSV="$TREE_DISCOVERY_CLAIM_TABLE_CSV" \
+  CHAIR_TABLE_CSV="$TREE_DISCOVERY_CHAIR_TABLE_CSV" \
+  BASELINE_CHAIR_JSON="$TREE_DISCOVERY_BASELINE_CHAIR_JSON" \
+  INTERVENTION_CHAIR_JSON="$TREE_DISCOVERY_INTERVENTION_CHAIR_JSON" \
   OUT_ROOT="$DISCOVERY_DIR/tree_controller" \
   TEACHER_MODE="$TEACHER_MODE" \
   MIN_F1_GAIN="$MIN_F1_GAIN" \
