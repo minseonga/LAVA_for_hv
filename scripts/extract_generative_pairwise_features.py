@@ -382,6 +382,27 @@ def safe_div(num: float, den: float) -> float:
     return float(num / den)
 
 
+def maybe_float(value: object) -> float:
+    s = str(value if value is not None else "").strip()
+    if s == "" or s.lower() in {"nan", "none", "null"}:
+        return 0.0
+    try:
+        out = float(s)
+    except Exception:
+        return 0.0
+    if not math.isfinite(out):
+        return 0.0
+    return float(out)
+
+
+def clamp01(value: object) -> float:
+    return float(max(0.0, min(1.0, maybe_float(value))))
+
+
+def pos(value: object) -> float:
+    return float(max(0.0, maybe_float(value)))
+
+
 def unique_set(values: Iterable[str]) -> set[str]:
     return {str(v).strip().lower() for v in values if str(v).strip()}
 
@@ -539,6 +560,106 @@ def build_pair_features(baseline_text: str, intervention_text: str) -> Dict[str,
     return row
 
 
+def add_cross_risk_features(row: Dict[str, Any]) -> None:
+    low_agreement = float(1.0 - clamp01(row.get("pair_agreement_score")))
+    low_seq_content = float(1.0 - clamp01(row.get("pair_sequence_ratio_content")))
+    low_prefix_content = float(1.0 - clamp01(row.get("pair_prefix_ratio_content")))
+    low_content_overlap = float(1.0 - clamp01(row.get("pair_content_overlap_base_frac")))
+    object_overlap_loss = float(1.0 - clamp01(row.get("pair_object_overlap_base_frac")))
+    relation_overlap_loss = float(1.0 - clamp01(row.get("pair_relation_overlap_base_frac")))
+    count_overlap_loss = float(1.0 - clamp01(row.get("pair_count_overlap_base_frac")))
+
+    object_add = pos(row.get("pair_object_add_rate"))
+    object_drop = pos(row.get("pair_object_drop_rate"))
+    object_drift = pos(row.get("pair_object_symmetric_diff_rate"))
+    relation_drop = pos(row.get("pair_relation_drop_rate"))
+    relation_drift = pos(row.get("pair_relation_symmetric_diff_rate"))
+    count_drop = pos(row.get("pair_count_drop_rate"))
+    count_drift = pos(row.get("pair_count_symmetric_diff_rate"))
+    content_drop = pos(row.get("pair_unique_content_drop_rate"))
+    content_add = pos(row.get("pair_unique_content_add_rate"))
+
+    bad_entropy_tail = pos(row.get("pair_probe_bad_shift_entropy_tail"))
+    bad_entropy_max = pos(row.get("pair_probe_bad_shift_entropy_max"))
+    bad_gap_tail = pos(row.get("pair_probe_bad_shift_gap_tail"))
+    bad_gap_min = pos(row.get("pair_probe_bad_shift_gap_min"))
+    bad_lp_tail = pos(row.get("pair_probe_bad_shift_lp_tail"))
+    bad_lp_min = pos(row.get("pair_probe_bad_shift_lp_min"))
+    token_drop = pos(row.get("pair_probe_token_drop_frac"))
+    mention_drop = pos(row.get("pair_probe_mention_drop_frac"))
+
+    object_mention_drop = pos(-maybe_float(row.get("pair_delta_probe_n_object_mentions")))
+    relation_phrase_drop = pos(-maybe_float(row.get("pair_delta_probe_n_relation_phrases")))
+    count_phrase_drop = pos(-maybe_float(row.get("pair_delta_probe_n_count_phrases")))
+    attr_phrase_drop = pos(-maybe_float(row.get("pair_delta_probe_n_attribute_phrases")))
+
+    structural_drift = float(
+        (
+            object_drift
+            + relation_drift
+            + count_drift
+            + low_seq_content
+            + low_agreement
+        )
+        / 5.0
+    )
+    collapse_score = float(
+        (
+            bad_entropy_tail
+            + bad_entropy_max
+            + bad_gap_tail
+            + bad_gap_min
+            + bad_lp_tail
+            + bad_lp_min
+            + token_drop
+            + mention_drop
+        )
+        / 8.0
+    )
+
+    cross_features = {
+        "pair_cross_low_agreement_x_bad_entropy_tail": float(low_agreement * bad_entropy_tail),
+        "pair_cross_low_agreement_x_bad_gap_tail": float(low_agreement * bad_gap_tail),
+        "pair_cross_low_seq_content_x_bad_entropy_tail": float(low_seq_content * bad_entropy_tail),
+        "pair_cross_low_seq_content_x_bad_gap_tail": float(low_seq_content * bad_gap_tail),
+        "pair_cross_low_prefix_content_x_bad_gap_tail": float(low_prefix_content * bad_gap_tail),
+        "pair_cross_content_drop_x_token_drop": float(content_drop * token_drop),
+        "pair_cross_content_drop_x_mention_drop": float(content_drop * mention_drop),
+        "pair_cross_content_drop_x_bad_entropy_tail": float(content_drop * bad_entropy_tail),
+        "pair_cross_content_drop_x_bad_gap_tail": float(content_drop * bad_gap_tail),
+        "pair_cross_content_add_x_low_agreement": float(content_add * low_agreement),
+        "pair_cross_object_add_x_low_agreement": float(object_add * low_agreement),
+        "pair_cross_object_add_x_low_seq_content": float(object_add * low_seq_content),
+        "pair_cross_object_add_x_bad_entropy_tail": float(object_add * bad_entropy_tail),
+        "pair_cross_object_add_x_bad_gap_tail": float(object_add * bad_gap_tail),
+        "pair_cross_object_add_x_object_mention_drop": float(object_add * object_mention_drop),
+        "pair_cross_object_drop_x_object_mention_drop": float(object_drop * object_mention_drop),
+        "pair_cross_object_drop_x_token_drop": float(object_drop * token_drop),
+        "pair_cross_object_drift_x_low_agreement": float(object_drift * low_agreement),
+        "pair_cross_object_drift_x_bad_gap_min": float(object_drift * bad_gap_min),
+        "pair_cross_object_overlap_loss_x_bad_gap_tail": float(object_overlap_loss * bad_gap_tail),
+        "pair_cross_relation_drop_x_relation_phrase_drop": float(relation_drop * relation_phrase_drop),
+        "pair_cross_relation_drop_x_token_drop": float(relation_drop * token_drop),
+        "pair_cross_relation_drift_x_low_seq_content": float(relation_drift * low_seq_content),
+        "pair_cross_relation_drift_x_bad_gap_tail": float(relation_drift * bad_gap_tail),
+        "pair_cross_relation_overlap_loss_x_bad_entropy_tail": float(relation_overlap_loss * bad_entropy_tail),
+        "pair_cross_count_drop_x_count_phrase_drop": float(count_drop * count_phrase_drop),
+        "pair_cross_count_drop_x_token_drop": float(count_drop * token_drop),
+        "pair_cross_count_drift_x_low_agreement": float(count_drift * low_agreement),
+        "pair_cross_count_drift_x_bad_entropy_tail": float(count_drift * bad_entropy_tail),
+        "pair_cross_count_overlap_loss_x_bad_gap_tail": float(count_overlap_loss * bad_gap_tail),
+        "pair_cross_count_overlap_loss_x_bad_entropy_tail": float(count_overlap_loss * bad_entropy_tail),
+        "pair_cross_attr_drop_x_attr_phrase_drop": float(pos(row.get("pair_attr_drop_rate")) * attr_phrase_drop),
+        "pair_cross_structural_drift_score": float(structural_drift),
+        "pair_cross_collapse_score": float(collapse_score),
+        "pair_cross_structural_x_collapse": float(structural_drift * collapse_score),
+        "pair_cross_content_overlap_loss_x_collapse": float(low_content_overlap * collapse_score),
+        "pair_cross_object_relation_joint_drift": float((object_drift + relation_drift) * low_seq_content / 2.0),
+        "pair_cross_object_count_joint_drift": float((object_drift + count_drift) * low_agreement / 2.0),
+    }
+    row.update(cross_features)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Extract GT-free pairwise caption-drift features for generative fallback control.")
     ap.add_argument("--question_file", type=str, required=True)
@@ -593,6 +714,7 @@ def main() -> None:
             n_missing_base_feature += 1
 
         row.update(build_pair_features(base_text, int_text))
+        add_cross_risk_features(row)
         rows.append(row)
         if (idx + 1) % max(1, int(args.log_every)) == 0:
             print(f"[pairwise] {idx + 1}/{len(question_rows)}")
