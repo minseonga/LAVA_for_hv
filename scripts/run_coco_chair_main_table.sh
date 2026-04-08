@@ -53,6 +53,42 @@ PAI_START_LAYER="${PAI_START_LAYER:-2}"
 PAI_END_LAYER="${PAI_END_LAYER:-32}"
 PAI_MAX_NEW_TOKENS="${PAI_MAX_NEW_TOKENS:-128}"
 
+chair_ann_ready() {
+  local root="$1"
+  [[ -f "$root/instances_val2014.json" ]] && \
+  [[ -f "$root/instances_train2014.json" ]] && \
+  [[ -f "$root/captions_val2014.json" ]] && \
+  [[ -f "$root/captions_train2014.json" ]]
+}
+
+resolve_coco_ann_root() {
+  local raw="$1"
+  local image_parent=""
+  local image_grandparent=""
+  image_parent="$(dirname "$IMAGE_FOLDER")"
+  image_grandparent="$(dirname "$image_parent")"
+  local candidates=(
+    "$raw"
+    "$raw/annotations"
+    "$raw/annotations_trainval2014"
+    "$raw/annotations_trainval2014/annotations"
+    "$image_parent/annotations"
+    "$image_parent/annotations_trainval2014/annotations"
+    "$image_grandparent/annotations"
+    "$image_grandparent/annotations_trainval2014/annotations"
+    "/home/kms/data/COCO/annotations"
+    "/home/kms/data/COCO/annotations_trainval2014/annotations"
+  )
+  local cand=""
+  for cand in "${candidates[@]}"; do
+    if [[ -n "$cand" ]] && chair_ann_ready "$cand"; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+  return 1
+}
+
 reuse_file() {
   local path="$1"
   if [[ "$REUSE_IF_EXISTS" == "true" && -f "$path" ]]; then
@@ -91,6 +127,13 @@ run_chair_eval() {
 
 mkdir -p "$OUT_ROOT"
 
+COCO_ANN_ROOT="$(resolve_coco_ann_root "$COCO_ANN_ROOT" || true)"
+if [[ -z "$COCO_ANN_ROOT" ]]; then
+  echo "[error] could not locate COCO annotation root for CHAIR eval" >&2
+  echo "[hint] set COCO_ANN_ROOT to the directory that directly contains instances_val2014.json and captions_val2014.json" >&2
+  exit 1
+fi
+
 SPLIT_DIR="$OUT_ROOT/splits"
 VAL_DIR="$OUT_ROOT/val"
 TEST_DIR="$OUT_ROOT/test"
@@ -102,6 +145,9 @@ TEST_Q="$SPLIT_DIR/test_caption_q.jsonl"
 SPLIT_SUMMARY="$SPLIT_DIR/summary.json"
 
 CHAIR_CACHE="$OUT_ROOT/chair_cache.pkl"
+
+echo "[assets] image_folder=$IMAGE_FOLDER"
+echo "[assets] coco_ann_root=$COCO_ANN_ROOT"
 
 echo "[1/6] build random COCO CHAIR splits"
 if ! reuse_file "$SPLIT_SUMMARY"; then
