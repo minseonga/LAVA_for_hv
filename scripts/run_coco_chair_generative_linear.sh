@@ -116,6 +116,8 @@ build_split_assets() {
   local intervention_chair_json="$8"
 
   local feat_csv="$split_dir/coverage_features.csv"
+  local feat_probe_csv="$split_dir/coverage_features.probe.csv"
+  local feat_probe_summary="$split_dir/coverage_features.probe.summary.json"
   local feat_summary="$split_dir/coverage_features.summary.json"
   local chair_csv="$split_dir/${METHOD_NAME}_chair_table.csv"
   local chair_summary="$split_dir/${METHOD_NAME}_chair_table.summary.json"
@@ -129,13 +131,28 @@ build_split_assets() {
       --question_file "$q_jsonl" \
       --image_folder "$IMAGE_FOLDER" \
       --baseline_pred_jsonl "$baseline_jsonl" \
-      --out_csv "$feat_csv" \
-      --out_summary_json "$feat_summary" \
+      --out_csv "$feat_probe_csv" \
+      --out_summary_json "$feat_probe_summary" \
       --model_path "$MODEL_PATH" \
       --model_base "$MODEL_BASE" \
       --conv_mode "$CONV_MODE" \
       --device cuda \
       --max_mentions "$MAX_MENTIONS" \
+      --reuse_if_exists "$REUSE_IF_EXISTS"
+  )
+
+  echo "[split:$split_name] extract pairwise features"
+  (
+    cd "$CAL_ROOT"
+    PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/extract_generative_pairwise_features.py \
+      --question_file "$q_jsonl" \
+      --baseline_pred_jsonl "$baseline_jsonl" \
+      --intervention_pred_jsonl "$intervention_jsonl" \
+      --base_features_csv "$feat_probe_csv" \
+      --out_csv "$feat_csv" \
+      --out_summary_json "$feat_summary" \
+      --baseline_pred_text_key auto \
+      --intervention_pred_text_key "$INTERVENTION_PRED_TEXT_KEY" \
       --reuse_if_exists "$REUSE_IF_EXISTS"
   )
 
