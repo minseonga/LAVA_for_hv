@@ -491,7 +491,7 @@ def pick(values: Sequence[float], idxs: Sequence[int]) -> List[float]:
     return [float(values[int(i)]) for i in idxs if 0 <= int(i) < len(values)]
 
 
-def build_feature_row(
+def build_feature_payload(
     runtime: CleanroomLlavaRuntime,
     image_path: str,
     question: str,
@@ -580,7 +580,7 @@ def build_feature_row(
     tail_tokens_after_last_mention = max(0, int(max_content_idx - last_mention_idx))
     last_mention_pos_frac = float(last_mention_idx / float(max(1, max_content_idx))) if max_content_idx > 0 else 0.0
 
-    return {
+    feature_row = {
         "id": sample_id,
         "image": image_name,
         "question": question,
@@ -621,6 +621,37 @@ def build_feature_row(
         "probe_weakest_tail_mention": str(weakest_tail["text"]),
         "probe_mention_texts": " || ".join(str(row["text"]) for row in mention_rows[:8]),
     }
+    return {
+        "row": feature_row,
+        "decoded_text": str(decoded_text),
+        "mentions": [dict(m) for m in mentions],
+        "mention_rows": [dict(m) for m in mention_rows],
+        "content_indices": [int(x) for x in ordered_content],
+        "max_content_idx": int(max_content_idx),
+        "last_mention_idx": int(last_mention_idx),
+    }
+
+
+def build_feature_row(
+    runtime: CleanroomLlavaRuntime,
+    image_path: str,
+    question: str,
+    candidate_text: str,
+    sample_id: str,
+    image_name: str,
+    *,
+    max_mentions: int,
+) -> Dict[str, Any]:
+    payload = build_feature_payload(
+        runtime=runtime,
+        image_path=image_path,
+        question=question,
+        candidate_text=candidate_text,
+        sample_id=sample_id,
+        image_name=image_name,
+        max_mentions=max_mentions,
+    )
+    return dict(payload["row"])
 
 
 def main() -> None:
