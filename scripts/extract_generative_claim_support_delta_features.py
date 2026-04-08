@@ -8,10 +8,16 @@ import os
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import torch
+import torch.nn.functional as F
+
 from extract_vga_generative_mention_features import (
-    STOPWORDS,
     build_feature_payload,
+    max_or_zero,
+    mean_or_zero,
+    min_or_zero,
     is_object_word,
+    pick,
 )
 from frgavr_cleanroom.runtime import (
     CleanroomLlavaRuntime,
@@ -19,12 +25,14 @@ from frgavr_cleanroom.runtime import (
     load_question_rows,
     parse_bool,
     safe_id,
+    select_content_indices,
     write_csv,
     write_json,
 )
 
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+")
+LEADING_DETERMINERS = {"a", "an", "the"}
 
 
 def maybe_float(value: object) -> Optional[float]:
@@ -76,73 +84,193 @@ def percentile_scores(values: Sequence[float], *, higher_better: bool) -> List[f
     return out
 
 
-def claim_head(text: str) -> str:
+def normalize_claim_phrase(text: str) -> str:
     toks = tokenize_words(text)
-    object_toks = [tok for tok in toks if is_object_word(tok)]
-    if object_toks:
-        return str(object_toks[-1])
-    content = [tok for tok in toks if tok not in STOPWORDS]
-    if content:
-        return str(content[-1])
-    return ""
+    while toks and toks[0] in LEADING_DETERMINERS:
+        toks = toks[1:]
+    return " ".join(str(tok) for tok in toks)
 
 
 def claim_key_for_mention(mention_row: Dict[str, Any]) -> str:
     kinds = {str(x).strip() for x in str(mention_row.get("kinds", "")).split("|") if str(x).strip()}
     if not ({"object_mention", "noun_phrase"} & kinds):
         return ""
-    head = claim_head(str(mention_row.get("text", "")))
-    if not head:
+    phrase = normalize_claim_phrase(str(mention_row.get("text", "")))
+    if not phrase:
         return ""
-    return f"object_core::{head}"
+    toks = tokenize_words(phrase)
+    if not toks or not any(is_object_word(tok) for tok in toks):
+        return ""
+    return f"object_phrase::{phrase}"
 
 
-def enrich_support_scores(mention_rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    rows = [dict(row) for row in mention_rows]
-    if not rows:
-        return rows
-    lp_vals = [float(maybe_float(row.get("lp_min")) or 0.0) for row in rows]
-    gap_vals = [float(maybe_float(row.get("gap_min")) or 0.0) for row in rows]
-    ent_vals = [float(maybe_float(row.get("ent_max")) or 0.0) for row in rows]
-    tail_vals = [float(maybe_float(row.get("lp_tail_gap")) or 0.0) for row in rows]
-
-    lp_pct = percentile_scores(lp_vals, higher_better=True)
-    gap_pct = percentile_scores(gap_vals, higher_better=True)
-    ent_pct = percentile_scores(ent_vals, higher_better=False)
-    tail_pct = percentile_scores(tail_vals, higher_better=True)
-
-    for idx, row in enumerate(rows):
-        row["support_lp_pct"] = float(lp_pct[idx])
-        row["support_gap_pct"] = float(gap_pct[idx])
-        row["support_ent_pct"] = float(ent_pct[idx])
-        row["support_tail_pct"] = float(tail_pct[idx])
-        row["support_score"] = float(mean([lp_pct[idx], gap_pct[idx], ent_pct[idx], tail_pct[idx]]))
-    return rows
+def zero_replay_metrics() -> Dict[str, float]:
+    return {
+        "replay_lp_mean": 0.0,
+        "replay_lp_min": 0.0,
+        "replay_gap_mean": 0.0,
+        "replay_gap_min": 0.0,
+        "replay_ent_mean": 0.0,
+        "replay_ent_max": 0.0,
+        "replay_argmax_mean": 0.0,
+        "replay_n_content_tokens": 0.0,
+        "replay_error": 1.0,
+    }
 
 
-def claim_map_from_payload(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    mention_rows = enrich_support_scores(payload.get("mention_rows", []))
+def replay_claim_metrics(
+    runtime: CleanroomLlavaRuntime,
+    image: Any,
+    question: str,
+    claim_text: str,
+) -> Dict[str, float]:
+    text = str(claim_text or "").strip()
+    if not text:
+        return zero_replay_metrics()
+
+    pack = runtime.teacher_force_candidate(
+        image=image,
+        question=question,
+        candidate_text=text,
+        output_attentions=False,
+    )
+    content_indices = select_content_indices(runtime.tokenizer, pack.cont_ids)
+
+    logits = pack.logits.to(torch.float32)
+    decision_positions = pack.decision_positions.long()
+    target_ids = pack.labels_exp[pack.cont_label_positions.long()].long()
+
+    token_logits = logits[decision_positions]
+    log_probs = F.log_softmax(token_logits, dim=-1)
+    probs = torch.softmax(token_logits, dim=-1)
+    token_ent = -(probs * log_probs).sum(dim=-1)
+    target_lp = log_probs.gather(1, target_ids.unsqueeze(-1)).squeeze(-1)
+
+    top2_vals, top2_idx = torch.topk(token_logits, k=2, dim=-1)
+    top1_logit = top2_vals[:, 0]
+    top2_logit = top2_vals[:, 1]
+    top1_id = top2_idx[:, 0]
+    target_logit = token_logits.gather(1, target_ids.unsqueeze(-1)).squeeze(-1)
+    best_other_logit = torch.where(top1_id == target_ids, top2_logit, top1_logit)
+    target_gap = target_logit - best_other_logit
+    target_is_argmax = (top1_id == target_ids).to(torch.float32)
+
+    all_indices = list(range(int(target_ids.numel())))
+    pick_indices = [int(x) for x in content_indices] if content_indices else all_indices
+    lp_vals = pick([float(x.item()) for x in target_lp], pick_indices)
+    gap_vals = pick([float(x.item()) for x in target_gap], pick_indices)
+    ent_vals = pick([float(x.item()) for x in token_ent], pick_indices)
+    argmax_vals = pick([float(x.item()) for x in target_is_argmax], pick_indices)
+
+    return {
+        "replay_lp_mean": float(mean_or_zero(lp_vals)),
+        "replay_lp_min": float(min_or_zero(lp_vals)),
+        "replay_gap_mean": float(mean_or_zero(gap_vals)),
+        "replay_gap_min": float(min_or_zero(gap_vals)),
+        "replay_ent_mean": float(mean_or_zero(ent_vals)),
+        "replay_ent_max": float(max_or_zero(ent_vals)),
+        "replay_argmax_mean": float(mean_or_zero(argmax_vals)),
+        "replay_n_content_tokens": float(len(pick_indices)),
+        "replay_error": 0.0,
+    }
+
+
+def attach_replay_support_scores(
+    claims: Dict[str, Dict[str, Any]],
+    runtime: CleanroomLlavaRuntime,
+    image: Any,
+    question: str,
+    support_cache: Dict[str, Dict[str, float]],
+) -> None:
+    if not claims:
+        return
+
+    keys = list(claims.keys())
+    raw_metrics: List[Dict[str, float]] = []
+    for key in keys:
+        replay_text = str(claims[key].get("replay_text", "")).strip()
+        metrics = support_cache.get(replay_text)
+        if metrics is None:
+            try:
+                metrics = replay_claim_metrics(runtime, image=image, question=question, claim_text=replay_text)
+            except Exception:
+                metrics = zero_replay_metrics()
+            support_cache[replay_text] = dict(metrics)
+        raw_metrics.append(dict(metrics))
+
+    lp_mean_pct = percentile_scores([float(m["replay_lp_mean"]) for m in raw_metrics], higher_better=True)
+    lp_min_pct = percentile_scores([float(m["replay_lp_min"]) for m in raw_metrics], higher_better=True)
+    gap_mean_pct = percentile_scores([float(m["replay_gap_mean"]) for m in raw_metrics], higher_better=True)
+    gap_min_pct = percentile_scores([float(m["replay_gap_min"]) for m in raw_metrics], higher_better=True)
+    ent_mean_pct = percentile_scores([float(m["replay_ent_mean"]) for m in raw_metrics], higher_better=False)
+    ent_max_pct = percentile_scores([float(m["replay_ent_max"]) for m in raw_metrics], higher_better=False)
+    argmax_pct = percentile_scores([float(m["replay_argmax_mean"]) for m in raw_metrics], higher_better=True)
+
+    for idx, key in enumerate(keys):
+        item = claims[key]
+        metrics = raw_metrics[idx]
+        item.update(metrics)
+        item["support_lp_mean_pct"] = float(lp_mean_pct[idx])
+        item["support_lp_min_pct"] = float(lp_min_pct[idx])
+        item["support_gap_mean_pct"] = float(gap_mean_pct[idx])
+        item["support_gap_min_pct"] = float(gap_min_pct[idx])
+        item["support_ent_mean_pct"] = float(ent_mean_pct[idx])
+        item["support_ent_max_pct"] = float(ent_max_pct[idx])
+        item["support_argmax_pct"] = float(argmax_pct[idx])
+        item["support_score"] = float(
+            mean(
+                [
+                    lp_mean_pct[idx],
+                    lp_min_pct[idx],
+                    gap_mean_pct[idx],
+                    gap_min_pct[idx],
+                    ent_mean_pct[idx],
+                    ent_max_pct[idx],
+                    argmax_pct[idx],
+                ]
+            )
+        )
+
+
+def claim_map_from_payload(
+    payload: Dict[str, Any],
+    *,
+    runtime: CleanroomLlavaRuntime,
+    image: Any,
+    question: str,
+    support_cache: Dict[str, Dict[str, float]],
+) -> Dict[str, Dict[str, Any]]:
+    mention_rows = [dict(row) for row in payload.get("mention_rows", [])]
     max_content_idx = int(payload.get("max_content_idx", 0))
     out: Dict[str, Dict[str, Any]] = {}
     for row in mention_rows:
         key = claim_key_for_mention(row)
         if not key:
             continue
+        replay_text = str(key.split("::", 1)[-1]).strip()
+        text = normalize_claim_phrase(str(row.get("text", ""))) or replay_text
         item = {
             "key": key,
-            "text": str(row.get("text", "")),
-            "support_score": float(row.get("support_score", 0.0)),
-            "support_lp_pct": float(row.get("support_lp_pct", 0.0)),
-            "support_gap_pct": float(row.get("support_gap_pct", 0.0)),
-            "support_ent_pct": float(row.get("support_ent_pct", 0.0)),
-            "support_tail_pct": float(row.get("support_tail_pct", 0.0)),
+            "text": text,
+            "replay_text": replay_text,
             "first_idx": int(row.get("first_idx", 0)),
             "last_idx": int(row.get("last_idx", 0)),
             "last_pos_frac": float(safe_div(float(int(row.get("last_idx", 0))), float(max(1, max_content_idx)))),
+            "n_occurrences": 1,
         }
         prev = out.get(key)
-        if prev is None or float(item["support_score"]) > float(prev["support_score"]):
+        if prev is None:
             out[key] = item
+            continue
+        prev["first_idx"] = int(min(int(prev["first_idx"]), int(item["first_idx"])))
+        prev["last_idx"] = int(max(int(prev["last_idx"]), int(item["last_idx"])))
+        prev["last_pos_frac"] = float(max(float(prev["last_pos_frac"]), float(item["last_pos_frac"])))
+        prev["n_occurrences"] = int(prev.get("n_occurrences", 1)) + 1
+        if len(str(item["text"])) > len(str(prev.get("text", ""))):
+            prev["text"] = str(item["text"])
+            prev["replay_text"] = str(item["replay_text"])
+
+    attach_replay_support_scores(out, runtime=runtime, image=image, question=question, support_cache=support_cache)
     return out
 
 
@@ -163,9 +291,26 @@ def count_ge(items: Sequence[float], threshold: float) -> int:
 def claim_delta_features(
     base_payload: Dict[str, Any],
     int_payload: Dict[str, Any],
+    *,
+    runtime: CleanroomLlavaRuntime,
+    image: Any,
+    question: str,
 ) -> Dict[str, Any]:
-    base_claims = claim_map_from_payload(base_payload)
-    int_claims = claim_map_from_payload(int_payload)
+    support_cache: Dict[str, Dict[str, float]] = {}
+    base_claims = claim_map_from_payload(
+        base_payload,
+        runtime=runtime,
+        image=image,
+        question=question,
+        support_cache=support_cache,
+    )
+    int_claims = claim_map_from_payload(
+        int_payload,
+        runtime=runtime,
+        image=image,
+        question=question,
+        support_cache=support_cache,
+    )
     base_keys = set(base_claims.keys())
     int_keys = set(int_claims.keys())
     dropped = sorted(base_keys - int_keys)
@@ -215,8 +360,13 @@ def claim_delta_features(
         "pair_claimdelta_tail_after_last_supported_drop_frac": float(max(0.0, 1.0 - strong_last_pos)),
         "pair_claimdelta_last_any_drop_pos_frac": float(any_last_pos),
         "pair_claimdelta_tail_after_last_any_drop_frac": float(max(0.0, 1.0 - any_last_pos)),
-        "pair_claimdelta_dropped_claim_heads": " || ".join(str(key.split("::", 1)[-1]) for key in dropped[:8]),
-        "pair_claimdelta_added_claim_heads": " || ".join(str(key.split("::", 1)[-1]) for key in added[:8]),
+        "pair_claimdelta_dropped_claim_heads": " || ".join(str(base_claims[key]["text"]) for key in dropped[:8]),
+        "pair_claimdelta_added_claim_heads": " || ".join(str(int_claims[key]["text"]) for key in added[:8]),
+        "pair_claimdelta_support_cache_size": int(len(support_cache)),
+        "pair_claimdelta_support_replay_errors": int(
+            sum(int(float(item.get("replay_error", 0.0)) > 0.0) for item in base_claims.values())
+            + sum(int(float(item.get("replay_error", 0.0)) > 0.0) for item in int_claims.values())
+        ),
     }
 
 
@@ -300,6 +450,7 @@ def main() -> None:
             if not os.path.isfile(image_path):
                 raise FileNotFoundError(f"Image file not found: {image_path}")
 
+            image = runtime.load_image(image_path)
             base_payload = build_feature_payload(
                 runtime=runtime,
                 image_path=image_path,
@@ -307,6 +458,7 @@ def main() -> None:
                 candidate_text=baseline_text,
                 sample_id=sample_id,
                 image_name=image_name,
+                image=image,
                 max_mentions=int(args.max_mentions),
             )
             int_payload = build_feature_payload(
@@ -316,9 +468,18 @@ def main() -> None:
                 candidate_text=intervention_text,
                 sample_id=sample_id,
                 image_name=image_name,
+                image=image,
                 max_mentions=int(args.max_mentions),
             )
-            row.update(claim_delta_features(base_payload, int_payload))
+            row.update(
+                claim_delta_features(
+                    base_payload,
+                    int_payload,
+                    runtime=runtime,
+                    image=image,
+                    question=question,
+                )
+            )
         except Exception as exc:
             n_errors += 1
             row["pair_claimdelta_error"] = str(exc)
@@ -352,6 +513,9 @@ def main() -> None:
                     "n_claimdelta_features": int(len(feature_keys)),
                     "n_errors": int(n_errors),
                     "n_missing_base_feature_rows": int(n_missing_base_feature),
+                },
+                "settings": {
+                    "claimdelta_mode": "isolated_claim_replay",
                 },
                 "outputs": {
                     "feature_csv": os.path.abspath(args.out_csv),

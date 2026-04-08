@@ -499,11 +499,12 @@ def build_feature_payload(
     sample_id: str,
     image_name: str,
     *,
+    image: Any = None,
     max_mentions: int,
 ) -> Dict[str, Any]:
-    image = runtime.load_image(image_path)
+    image_obj = image if image is not None else runtime.load_image(image_path)
     pack = runtime.teacher_force_candidate(
-        image=image,
+        image=image_obj,
         question=question,
         candidate_text=candidate_text,
         output_attentions=False,
