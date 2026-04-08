@@ -362,6 +362,10 @@ def main() -> None:
             "chair_eps": float(args.chair_eps),
             "selection_objective": str(args.selection_objective),
             "feature_specs": [{"feature": f, "direction": d, "weight": w} for (f, d), w in zip(feature_specs, weights)],
+            "feature_stats": {
+                str(f): {"mean": float(stats[f][0]), "std": float(stats[f][1])}
+                for f, _d in feature_specs
+            },
             "tau": float(best["tau"]),
         },
     )
