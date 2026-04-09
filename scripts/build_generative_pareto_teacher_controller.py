@@ -63,7 +63,14 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
             "pair_claimdelta_s_degenerate",
         ]
         return [feat for feat in ordered if feat in names]
-    if spec_norm in {"claimdelta_preserve_v3", "preserve_v3", "claimdelta_preserve_focus_v3"}:
+    if spec_norm in {
+        "claimdelta_preserve_v3",
+        "preserve_v3",
+        "claimdelta_preserve_focus_v3",
+        "claimdelta_preserve_v4",
+        "preserve_v4",
+        "claimdelta_preserve_focus_v4",
+    }:
         ordered = [
             "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085",
             "pair_claimdelta_preserve_strong_support_claim_retention_rate_ge_085",
@@ -330,6 +337,25 @@ def fit_linear_weights(
     return weights, stats, matrix, fit_summary
 
 
+def fit_uniform_weights(
+    rows: Sequence[Dict[str, Any]],
+    feature_specs: Sequence[Tuple[str, str]],
+) -> Tuple[List[float], Dict[str, Tuple[float, float]], List[List[float]], Dict[str, Any]]:
+    stats = compute_feature_stats(rows, feature_specs)
+    matrix = build_z_matrix(rows, feature_specs, stats)
+    labels = [int(base.maybe_int(row.get("teacher_fallback")) or 0) for row in rows]
+    weights = [1.0 for _ in feature_specs]
+    scores = combine_scores(matrix, weights)
+    final_auc = base.binary_auroc(scores, labels)
+    final_ap = base.binary_average_precision(scores, labels)
+    fit_summary = {
+        "teacher_auroc": None if final_auc is None else float(final_auc),
+        "teacher_ap": None if final_ap is None else float(final_ap),
+        "history": [],
+    }
+    return weights, stats, matrix, fit_summary
+
+
 def route_summary(rows: Sequence[Dict[str, Any]], routes: Sequence[str]) -> Dict[str, Any]:
     summary = base.aggregate_routes(rows, routes)
     summary["teacher_precision"] = base.safe_div(
@@ -407,6 +433,7 @@ def main() -> None:
     ap.add_argument("--top_n_pair_features", type=int, default=6)
     ap.add_argument("--weight_grid", type=str, default="0,0.25,0.5,0.75,1.0,1.5,2.0,3.0")
     ap.add_argument("--num_passes", type=int, default=3)
+    ap.add_argument("--fit_mode", type=str, default="greedy", choices=["greedy", "uniform"])
     ap.add_argument("--tau_quantiles", type=str, default="0.0,0.01,0.02,0.05,0.1,0.15,0.2,0.25,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.98,0.99,1.0")
     ap.add_argument("--constraint_mode", type=str, default="both", choices=["none", "chairi", "chairs", "both"])
     ap.add_argument("--chair_eps", type=float, default=0.0)
@@ -448,12 +475,15 @@ def main() -> None:
     weight_grid = parse_float_list(args.weight_grid)
     tau_quantiles = parse_float_list(args.tau_quantiles)
 
-    weights, stats, matrix, fit_summary = fit_linear_weights(
-        rows,
-        feature_specs,
-        weight_grid=weight_grid,
-        num_passes=int(args.num_passes),
-    )
+    if str(args.fit_mode) == "uniform":
+        weights, stats, matrix, fit_summary = fit_uniform_weights(rows, feature_specs)
+    else:
+        weights, stats, matrix, fit_summary = fit_linear_weights(
+            rows,
+            feature_specs,
+            weight_grid=weight_grid,
+            num_passes=int(args.num_passes),
+        )
     scores = combine_scores(matrix, weights)
     tau_grid = base.quantiles_to_thresholds(scores, tau_quantiles)
     baseline_summary = base.aggregate_routes(rows, ["baseline"] * len(rows))
@@ -507,6 +537,7 @@ def main() -> None:
             "policy_type": "generative_pareto_teacher_linear_v1",
             "teacher_mode": str(args.teacher_mode),
             "min_f1_gain": float(args.min_f1_gain),
+            "fit_mode": str(args.fit_mode),
             "constraint_mode": str(args.constraint_mode),
             "chair_eps": float(args.chair_eps),
             "selection_objective": str(args.selection_objective),
@@ -541,6 +572,7 @@ def main() -> None:
                 "top_n_pair_features": int(args.top_n_pair_features),
                 "weight_grid": weight_grid,
                 "num_passes": int(args.num_passes),
+                "fit_mode": str(args.fit_mode),
                 "tau_quantiles": tau_quantiles,
             },
             "counts": {
