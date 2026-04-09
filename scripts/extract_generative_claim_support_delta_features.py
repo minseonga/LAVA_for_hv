@@ -358,6 +358,48 @@ def support_weighted_recall(
     return clamp01(shared_mass / base_mass)
 
 
+def topk_support_weighted_recall(
+    base_claims: Dict[str, Dict[str, Any]],
+    int_claims: Dict[str, Dict[str, Any]],
+    *,
+    k: int,
+) -> float:
+    ranked = sorted(base_claims.items(), key=lambda kv: float(kv[1].get("support_score", 0.0)), reverse=True)
+    subset = {k0: dict(v0) for k0, v0 in ranked[: max(0, int(k))]}
+    if not subset:
+        return 1.0
+    return float(support_weighted_recall(subset, int_claims))
+
+
+def filter_claims_by_support(
+    claims: Dict[str, Dict[str, Any]],
+    *,
+    min_support: float = 0.0,
+) -> Dict[str, Dict[str, Any]]:
+    return {
+        k: dict(v)
+        for k, v in claims.items()
+        if float(v.get("support_score", 0.0)) >= float(min_support)
+    }
+
+
+def filter_claims_by_position(
+    claims: Dict[str, Dict[str, Any]],
+    *,
+    lo: float,
+    hi: float,
+) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for key, item in claims.items():
+        pos = float(item.get("last_pos_frac", 0.0))
+        if pos < float(lo):
+            continue
+        if pos >= float(hi) and float(hi) < 1.0:
+            continue
+        out[key] = dict(item)
+    return out
+
+
 def strong_retention_rate(
     base_claims: Dict[str, Dict[str, Any]],
     int_claims: Dict[str, Dict[str, Any]],
@@ -393,27 +435,46 @@ def dropped_strong_support_count(
     )
 
 
+def added_claims(
+    int_claims: Dict[str, Dict[str, Any]],
+    base_claims: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    return [dict(item) for key, item in int_claims.items() if key not in base_claims]
+
+
+def unsupported_add_summary_for_claims(
+    claims: Sequence[Dict[str, Any]],
+    *,
+    denom_claims: int,
+    unsupported_threshold: float = 0.5,
+) -> Dict[str, float]:
+    unsupported_mass = [float(1.0 - float(item.get("support_score", 0.0))) for item in claims]
+    unsupported_count = int(sum(1 for item in claims if float(item.get("support_score", 0.0)) <= float(unsupported_threshold)))
+    denom_claims_f = float(max(1, int(denom_claims)))
+    denom_added = float(max(1, len(claims)))
+    return {
+        "count": int(len(claims)),
+        "unsupported_count": int(unsupported_count),
+        "unsupported_count_rate": float(safe_div(float(unsupported_count), denom_claims_f)),
+        "unsupported_add_rate": float(safe_div(float(len(claims)), denom_claims_f)),
+        "unsupported_mass": float(sum_vals(unsupported_mass)),
+        "unsupported_mass_rate": float(safe_div(sum_vals(unsupported_mass), denom_claims_f)),
+        "unsupported_mean": float(mean(unsupported_mass)),
+        "unsupported_share_among_added": float(safe_div(float(unsupported_count), denom_added)),
+    }
+
+
 def unsupported_add_summary(
     int_claims: Dict[str, Dict[str, Any]],
     base_claims: Dict[str, Dict[str, Any]],
     *,
     unsupported_threshold: float = 0.5,
 ) -> Dict[str, float]:
-    added = [item for key, item in int_claims.items() if key not in base_claims]
-    unsupported_mass = [float(1.0 - float(item.get("support_score", 0.0))) for item in added]
-    unsupported_count = int(sum(1 for item in added if float(item.get("support_score", 0.0)) <= float(unsupported_threshold)))
-    denom_claims = float(max(1, len(int_claims)))
-    denom_added = float(max(1, len(added)))
-    return {
-        "count": int(len(added)),
-        "unsupported_count": int(unsupported_count),
-        "unsupported_count_rate": float(safe_div(float(unsupported_count), denom_claims)),
-        "unsupported_add_rate": float(safe_div(float(len(added)), denom_claims)),
-        "unsupported_mass": float(sum_vals(unsupported_mass)),
-        "unsupported_mass_rate": float(safe_div(sum_vals(unsupported_mass), denom_claims)),
-        "unsupported_mean": float(mean(unsupported_mass)),
-        "unsupported_share_among_added": float(safe_div(float(unsupported_count), denom_added)),
-    }
+    return unsupported_add_summary_for_claims(
+        added_claims(int_claims, base_claims),
+        denom_claims=len(int_claims),
+        unsupported_threshold=float(unsupported_threshold),
+    )
 
 
 def degeneration_summary(
@@ -524,11 +585,32 @@ def claim_delta_features(
 
     preserve_recall = float(support_weighted_recall(base_all_claims, int_all_claims))
     strong_preserve = float(strong_retention_rate(base_all_claims, int_all_claims))
+    very_strong_preserve = float(
+        strong_retention_rate(base_all_claims, int_all_claims, base_threshold=0.9, retain_threshold=0.75)
+    )
+    top3_preserve = float(topk_support_weighted_recall(base_all_claims, int_all_claims, k=3))
+    top5_preserve = float(topk_support_weighted_recall(base_all_claims, int_all_claims, k=5))
+    supported_recall_ge_050 = float(
+        support_weighted_recall(filter_claims_by_support(base_all_claims, min_support=0.5), int_all_claims)
+    )
+    supported_recall_ge_075 = float(
+        support_weighted_recall(filter_claims_by_support(base_all_claims, min_support=0.75), int_all_claims)
+    )
     dropped_strong_count = int(dropped_strong_support_count(base_all_claims, int_all_claims))
     base_all_mass = float(support_mass(base_all_claims))
     shared_preserved_mass = float(preserve_recall * base_all_mass)
     support_mass_drop = float(max(0.0, base_all_mass - shared_preserved_mass))
     dropped_strong_rate = float(safe_div(float(dropped_strong_count), float(max(1, sum(1 for item in base_all_claims.values() if float(item.get("support_score", 0.0)) >= 0.75)))))
+
+    early_base = filter_claims_by_position(base_all_claims, lo=0.0, hi=1.0 / 3.0)
+    mid_base = filter_claims_by_position(base_all_claims, lo=1.0 / 3.0, hi=2.0 / 3.0)
+    late_base = filter_claims_by_position(base_all_claims, lo=2.0 / 3.0, hi=1.0)
+    early_preserve = float(support_weighted_recall(early_base, int_all_claims))
+    mid_preserve = float(support_weighted_recall(mid_base, int_all_claims))
+    late_preserve = float(support_weighted_recall(late_base, int_all_claims))
+    early_drop_rate = float(max(0.0, 1.0 - early_preserve))
+    mid_drop_rate = float(max(0.0, 1.0 - mid_preserve))
+    late_drop_rate = float(max(0.0, 1.0 - late_preserve))
 
     type_retention_rates: List[float] = []
     preserve_aux: Dict[str, Any] = {}
@@ -547,22 +629,57 @@ def claim_delta_features(
     s_preserve = float(
         mean(
             [
-                1.0 - preserve_recall,
-                1.0 - strong_preserve,
+                1.0 - top3_preserve,
+                1.0 - top5_preserve,
+                1.0 - supported_recall_ge_075,
+                1.0 - very_strong_preserve,
+                early_drop_rate,
                 dropped_strong_rate,
-                1.0 - preserve_type_mean,
+                max(0.0, 1.0 - preserve_type_mean),
             ]
         )
     )
 
     add_all = unsupported_add_summary(int_all_claims, base_all_claims)
+    added_all_claims = added_claims(int_all_claims, base_all_claims)
+    tail_added_claims = [dict(item) for item in added_all_claims if float(item.get("last_pos_frac", 0.0)) >= 0.5]
+    tail_add = unsupported_add_summary_for_claims(
+        tail_added_claims,
+        denom_claims=len(int_all_claims),
+        unsupported_threshold=0.5,
+    )
+    very_unsupported_add = unsupported_add_summary_for_claims(
+        added_all_claims,
+        denom_claims=len(int_all_claims),
+        unsupported_threshold=0.25,
+    )
+    relation_added_claims = added_claims(
+        filter_claims_by_type(int_all_claims, "relation"),
+        filter_claims_by_type(base_all_claims, "relation"),
+    )
+    count_added_claims = added_claims(
+        filter_claims_by_type(int_all_claims, "count"),
+        filter_claims_by_type(base_all_claims, "count"),
+    )
+    relation_add = unsupported_add_summary_for_claims(
+        relation_added_claims,
+        denom_claims=len(int_all_claims),
+        unsupported_threshold=0.5,
+    )
+    count_add = unsupported_add_summary_for_claims(
+        count_added_claims,
+        denom_claims=len(int_all_claims),
+        unsupported_threshold=0.5,
+    )
     s_add = float(
         mean(
             [
                 float(add_all["unsupported_count_rate"]),
                 float(add_all["unsupported_mass_rate"]),
-                float(add_aux.get("pair_claimdelta_add_relation_unsupported_rate", 0.0)),
-                float(add_aux.get("pair_claimdelta_add_count_unsupported_rate", 0.0)),
+                float(tail_add["unsupported_mass_rate"]),
+                float(very_unsupported_add["unsupported_count_rate"]),
+                float(relation_add["unsupported_count_rate"]),
+                float(count_add["unsupported_count_rate"]),
             ]
         )
     )
@@ -606,15 +723,33 @@ def claim_delta_features(
         "pair_claimdelta_preserve_support_mass_drop": float(support_mass_drop),
         "pair_claimdelta_preserve_support_mass_drop_rate": float(safe_div(support_mass_drop, float(max(1.0, base_all_mass)))),
         "pair_claimdelta_preserve_support_weighted_claim_recall": float(preserve_recall),
+        "pair_claimdelta_preserve_top3_support_weighted_claim_recall": float(top3_preserve),
+        "pair_claimdelta_preserve_top5_support_weighted_claim_recall": float(top5_preserve),
+        "pair_claimdelta_preserve_support_weighted_claim_recall_ge_050": float(supported_recall_ge_050),
+        "pair_claimdelta_preserve_support_weighted_claim_recall_ge_075": float(supported_recall_ge_075),
         "pair_claimdelta_preserve_strong_support_claim_retention_rate": float(strong_preserve),
+        "pair_claimdelta_preserve_strong_support_claim_retention_rate_ge_090": float(very_strong_preserve),
         "pair_claimdelta_preserve_dropped_strong_support_claim_count": int(dropped_strong_count),
         "pair_claimdelta_preserve_dropped_strong_support_claim_rate": float(dropped_strong_rate),
         "pair_claimdelta_preserve_type_support_recall_mean": float(preserve_type_mean),
+        "pair_claimdelta_preserve_early_support_recall": float(early_preserve),
+        "pair_claimdelta_preserve_mid_support_recall": float(mid_preserve),
+        "pair_claimdelta_preserve_late_support_recall": float(late_preserve),
+        "pair_claimdelta_preserve_early_support_mass_drop_rate": float(early_drop_rate),
+        "pair_claimdelta_preserve_mid_support_mass_drop_rate": float(mid_drop_rate),
+        "pair_claimdelta_preserve_late_support_mass_drop_rate": float(late_drop_rate),
         "pair_claimdelta_add_unsupported_added_claim_count": int(add_all["unsupported_count"]),
         "pair_claimdelta_add_unsupported_added_claim_rate": float(add_all["unsupported_count_rate"]),
         "pair_claimdelta_add_unsupported_added_support_mass": float(add_all["unsupported_mass"]),
         "pair_claimdelta_add_unsupported_added_support_mass_rate": float(add_all["unsupported_mass_rate"]),
         "pair_claimdelta_add_unsupported_added_claim_share": float(add_all["unsupported_share_among_added"]),
+        "pair_claimdelta_add_very_unsupported_added_claim_rate": float(very_unsupported_add["unsupported_count_rate"]),
+        "pair_claimdelta_add_tail_unsupported_added_claim_rate": float(tail_add["unsupported_count_rate"]),
+        "pair_claimdelta_add_tail_unsupported_added_support_mass_rate": float(tail_add["unsupported_mass_rate"]),
+        "pair_claimdelta_add_relation_unsupported_added_claim_rate": float(relation_add["unsupported_count_rate"]),
+        "pair_claimdelta_add_relation_unsupported_added_support_mass_rate": float(relation_add["unsupported_mass_rate"]),
+        "pair_claimdelta_add_count_unsupported_added_claim_rate": float(count_add["unsupported_count_rate"]),
+        "pair_claimdelta_add_count_unsupported_added_support_mass_rate": float(count_add["unsupported_mass_rate"]),
         "pair_claimdelta_s_preserve": float(s_preserve),
         "pair_claimdelta_s_add": float(s_add),
         "pair_claimdelta_s_degenerate": float(degenerate["s_degenerate"]),
