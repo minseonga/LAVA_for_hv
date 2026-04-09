@@ -435,6 +435,20 @@ def dropped_strong_support_count(
     )
 
 
+def strong_claim_count(
+    claims: Dict[str, Dict[str, Any]],
+    *,
+    base_threshold: float = 0.75,
+) -> int:
+    return int(
+        sum(
+            1
+            for item in claims.values()
+            if float(item.get("support_score", 0.0)) >= float(base_threshold)
+        )
+    )
+
+
 def added_claims(
     int_claims: Dict[str, Dict[str, Any]],
     base_claims: Dict[str, Dict[str, Any]],
@@ -571,12 +585,17 @@ def claim_delta_features(
     dropped = sorted(base_keys - int_keys)
     added = sorted(int_keys - base_keys)
     shared = sorted(base_keys & int_keys)
+    shared_all = sorted(set(base_all_claims.keys()) & set(int_all_claims.keys()))
 
     dropped_supports = [float(base_claims[key]["support_score"]) for key in dropped]
     added_unsupported = [float(1.0 - float(int_claims[key]["support_score"])) for key in added]
     shared_weaken = [
         float(max(0.0, float(base_claims[key]["support_score"]) - float(int_claims[key]["support_score"])))
         for key in shared
+    ]
+    shared_weaken_all = [
+        float(max(0.0, float(base_all_claims[key]["support_score"]) - float(int_all_claims[key]["support_score"])))
+        for key in shared_all
     ]
 
     strong_dropped = [key for key in dropped if float(base_claims[key]["support_score"]) >= 0.5]
@@ -585,8 +604,14 @@ def claim_delta_features(
 
     preserve_recall = float(support_weighted_recall(base_all_claims, int_all_claims))
     strong_preserve = float(strong_retention_rate(base_all_claims, int_all_claims))
-    very_strong_preserve = float(
-        strong_retention_rate(base_all_claims, int_all_claims, base_threshold=0.9, retain_threshold=0.75)
+    strong_preserve_ge_075 = float(
+        strong_retention_rate(base_all_claims, int_all_claims, base_threshold=0.75, retain_threshold=0.75)
+    )
+    strong_preserve_ge_085 = float(
+        strong_retention_rate(base_all_claims, int_all_claims, base_threshold=0.85, retain_threshold=0.85)
+    )
+    strong_preserve_ge_090 = float(
+        strong_retention_rate(base_all_claims, int_all_claims, base_threshold=0.9, retain_threshold=0.9)
     )
     top3_preserve = float(topk_support_weighted_recall(base_all_claims, int_all_claims, k=3))
     top5_preserve = float(topk_support_weighted_recall(base_all_claims, int_all_claims, k=5))
@@ -596,11 +621,43 @@ def claim_delta_features(
     supported_recall_ge_075 = float(
         support_weighted_recall(filter_claims_by_support(base_all_claims, min_support=0.75), int_all_claims)
     )
-    dropped_strong_count = int(dropped_strong_support_count(base_all_claims, int_all_claims))
+    supported_recall_ge_085 = float(
+        support_weighted_recall(filter_claims_by_support(base_all_claims, min_support=0.85), int_all_claims)
+    )
+    supported_recall_ge_090 = float(
+        support_weighted_recall(filter_claims_by_support(base_all_claims, min_support=0.9), int_all_claims)
+    )
+    dropped_strong_count = int(dropped_strong_support_count(base_all_claims, int_all_claims, base_threshold=0.75))
+    dropped_strong_count_ge_085 = int(
+        dropped_strong_support_count(base_all_claims, int_all_claims, base_threshold=0.85)
+    )
+    dropped_strong_count_ge_090 = int(
+        dropped_strong_support_count(base_all_claims, int_all_claims, base_threshold=0.9)
+    )
     base_all_mass = float(support_mass(base_all_claims))
+    int_all_mass = float(support_mass(int_all_claims))
     shared_preserved_mass = float(preserve_recall * base_all_mass)
     support_mass_drop = float(max(0.0, base_all_mass - shared_preserved_mass))
-    dropped_strong_rate = float(safe_div(float(dropped_strong_count), float(max(1, sum(1 for item in base_all_claims.values() if float(item.get("support_score", 0.0)) >= 0.75)))))
+    support_budget_ratio_int_vs_base = float(safe_div(int_all_mass, float(max(1.0, base_all_mass))))
+    support_budget_ratio_base_vs_int = float(safe_div(base_all_mass, float(max(1.0, int_all_mass))))
+    support_budget_deficit = float(max(0.0, 1.0 - min(1.0, support_budget_ratio_int_vs_base)))
+    shared_weaken_mass = float(sum_vals(shared_weaken_all))
+    shared_weaken_mass_rate = float(safe_div(shared_weaken_mass, float(max(1.0, base_all_mass))))
+    dropped_strong_rate = float(
+        safe_div(float(dropped_strong_count), float(max(1, strong_claim_count(base_all_claims, base_threshold=0.75))))
+    )
+    dropped_strong_rate_ge_085 = float(
+        safe_div(
+            float(dropped_strong_count_ge_085),
+            float(max(1, strong_claim_count(base_all_claims, base_threshold=0.85))),
+        )
+    )
+    dropped_strong_rate_ge_090 = float(
+        safe_div(
+            float(dropped_strong_count_ge_090),
+            float(max(1, strong_claim_count(base_all_claims, base_threshold=0.9))),
+        )
+    )
 
     early_base = filter_claims_by_position(base_all_claims, lo=0.0, hi=1.0 / 3.0)
     mid_base = filter_claims_by_position(base_all_claims, lo=1.0 / 3.0, hi=2.0 / 3.0)
@@ -611,8 +668,48 @@ def claim_delta_features(
     early_drop_rate = float(max(0.0, 1.0 - early_preserve))
     mid_drop_rate = float(max(0.0, 1.0 - mid_preserve))
     late_drop_rate = float(max(0.0, 1.0 - late_preserve))
+    early_dropped_strong_rate_ge_075 = float(
+        safe_div(
+            float(dropped_strong_support_count(early_base, int_all_claims, base_threshold=0.75)),
+            float(max(1, strong_claim_count(early_base, base_threshold=0.75))),
+        )
+    )
+    mid_dropped_strong_rate_ge_075 = float(
+        safe_div(
+            float(dropped_strong_support_count(mid_base, int_all_claims, base_threshold=0.75)),
+            float(max(1, strong_claim_count(mid_base, base_threshold=0.75))),
+        )
+    )
+    late_dropped_strong_rate_ge_075 = float(
+        safe_div(
+            float(dropped_strong_support_count(late_base, int_all_claims, base_threshold=0.75)),
+            float(max(1, strong_claim_count(late_base, base_threshold=0.75))),
+        )
+    )
+    early_dropped_strong_rate_ge_090 = float(
+        safe_div(
+            float(dropped_strong_support_count(early_base, int_all_claims, base_threshold=0.9)),
+            float(max(1, strong_claim_count(early_base, base_threshold=0.9))),
+        )
+    )
+    mid_dropped_strong_rate_ge_090 = float(
+        safe_div(
+            float(dropped_strong_support_count(mid_base, int_all_claims, base_threshold=0.9)),
+            float(max(1, strong_claim_count(mid_base, base_threshold=0.9))),
+        )
+    )
+    late_dropped_strong_rate_ge_090 = float(
+        safe_div(
+            float(dropped_strong_support_count(late_base, int_all_claims, base_threshold=0.9)),
+            float(max(1, strong_claim_count(late_base, base_threshold=0.9))),
+        )
+    )
 
     type_retention_rates: List[float] = []
+    type_drop_rates: List[float] = []
+    type_strong_drop_rates_ge_075: List[float] = []
+    type_strong_drop_rates_ge_090: List[float] = []
+    type_shared_weaken_rates: List[float] = []
     preserve_aux: Dict[str, Any] = {}
     add_aux: Dict[str, Any] = {}
     for claim_type in CLAIM_TYPES_ALL:
@@ -621,21 +718,78 @@ def claim_delta_features(
         retention_t = float(support_weighted_recall(base_t, int_t))
         type_retention_rates.append(retention_t)
         preserve_aux[f"pair_claimdelta_preserve_{claim_type}_support_recall"] = retention_t
+        base_t_mass = float(support_mass(base_t))
+        int_t_mass = float(support_mass(int_t))
+        shared_t_mass = float(retention_t * base_t_mass)
+        drop_t_mass = float(max(0.0, base_t_mass - shared_t_mass))
+        drop_t_rate = float(safe_div(drop_t_mass, float(max(1.0, base_t_mass))))
+        type_drop_rates.append(drop_t_rate)
+        dropped_t_ge_075 = int(dropped_strong_support_count(base_t, int_t, base_threshold=0.75))
+        dropped_t_ge_090 = int(dropped_strong_support_count(base_t, int_t, base_threshold=0.9))
+        dropped_t_rate_ge_075 = float(
+            safe_div(float(dropped_t_ge_075), float(max(1, strong_claim_count(base_t, base_threshold=0.75))))
+        )
+        dropped_t_rate_ge_090 = float(
+            safe_div(float(dropped_t_ge_090), float(max(1, strong_claim_count(base_t, base_threshold=0.9))))
+        )
+        type_strong_drop_rates_ge_075.append(dropped_t_rate_ge_075)
+        type_strong_drop_rates_ge_090.append(dropped_t_rate_ge_090)
+        shared_t_keys = sorted(set(base_t.keys()) & set(int_t.keys()))
+        shared_t_weaken = [
+            float(max(0.0, float(base_t[key].get("support_score", 0.0)) - float(int_t[key].get("support_score", 0.0))))
+            for key in shared_t_keys
+        ]
+        shared_t_weaken_rate = float(safe_div(sum_vals(shared_t_weaken), float(max(1.0, base_t_mass))))
+        type_shared_weaken_rates.append(shared_t_weaken_rate)
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_support_mass_base"] = float(base_t_mass)
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_support_mass_int"] = float(int_t_mass)
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_support_mass_drop"] = float(drop_t_mass)
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_support_mass_drop_rate"] = float(drop_t_rate)
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_dropped_strong_support_claim_count_ge_075"] = int(
+            dropped_t_ge_075
+        )
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_dropped_strong_support_claim_rate_ge_075"] = float(
+            dropped_t_rate_ge_075
+        )
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_dropped_strong_support_claim_count_ge_090"] = int(
+            dropped_t_ge_090
+        )
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_dropped_strong_support_claim_rate_ge_090"] = float(
+            dropped_t_rate_ge_090
+        )
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_shared_weaken_mass_rate"] = float(
+            shared_t_weaken_rate
+        )
         add_t = unsupported_add_summary(int_t, base_t)
         add_aux[f"pair_claimdelta_add_{claim_type}_unsupported_rate"] = float(add_t["unsupported_count_rate"])
         add_aux[f"pair_claimdelta_add_{claim_type}_unsupported_mass_rate"] = float(add_t["unsupported_mass_rate"])
 
     preserve_type_mean = float(mean(type_retention_rates)) if type_retention_rates else 1.0
+    preserve_type_drop_max = float(max_or_zero(type_drop_rates))
+    preserve_type_strong_drop_max_ge_075 = float(max_or_zero(type_strong_drop_rates_ge_075))
+    preserve_type_strong_drop_max_ge_090 = float(max_or_zero(type_strong_drop_rates_ge_090))
+    preserve_type_shared_weaken_max = float(max_or_zero(type_shared_weaken_rates))
     s_preserve = float(
         mean(
             [
-                1.0 - top3_preserve,
-                1.0 - top5_preserve,
                 1.0 - supported_recall_ge_075,
-                1.0 - very_strong_preserve,
-                early_drop_rate,
+                1.0 - supported_recall_ge_085,
+                1.0 - supported_recall_ge_090,
+                1.0 - strong_preserve_ge_075,
+                1.0 - strong_preserve_ge_085,
+                1.0 - strong_preserve_ge_090,
                 dropped_strong_rate,
-                max(0.0, 1.0 - preserve_type_mean),
+                dropped_strong_rate_ge_085,
+                dropped_strong_rate_ge_090,
+                support_mass_drop / float(max(1.0, base_all_mass)),
+                shared_weaken_mass_rate,
+                support_budget_deficit,
+                max(early_dropped_strong_rate_ge_075, mid_dropped_strong_rate_ge_075, late_dropped_strong_rate_ge_075),
+                max(early_dropped_strong_rate_ge_090, mid_dropped_strong_rate_ge_090, late_dropped_strong_rate_ge_090),
+                preserve_type_drop_max,
+                preserve_type_strong_drop_max_ge_075,
+                preserve_type_strong_drop_max_ge_090,
+                preserve_type_shared_weaken_max,
             ]
         )
     )
@@ -719,18 +873,32 @@ def claim_delta_features(
         "pair_claimdelta_last_any_drop_pos_frac": float(any_last_pos),
         "pair_claimdelta_tail_after_last_any_drop_frac": float(max(0.0, 1.0 - any_last_pos)),
         "pair_claimdelta_preserve_support_mass_base": float(base_all_mass),
+        "pair_claimdelta_preserve_support_mass_int": float(int_all_mass),
         "pair_claimdelta_preserve_support_mass_shared": float(shared_preserved_mass),
         "pair_claimdelta_preserve_support_mass_drop": float(support_mass_drop),
         "pair_claimdelta_preserve_support_mass_drop_rate": float(safe_div(support_mass_drop, float(max(1.0, base_all_mass)))),
+        "pair_claimdelta_preserve_support_budget_ratio_int_vs_base": float(support_budget_ratio_int_vs_base),
+        "pair_claimdelta_preserve_support_budget_ratio_base_vs_int": float(support_budget_ratio_base_vs_int),
+        "pair_claimdelta_preserve_support_budget_deficit": float(support_budget_deficit),
+        "pair_claimdelta_preserve_shared_weaken_mass": float(shared_weaken_mass),
+        "pair_claimdelta_preserve_shared_weaken_mass_rate": float(shared_weaken_mass_rate),
         "pair_claimdelta_preserve_support_weighted_claim_recall": float(preserve_recall),
         "pair_claimdelta_preserve_top3_support_weighted_claim_recall": float(top3_preserve),
         "pair_claimdelta_preserve_top5_support_weighted_claim_recall": float(top5_preserve),
         "pair_claimdelta_preserve_support_weighted_claim_recall_ge_050": float(supported_recall_ge_050),
         "pair_claimdelta_preserve_support_weighted_claim_recall_ge_075": float(supported_recall_ge_075),
+        "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085": float(supported_recall_ge_085),
+        "pair_claimdelta_preserve_support_weighted_claim_recall_ge_090": float(supported_recall_ge_090),
         "pair_claimdelta_preserve_strong_support_claim_retention_rate": float(strong_preserve),
-        "pair_claimdelta_preserve_strong_support_claim_retention_rate_ge_090": float(very_strong_preserve),
+        "pair_claimdelta_preserve_strong_support_claim_retention_rate_ge_075": float(strong_preserve_ge_075),
+        "pair_claimdelta_preserve_strong_support_claim_retention_rate_ge_085": float(strong_preserve_ge_085),
+        "pair_claimdelta_preserve_strong_support_claim_retention_rate_ge_090": float(strong_preserve_ge_090),
         "pair_claimdelta_preserve_dropped_strong_support_claim_count": int(dropped_strong_count),
         "pair_claimdelta_preserve_dropped_strong_support_claim_rate": float(dropped_strong_rate),
+        "pair_claimdelta_preserve_dropped_strong_support_claim_count_ge_085": int(dropped_strong_count_ge_085),
+        "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085": float(dropped_strong_rate_ge_085),
+        "pair_claimdelta_preserve_dropped_strong_support_claim_count_ge_090": int(dropped_strong_count_ge_090),
+        "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_090": float(dropped_strong_rate_ge_090),
         "pair_claimdelta_preserve_type_support_recall_mean": float(preserve_type_mean),
         "pair_claimdelta_preserve_early_support_recall": float(early_preserve),
         "pair_claimdelta_preserve_mid_support_recall": float(mid_preserve),
@@ -738,6 +906,24 @@ def claim_delta_features(
         "pair_claimdelta_preserve_early_support_mass_drop_rate": float(early_drop_rate),
         "pair_claimdelta_preserve_mid_support_mass_drop_rate": float(mid_drop_rate),
         "pair_claimdelta_preserve_late_support_mass_drop_rate": float(late_drop_rate),
+        "pair_claimdelta_preserve_early_dropped_strong_support_claim_rate_ge_075": float(
+            early_dropped_strong_rate_ge_075
+        ),
+        "pair_claimdelta_preserve_mid_dropped_strong_support_claim_rate_ge_075": float(
+            mid_dropped_strong_rate_ge_075
+        ),
+        "pair_claimdelta_preserve_late_dropped_strong_support_claim_rate_ge_075": float(
+            late_dropped_strong_rate_ge_075
+        ),
+        "pair_claimdelta_preserve_early_dropped_strong_support_claim_rate_ge_090": float(
+            early_dropped_strong_rate_ge_090
+        ),
+        "pair_claimdelta_preserve_mid_dropped_strong_support_claim_rate_ge_090": float(
+            mid_dropped_strong_rate_ge_090
+        ),
+        "pair_claimdelta_preserve_late_dropped_strong_support_claim_rate_ge_090": float(
+            late_dropped_strong_rate_ge_090
+        ),
         "pair_claimdelta_add_unsupported_added_claim_count": int(add_all["unsupported_count"]),
         "pair_claimdelta_add_unsupported_added_claim_rate": float(add_all["unsupported_count_rate"]),
         "pair_claimdelta_add_unsupported_added_support_mass": float(add_all["unsupported_mass"]),
