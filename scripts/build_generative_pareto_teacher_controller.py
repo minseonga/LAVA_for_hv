@@ -63,6 +63,16 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
             "pair_claimdelta_s_degenerate",
         ]
         return [feat for feat in ordered if feat in names]
+    if spec_norm in {"claimdelta_preserve_v3", "preserve_v3", "claimdelta_preserve_focus_v3"}:
+        ordered = [
+            "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085",
+            "pair_claimdelta_preserve_strong_support_claim_retention_rate_ge_085",
+            "pair_claimdelta_preserve_shared_weaken_mass",
+            "pair_claimdelta_preserve_shared_weaken_mass_rate",
+            "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
+            "pair_claimdelta_preserve_relation_dropped_strong_support_claim_count_ge_075",
+        ]
+        return [feat for feat in ordered if feat in names]
     return []
 
 
