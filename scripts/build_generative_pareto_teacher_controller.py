@@ -50,6 +50,22 @@ def read_feature_cols_file(path: str) -> List[str]:
     return deduped
 
 
+def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
+    names = set()
+    for row in rows:
+        names.update(str(k) for k in row.keys())
+
+    spec_norm = str(spec or "").strip().lower()
+    if spec_norm in {"claimdelta_heads", "claimdelta_mechanism_heads", "mechanism_heads"}:
+        ordered = [
+            "pair_claimdelta_s_preserve",
+            "pair_claimdelta_s_add",
+            "pair_claimdelta_s_degenerate",
+        ]
+        return [feat for feat in ordered if feat in names]
+    return []
+
+
 def resolve_feature_cols(
     rows: Sequence[Dict[str, Any]],
     feature_cols: str,
@@ -57,6 +73,9 @@ def resolve_feature_cols(
 ) -> List[str]:
     if str(feature_cols_file or "").strip():
         return read_feature_cols_file(os.path.abspath(str(feature_cols_file)))
+    preset = preset_feature_cols(rows, str(feature_cols))
+    if preset:
+        return preset
     if str(feature_cols).strip() == "auto":
         return base.infer_probe_feature_cols(rows)
     return parse_feature_cols_spec(str(feature_cols))

@@ -33,6 +33,7 @@ from frgavr_cleanroom.runtime import (
 
 WORD_RE = re.compile(r"[A-Za-z0-9]+")
 LEADING_DETERMINERS = {"a", "an", "the"}
+CLAIM_TYPES_ALL = ("object", "relation", "count")
 
 
 def maybe_float(value: object) -> Optional[float]:
@@ -91,17 +92,35 @@ def normalize_claim_phrase(text: str) -> str:
     return " ".join(str(tok) for tok in toks)
 
 
-def claim_key_for_mention(mention_row: Dict[str, Any]) -> str:
+def claim_type_for_mention(mention_row: Dict[str, Any]) -> str:
     kinds = {str(x).strip() for x in str(mention_row.get("kinds", "")).split("|") if str(x).strip()}
-    if not ({"object_mention", "noun_phrase"} & kinds):
+    if {"object_mention", "noun_phrase"} & kinds:
+        return "object"
+    if "relation_phrase" in kinds:
+        return "relation"
+    if "count_phrase" in kinds:
+        return "count"
+    return ""
+
+
+def claim_key_for_mention(
+    mention_row: Dict[str, Any],
+    *,
+    allowed_types: Optional[Sequence[str]] = None,
+) -> str:
+    claim_type = claim_type_for_mention(mention_row)
+    if not claim_type:
+        return ""
+    if allowed_types is not None and claim_type not in {str(x) for x in allowed_types}:
         return ""
     phrase = normalize_claim_phrase(str(mention_row.get("text", "")))
     if not phrase:
         return ""
-    toks = tokenize_words(phrase)
-    if not toks or not any(is_object_word(tok) for tok in toks):
-        return ""
-    return f"object_phrase::{phrase}"
+    if claim_type == "object":
+        toks = tokenize_words(phrase)
+        if not toks or not any(is_object_word(tok) for tok in toks):
+            return ""
+    return f"{claim_type}::{phrase}"
 
 
 def zero_replay_metrics() -> Dict[str, float]:
@@ -239,18 +258,21 @@ def claim_map_from_payload(
     image: Any,
     question: str,
     support_cache: Dict[str, Dict[str, float]],
+    allowed_types: Optional[Sequence[str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     mention_rows = [dict(row) for row in payload.get("mention_rows", [])]
     max_content_idx = int(payload.get("max_content_idx", 0))
     out: Dict[str, Dict[str, Any]] = {}
     for row in mention_rows:
-        key = claim_key_for_mention(row)
+        key = claim_key_for_mention(row, allowed_types=allowed_types)
         if not key:
             continue
-        replay_text = str(key.split("::", 1)[-1]).strip()
+        claim_type, replay_text = key.split("::", 1)
+        replay_text = str(replay_text).strip()
         text = normalize_claim_phrase(str(row.get("text", ""))) or replay_text
         item = {
             "key": key,
+            "claim_type": claim_type,
             "text": text,
             "replay_text": replay_text,
             "first_idx": int(row.get("first_idx", 0)),
@@ -288,6 +310,160 @@ def count_ge(items: Sequence[float], threshold: float) -> int:
     return int(sum(1 for x in items if float(x) >= float(threshold)))
 
 
+def clamp01(value: float) -> float:
+    return float(min(1.0, max(0.0, float(value))))
+
+
+def low_support_items(claims: Sequence[Dict[str, Any]], threshold: float) -> List[Dict[str, Any]]:
+    return [c for c in claims if float(c.get("support_score", 0.0)) <= float(threshold)]
+
+
+def late_items(claims: Sequence[Dict[str, Any]], min_pos_frac: float) -> List[Dict[str, Any]]:
+    return [c for c in claims if float(c.get("last_pos_frac", 0.0)) >= float(min_pos_frac)]
+
+
+def repetition_density(claims: Sequence[Dict[str, Any]]) -> float:
+    heads = []
+    for claim in claims:
+        toks = tokenize_words(str(claim.get("text", "")))
+        if toks:
+            heads.append(str(toks[-1]))
+    if not heads:
+        return 0.0
+    uniq = len(set(heads))
+    return float(safe_div(float(len(heads) - uniq), float(max(1, len(heads)))))
+
+
+def filter_claims_by_type(claims: Dict[str, Dict[str, Any]], claim_type: str) -> Dict[str, Dict[str, Any]]:
+    return {k: dict(v) for k, v in claims.items() if str(v.get("claim_type", "")) == str(claim_type)}
+
+
+def support_mass(claims: Dict[str, Dict[str, Any]]) -> float:
+    return float(sum(float(item.get("support_score", 0.0)) for item in claims.values()))
+
+
+def support_weighted_recall(
+    base_claims: Dict[str, Dict[str, Any]],
+    int_claims: Dict[str, Dict[str, Any]],
+) -> float:
+    base_mass = support_mass(base_claims)
+    if base_mass <= 0.0:
+        return 1.0
+    shared_mass = 0.0
+    for key, base_item in base_claims.items():
+        int_item = int_claims.get(key)
+        if int_item is None:
+            continue
+        shared_mass += min(float(base_item.get("support_score", 0.0)), float(int_item.get("support_score", 0.0)))
+    return clamp01(shared_mass / base_mass)
+
+
+def strong_retention_rate(
+    base_claims: Dict[str, Dict[str, Any]],
+    int_claims: Dict[str, Dict[str, Any]],
+    *,
+    base_threshold: float = 0.75,
+    retain_threshold: float = 0.5,
+) -> float:
+    strong_keys = [k for k, item in base_claims.items() if float(item.get("support_score", 0.0)) >= float(base_threshold)]
+    if not strong_keys:
+        return 1.0
+    kept = 0
+    for key in strong_keys:
+        int_item = int_claims.get(key)
+        if int_item is None:
+            continue
+        if float(int_item.get("support_score", 0.0)) >= float(retain_threshold):
+            kept += 1
+    return clamp01(safe_div(float(kept), float(len(strong_keys))))
+
+
+def dropped_strong_support_count(
+    base_claims: Dict[str, Dict[str, Any]],
+    int_claims: Dict[str, Dict[str, Any]],
+    *,
+    base_threshold: float = 0.75,
+) -> int:
+    return int(
+        sum(
+            1
+            for key, item in base_claims.items()
+            if float(item.get("support_score", 0.0)) >= float(base_threshold) and key not in int_claims
+        )
+    )
+
+
+def unsupported_add_summary(
+    int_claims: Dict[str, Dict[str, Any]],
+    base_claims: Dict[str, Dict[str, Any]],
+    *,
+    unsupported_threshold: float = 0.5,
+) -> Dict[str, float]:
+    added = [item for key, item in int_claims.items() if key not in base_claims]
+    unsupported_mass = [float(1.0 - float(item.get("support_score", 0.0))) for item in added]
+    unsupported_count = int(sum(1 for item in added if float(item.get("support_score", 0.0)) <= float(unsupported_threshold)))
+    denom_claims = float(max(1, len(int_claims)))
+    denom_added = float(max(1, len(added)))
+    return {
+        "count": int(len(added)),
+        "unsupported_count": int(unsupported_count),
+        "unsupported_count_rate": float(safe_div(float(unsupported_count), denom_claims)),
+        "unsupported_add_rate": float(safe_div(float(len(added)), denom_claims)),
+        "unsupported_mass": float(sum_vals(unsupported_mass)),
+        "unsupported_mass_rate": float(safe_div(sum_vals(unsupported_mass), denom_claims)),
+        "unsupported_mean": float(mean(unsupported_mass)),
+        "unsupported_share_among_added": float(safe_div(float(unsupported_count), denom_added)),
+    }
+
+
+def degeneration_summary(
+    base_payload: Dict[str, Any],
+    int_payload: Dict[str, Any],
+    base_all_claims: Dict[str, Dict[str, Any]],
+    int_all_claims: Dict[str, Dict[str, Any]],
+) -> Dict[str, float]:
+    claims = list(int_all_claims.values())
+    low_claims = low_support_items(claims, 0.5)
+    late_low_claims = low_support_items(late_items(claims, 0.5), 0.5)
+    strong_claims = [c for c in claims if float(c.get("support_score", 0.0)) >= 0.75]
+    last_strong_pos = max((float(c.get("last_pos_frac", 0.0)) for c in strong_claims), default=0.0)
+
+    base_content = float(base_payload.get("probe_n_content_tokens", 0.0))
+    int_content = float(int_payload.get("probe_n_content_tokens", 0.0))
+    content_ratio = float(safe_div(int_content, float(max(1.0, base_content))))
+    base_claim_count = float(max(1, len(base_all_claims)))
+    int_claim_count = float(len(int_all_claims))
+    claim_ratio = float(safe_div(int_claim_count, base_claim_count))
+
+    tail_after_last_strong = float(max(0.0, 1.0 - last_strong_pos))
+    late_low_rate = float(safe_div(float(len(late_low_claims)), float(max(1, len(claims)))))
+    compression_deficit_content = float(max(0.0, 1.0 - min(1.0, content_ratio)))
+    compression_deficit_claims = float(max(0.0, 1.0 - min(1.0, claim_ratio)))
+    low_repetition = float(repetition_density(low_claims))
+
+    s_degenerate = float(
+        mean(
+            [
+                tail_after_last_strong,
+                late_low_rate,
+                compression_deficit_content,
+                compression_deficit_claims,
+                low_repetition,
+            ]
+        )
+    )
+    return {
+        "content_ratio_int_vs_base": float(content_ratio),
+        "claim_count_ratio_int_vs_base": float(claim_ratio),
+        "compression_deficit_content": float(compression_deficit_content),
+        "compression_deficit_claims": float(compression_deficit_claims),
+        "tail_after_last_strong_support_claim_frac": float(tail_after_last_strong),
+        "late_low_support_claim_rate": float(late_low_rate),
+        "low_support_repetition_density": float(low_repetition),
+        "s_degenerate": float(s_degenerate),
+    }
+
+
 def claim_delta_features(
     base_payload: Dict[str, Any],
     int_payload: Dict[str, Any],
@@ -303,6 +479,7 @@ def claim_delta_features(
         image=image,
         question=question,
         support_cache=support_cache,
+        allowed_types=("object",),
     )
     int_claims = claim_map_from_payload(
         int_payload,
@@ -310,6 +487,23 @@ def claim_delta_features(
         image=image,
         question=question,
         support_cache=support_cache,
+        allowed_types=("object",),
+    )
+    base_all_claims = claim_map_from_payload(
+        base_payload,
+        runtime=runtime,
+        image=image,
+        question=question,
+        support_cache=support_cache,
+        allowed_types=CLAIM_TYPES_ALL,
+    )
+    int_all_claims = claim_map_from_payload(
+        int_payload,
+        runtime=runtime,
+        image=image,
+        question=question,
+        support_cache=support_cache,
+        allowed_types=CLAIM_TYPES_ALL,
     )
     base_keys = set(base_claims.keys())
     int_keys = set(int_claims.keys())
@@ -328,7 +522,54 @@ def claim_delta_features(
     strong_last_pos = max((float(base_claims[key]["last_pos_frac"]) for key in strong_dropped), default=0.0)
     any_last_pos = max((float(base_claims[key]["last_pos_frac"]) for key in dropped), default=0.0)
 
-    return {
+    preserve_recall = float(support_weighted_recall(base_all_claims, int_all_claims))
+    strong_preserve = float(strong_retention_rate(base_all_claims, int_all_claims))
+    dropped_strong_count = int(dropped_strong_support_count(base_all_claims, int_all_claims))
+    base_all_mass = float(support_mass(base_all_claims))
+    shared_preserved_mass = float(preserve_recall * base_all_mass)
+    support_mass_drop = float(max(0.0, base_all_mass - shared_preserved_mass))
+    dropped_strong_rate = float(safe_div(float(dropped_strong_count), float(max(1, sum(1 for item in base_all_claims.values() if float(item.get("support_score", 0.0)) >= 0.75)))))
+
+    type_retention_rates: List[float] = []
+    preserve_aux: Dict[str, Any] = {}
+    add_aux: Dict[str, Any] = {}
+    for claim_type in CLAIM_TYPES_ALL:
+        base_t = filter_claims_by_type(base_all_claims, claim_type)
+        int_t = filter_claims_by_type(int_all_claims, claim_type)
+        retention_t = float(support_weighted_recall(base_t, int_t))
+        type_retention_rates.append(retention_t)
+        preserve_aux[f"pair_claimdelta_preserve_{claim_type}_support_recall"] = retention_t
+        add_t = unsupported_add_summary(int_t, base_t)
+        add_aux[f"pair_claimdelta_add_{claim_type}_unsupported_rate"] = float(add_t["unsupported_count_rate"])
+        add_aux[f"pair_claimdelta_add_{claim_type}_unsupported_mass_rate"] = float(add_t["unsupported_mass_rate"])
+
+    preserve_type_mean = float(mean(type_retention_rates)) if type_retention_rates else 1.0
+    s_preserve = float(
+        mean(
+            [
+                1.0 - preserve_recall,
+                1.0 - strong_preserve,
+                dropped_strong_rate,
+                1.0 - preserve_type_mean,
+            ]
+        )
+    )
+
+    add_all = unsupported_add_summary(int_all_claims, base_all_claims)
+    s_add = float(
+        mean(
+            [
+                float(add_all["unsupported_count_rate"]),
+                float(add_all["unsupported_mass_rate"]),
+                float(add_aux.get("pair_claimdelta_add_relation_unsupported_rate", 0.0)),
+                float(add_aux.get("pair_claimdelta_add_count_unsupported_rate", 0.0)),
+            ]
+        )
+    )
+
+    degenerate = degeneration_summary(base_payload, int_payload, base_all_claims, int_all_claims)
+
+    out = {
         "pair_claimdelta_n_base_object_claims": int(len(base_keys)),
         "pair_claimdelta_n_int_object_claims": int(len(int_keys)),
         "pair_claimdelta_n_shared_object_claims": int(len(shared)),
@@ -360,14 +601,49 @@ def claim_delta_features(
         "pair_claimdelta_tail_after_last_supported_drop_frac": float(max(0.0, 1.0 - strong_last_pos)),
         "pair_claimdelta_last_any_drop_pos_frac": float(any_last_pos),
         "pair_claimdelta_tail_after_last_any_drop_frac": float(max(0.0, 1.0 - any_last_pos)),
+        "pair_claimdelta_preserve_support_mass_base": float(base_all_mass),
+        "pair_claimdelta_preserve_support_mass_shared": float(shared_preserved_mass),
+        "pair_claimdelta_preserve_support_mass_drop": float(support_mass_drop),
+        "pair_claimdelta_preserve_support_mass_drop_rate": float(safe_div(support_mass_drop, float(max(1.0, base_all_mass)))),
+        "pair_claimdelta_preserve_support_weighted_claim_recall": float(preserve_recall),
+        "pair_claimdelta_preserve_strong_support_claim_retention_rate": float(strong_preserve),
+        "pair_claimdelta_preserve_dropped_strong_support_claim_count": int(dropped_strong_count),
+        "pair_claimdelta_preserve_dropped_strong_support_claim_rate": float(dropped_strong_rate),
+        "pair_claimdelta_preserve_type_support_recall_mean": float(preserve_type_mean),
+        "pair_claimdelta_add_unsupported_added_claim_count": int(add_all["unsupported_count"]),
+        "pair_claimdelta_add_unsupported_added_claim_rate": float(add_all["unsupported_count_rate"]),
+        "pair_claimdelta_add_unsupported_added_support_mass": float(add_all["unsupported_mass"]),
+        "pair_claimdelta_add_unsupported_added_support_mass_rate": float(add_all["unsupported_mass_rate"]),
+        "pair_claimdelta_add_unsupported_added_claim_share": float(add_all["unsupported_share_among_added"]),
+        "pair_claimdelta_s_preserve": float(s_preserve),
+        "pair_claimdelta_s_add": float(s_add),
+        "pair_claimdelta_s_degenerate": float(degenerate["s_degenerate"]),
         "pair_claimdelta_dropped_claim_heads": " || ".join(str(base_claims[key]["text"]) for key in dropped[:8]),
         "pair_claimdelta_added_claim_heads": " || ".join(str(int_claims[key]["text"]) for key in added[:8]),
         "pair_claimdelta_support_cache_size": int(len(support_cache)),
         "pair_claimdelta_support_replay_errors": int(
-            sum(int(float(item.get("replay_error", 0.0)) > 0.0) for item in base_claims.values())
-            + sum(int(float(item.get("replay_error", 0.0)) > 0.0) for item in int_claims.values())
+            sum(int(float(item.get("replay_error", 0.0)) > 0.0) for item in base_all_claims.values())
+            + sum(int(float(item.get("replay_error", 0.0)) > 0.0) for item in int_all_claims.values())
         ),
     }
+    out.update(preserve_aux)
+    out.update(add_aux)
+    out.update(
+        {
+            "pair_claimdelta_degenerate_content_token_ratio_int_vs_base": float(degenerate["content_ratio_int_vs_base"]),
+            "pair_claimdelta_degenerate_claim_count_ratio_int_vs_base": float(degenerate["claim_count_ratio_int_vs_base"]),
+            "pair_claimdelta_degenerate_content_compression_deficit": float(degenerate["compression_deficit_content"]),
+            "pair_claimdelta_degenerate_claim_compression_deficit": float(degenerate["compression_deficit_claims"]),
+            "pair_claimdelta_degenerate_tail_after_last_strong_support_claim_frac": float(
+                degenerate["tail_after_last_strong_support_claim_frac"]
+            ),
+            "pair_claimdelta_degenerate_late_low_support_claim_rate": float(degenerate["late_low_support_claim_rate"]),
+            "pair_claimdelta_degenerate_low_support_repetition_density": float(
+                degenerate["low_support_repetition_density"]
+            ),
+        }
+    )
+    return out
 
 
 def load_feature_map(path: str) -> Dict[str, Dict[str, Any]]:
