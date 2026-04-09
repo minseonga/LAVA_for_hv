@@ -23,6 +23,45 @@ def parse_float_list(spec: str) -> List[float]:
     return out
 
 
+def parse_feature_cols_spec(spec: str) -> List[str]:
+    out: List[str] = []
+    for part in str(spec or "").replace("\n", ",").split(","):
+        s = part.strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def read_feature_cols_file(path: str) -> List[str]:
+    cols: List[str] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            cols.extend(parse_feature_cols_spec(stripped))
+    deduped: List[str] = []
+    seen = set()
+    for col in cols:
+        if col in seen:
+            continue
+        seen.add(col)
+        deduped.append(col)
+    return deduped
+
+
+def resolve_feature_cols(
+    rows: Sequence[Dict[str, Any]],
+    feature_cols: str,
+    feature_cols_file: str,
+) -> List[str]:
+    if str(feature_cols_file or "").strip():
+        return read_feature_cols_file(os.path.abspath(str(feature_cols_file)))
+    if str(feature_cols).strip() == "auto":
+        return base.infer_probe_feature_cols(rows)
+    return parse_feature_cols_spec(str(feature_cols))
+
+
 def teacher_label(row: Dict[str, Any], mode: str, min_f1_gain: float = 0.0) -> int:
     bf = float(row["base_f1"])
     if1 = float(row["int_f1"])
@@ -331,6 +370,7 @@ def main() -> None:
     ap.add_argument("--teacher_mode", type=str, default="strict_pareto", choices=["strict_pareto", "chairi_pareto", "f1_only"])
     ap.add_argument("--min_f1_gain", type=float, default=0.0)
     ap.add_argument("--feature_cols", type=str, default="auto")
+    ap.add_argument("--feature_cols_file", type=str, default="")
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
     ap.add_argument("--top_n_features", type=int, default=6)
     ap.add_argument("--feature_family_mode", type=str, default="overall", choices=["overall", "balanced", "probe_only", "pair_only"])
@@ -355,7 +395,7 @@ def main() -> None:
         os.path.abspath(args.intervention_chair_json),
     )
     rows = attach_teacher_labels(rows, str(args.teacher_mode), float(args.min_f1_gain))
-    feature_cols = base.infer_probe_feature_cols(rows) if str(args.feature_cols) == "auto" else [x.strip() for x in str(args.feature_cols).split(",") if x.strip()]
+    feature_cols = resolve_feature_cols(rows, str(args.feature_cols), str(args.feature_cols_file))
     feature_metrics_all: List[Dict[str, Any]] = []
     for feat in feature_cols:
         res = evaluate_feature(rows, feat)
@@ -465,6 +505,7 @@ def main() -> None:
                 "selection_objective": str(args.selection_objective),
                 "feature_family_mode": str(args.feature_family_mode),
                 "feature_cols": feature_cols,
+                "feature_cols_file": os.path.abspath(str(args.feature_cols_file)) if str(args.feature_cols_file).strip() else "",
                 "min_feature_auroc": float(args.min_feature_auroc),
                 "top_n_features": int(args.top_n_features),
                 "top_n_probe_features": int(args.top_n_probe_features),

@@ -239,6 +239,7 @@ def main() -> None:
     ap.add_argument("--teacher_mode", type=str, default="strict_pareto", choices=["strict_pareto", "chairi_pareto", "f1_only"])
     ap.add_argument("--min_f1_gain", type=float, default=0.0)
     ap.add_argument("--feature_cols", type=str, default="auto")
+    ap.add_argument("--feature_cols_file", type=str, default="")
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
     ap.add_argument("--top_n_features", type=int, default=8)
     ap.add_argument("--feature_family_mode", type=str, default="overall", choices=["overall", "balanced", "probe_only", "pair_only"])
@@ -265,7 +266,7 @@ def main() -> None:
     )
     rows = teacher.attach_teacher_labels(rows, str(args.teacher_mode), float(args.min_f1_gain))
 
-    feature_cols = base.infer_probe_feature_cols(rows) if str(args.feature_cols) == "auto" else [x.strip() for x in str(args.feature_cols).split(",") if x.strip()]
+    feature_cols = teacher.resolve_feature_cols(rows, str(args.feature_cols), str(args.feature_cols_file))
     feature_metrics_all: List[Dict[str, Any]] = []
     for feat in feature_cols:
         res = teacher.evaluate_feature(rows, feat)
@@ -394,6 +395,7 @@ def main() -> None:
                 "selection_objective": str(args.selection_objective),
                 "feature_family_mode": str(args.feature_family_mode),
                 "feature_cols": feature_names,
+                "feature_cols_file": os.path.abspath(str(args.feature_cols_file)) if str(args.feature_cols_file).strip() else "",
                 "min_feature_auroc": float(args.min_feature_auroc),
                 "top_n_features": int(args.top_n_features),
                 "top_n_probe_features": int(args.top_n_probe_features),

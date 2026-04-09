@@ -129,6 +129,53 @@ def top_rows(rows: Sequence[Dict[str, Any]], family: Optional[str], k: int) -> L
     return subset[: max(0, int(k))]
 
 
+def budget_key(budget: float) -> str:
+    return f"b{int(round(float(budget) * 100.0)):02d}"
+
+
+def select_candidate_rows(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    budget: float,
+    min_precision: float,
+    min_recall: float,
+    min_delta_f1_minus_chairi: float,
+    max_delta_chair_i: float,
+    max_delta_chair_s: float,
+    max_candidates: int,
+) -> List[Dict[str, Any]]:
+    key = budget_key(budget)
+    selected: List[Dict[str, Any]] = []
+    for row in rows:
+        p = float(row.get(f"{key}_teacher_precision") or 0.0)
+        r = float(row.get(f"{key}_teacher_recall") or 0.0)
+        df = float(row.get(f"{key}_delta_f1_minus_chairi_vs_int") or 0.0)
+        dci = float(row.get(f"{key}_delta_chair_i_vs_int") or 0.0)
+        dcs = float(row.get(f"{key}_delta_chair_s_vs_int") or 0.0)
+        if p < float(min_precision):
+            continue
+        if r < float(min_recall):
+            continue
+        if df < float(min_delta_f1_minus_chairi):
+            continue
+        if dci > float(max_delta_chair_i):
+            continue
+        if dcs > float(max_delta_chair_s):
+            continue
+        selected.append(dict(row))
+        if int(max_candidates) > 0 and len(selected) >= int(max_candidates):
+            break
+    return selected
+
+
+def write_candidate_features(path: str, rows: Sequence[Dict[str, Any]]) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(str(row["feature"]).strip())
+            f.write("\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Mine generative fallback features by small-budget precision and aggregate lift.")
     ap.add_argument("--claim_table_csv", type=str, required=True)
@@ -144,6 +191,15 @@ def main() -> None:
     ap.add_argument("--budgets", type=str, default="0.02,0.05,0.10,0.15")
     ap.add_argument("--selection_objective", type=str, default="f1_minus_chairi", choices=["f1", "neg_chairi", "claim_utility", "f1_minus_chairi"])
     ap.add_argument("--top_k_summary", type=int, default=20)
+    ap.add_argument("--candidate_budget", type=float, default=0.05)
+    ap.add_argument("--min_candidate_precision", type=float, default=0.0)
+    ap.add_argument("--min_candidate_recall", type=float, default=0.0)
+    ap.add_argument("--min_candidate_delta_f1_minus_chairi", type=float, default=-1e9)
+    ap.add_argument("--max_candidate_delta_chair_i", type=float, default=1e9)
+    ap.add_argument("--max_candidate_delta_chair_s", type=float, default=1e9)
+    ap.add_argument("--max_candidates", type=int, default=0)
+    ap.add_argument("--candidate_out_txt", type=str, default="")
+    ap.add_argument("--candidate_out_csv", type=str, default="")
     args = ap.parse_args()
 
     claim_rows = base.read_csv_rows(args.claim_table_csv)
@@ -188,6 +244,23 @@ def main() -> None:
     base.write_csv(args.out_csv, mined_rows)
     print(f"[saved] {os.path.abspath(args.out_csv)}")
 
+    candidate_rows = select_candidate_rows(
+        mined_rows,
+        budget=float(args.candidate_budget),
+        min_precision=float(args.min_candidate_precision),
+        min_recall=float(args.min_candidate_recall),
+        min_delta_f1_minus_chairi=float(args.min_candidate_delta_f1_minus_chairi),
+        max_delta_chair_i=float(args.max_candidate_delta_chair_i),
+        max_delta_chair_s=float(args.max_candidate_delta_chair_s),
+        max_candidates=int(args.max_candidates),
+    )
+    if str(args.candidate_out_csv or "").strip():
+        base.write_csv(args.candidate_out_csv, candidate_rows)
+        print(f"[saved] {os.path.abspath(args.candidate_out_csv)}")
+    if str(args.candidate_out_txt or "").strip():
+        write_candidate_features(args.candidate_out_txt, candidate_rows)
+        print(f"[saved] {os.path.abspath(args.candidate_out_txt)}")
+
     if str(args.out_summary_json or "").strip():
         intervention = base.aggregate_routes(rows, ["method"] * len(rows))
         summary = {
@@ -202,6 +275,13 @@ def main() -> None:
                 "feature_prefix": str(args.feature_prefix or ""),
                 "budgets": budgets,
                 "selection_objective": args.selection_objective,
+                "candidate_budget": float(args.candidate_budget),
+                "min_candidate_precision": float(args.min_candidate_precision),
+                "min_candidate_recall": float(args.min_candidate_recall),
+                "min_candidate_delta_f1_minus_chairi": float(args.min_candidate_delta_f1_minus_chairi),
+                "max_candidate_delta_chair_i": float(args.max_candidate_delta_chair_i),
+                "max_candidate_delta_chair_s": float(args.max_candidate_delta_chair_s),
+                "max_candidates": int(args.max_candidates),
             },
             "counts": {
                 "n_rows": int(len(rows)),
@@ -210,6 +290,7 @@ def main() -> None:
                     float(max(1, len(rows))),
                 ),
                 "n_features": int(len(mined_rows)),
+                "n_candidates": int(len(candidate_rows)),
             },
             "intervention": {
                 "mean_chair_i": float(intervention["mean_chair_i"]),
@@ -223,6 +304,7 @@ def main() -> None:
             "top_overall": top_rows(mined_rows, None, int(args.top_k_summary)),
             "top_probe": top_rows([row for row in mined_rows if row["family"] == "probe"], None, int(args.top_k_summary)),
             "top_pair": top_rows([row for row in mined_rows if row["family"] == "pair"], None, int(args.top_k_summary)),
+            "candidate_rows": candidate_rows,
         }
         base.write_json(args.out_summary_json, summary)
         print(f"[saved] {os.path.abspath(args.out_summary_json)}")
