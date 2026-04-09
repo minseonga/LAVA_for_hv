@@ -60,6 +60,7 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
         ordered = [
             "pair_claimdelta_s_preserve",
             "pair_claimdelta_s_add",
+            "pair_claimdelta_s_rewrite",
             "pair_claimdelta_s_degenerate",
         ]
         return [feat for feat in ordered if feat in names]
@@ -204,6 +205,32 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
             "pair_claimdelta_preserve_shared_weaken_mass_rate",
             "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
             "pair_claimdelta_preserve_shared_strong_weaken_mass_rate_ge_085",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_rewrite_v1",
+        "rewrite_v1",
+        "claimdelta_rewrite_focus_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_rewrite_object_relation_recall_gap",
+            "pair_claimdelta_rewrite_relation_unsupported_add_mass_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_drop_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_substitution_score",
+            "pair_claimdelta_rewrite_count_relation_shift_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_preserve_rewrite_v1",
+        "preserve_rewrite_v1",
+        "claimdelta_collapse_rewrite_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085",
+            "pair_claimdelta_preserve_relation_dropped_strong_support_claim_count_ge_075",
+            "pair_claimdelta_preserve_shared_weaken_mass_rate",
+            "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
+            "pair_claimdelta_s_rewrite",
         ]
         return [feat for feat in ordered if feat in names]
     return []

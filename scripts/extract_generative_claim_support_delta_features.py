@@ -766,6 +766,7 @@ def claim_delta_features(
     type_shared_weaken_rates: List[float] = []
     preserve_aux: Dict[str, Any] = {}
     add_aux: Dict[str, Any] = {}
+    type_metrics: Dict[str, Dict[str, float]] = {}
     for claim_type in CLAIM_TYPES_ALL:
         base_t = filter_claims_by_type(base_all_claims, claim_type)
         int_t = filter_claims_by_type(int_all_claims, claim_type)
@@ -876,6 +877,13 @@ def claim_delta_features(
         add_t = unsupported_add_summary(int_t, base_t)
         add_aux[f"pair_claimdelta_add_{claim_type}_unsupported_rate"] = float(add_t["unsupported_count_rate"])
         add_aux[f"pair_claimdelta_add_{claim_type}_unsupported_mass_rate"] = float(add_t["unsupported_mass_rate"])
+        type_metrics[claim_type] = {
+            "retention": float(retention_t),
+            "drop_rate": float(drop_t_rate),
+            "shared_weaken_rate": float(shared_t_weaken_rate),
+            "unsupported_add_rate": float(add_t["unsupported_count_rate"]),
+            "unsupported_add_mass_rate": float(add_t["unsupported_mass_rate"]),
+        }
 
     preserve_type_mean = float(mean(type_retention_rates)) if type_retention_rates else 1.0
     preserve_type_drop_max = float(max_or_zero(type_drop_rates))
@@ -937,6 +945,66 @@ def claim_delta_features(
         count_added_claims,
         denom_claims=len(int_all_claims),
         unsupported_threshold=0.5,
+    )
+    object_retention = float(type_metrics.get("object", {}).get("retention", 1.0))
+    relation_retention = float(type_metrics.get("relation", {}).get("retention", 1.0))
+    relation_drop_rate = float(type_metrics.get("relation", {}).get("drop_rate", 0.0))
+    count_retention = float(type_metrics.get("count", {}).get("retention", 1.0))
+    coarse_preservation_gate = float(clamp01(supported_recall_ge_085 * (1.0 - dropped_strong_rate_ge_085)))
+    object_preservation_gate = float(clamp01(object_retention))
+    semantic_stability_gate = float(
+        clamp01(
+            mean(
+                [
+                    supported_recall_ge_085,
+                    1.0 - dropped_strong_rate_ge_085,
+                    1.0 - shared_weaken_mass_rate,
+                ]
+            )
+        )
+    )
+    object_relation_recall_gap = float(max(0.0, object_retention - relation_retention))
+    relation_substitution_core = float(
+        mean(
+            [
+                float(relation_add["unsupported_mass_rate"]),
+                float(relation_add["unsupported_count_rate"]),
+                float(max(0.0, 1.0 - relation_retention)),
+                float(relation_drop_rate),
+            ]
+        )
+    )
+    count_relation_shift_core = float(
+        mean(
+            [
+                float(relation_add["unsupported_count_rate"]),
+                float(count_add["unsupported_count_rate"]),
+                float(max(0.0, 1.0 - count_retention)),
+            ]
+        )
+    )
+    rewrite_relation_unsupported_add_mass_score = float(
+        coarse_preservation_gate * float(relation_add["unsupported_mass_rate"])
+    )
+    rewrite_relation_unsupported_add_rate_score = float(
+        coarse_preservation_gate * float(relation_add["unsupported_count_rate"])
+    )
+    rewrite_object_preserved_relation_drop_score = float(object_preservation_gate * relation_drop_rate)
+    rewrite_object_preserved_relation_substitution_score = float(
+        object_preservation_gate * relation_substitution_core
+    )
+    rewrite_semantic_substitution_score = float(semantic_stability_gate * relation_substitution_core)
+    rewrite_count_relation_shift_score = float(coarse_preservation_gate * count_relation_shift_core)
+    s_rewrite = float(
+        mean(
+            [
+                object_relation_recall_gap,
+                rewrite_relation_unsupported_add_mass_score,
+                rewrite_object_preserved_relation_drop_score,
+                rewrite_object_preserved_relation_substitution_score,
+                rewrite_semantic_substitution_score,
+            ]
+        )
     )
     s_add = float(
         mean(
@@ -1064,8 +1132,28 @@ def claim_delta_features(
         "pair_claimdelta_add_relation_unsupported_added_support_mass_rate": float(relation_add["unsupported_mass_rate"]),
         "pair_claimdelta_add_count_unsupported_added_claim_rate": float(count_add["unsupported_count_rate"]),
         "pair_claimdelta_add_count_unsupported_added_support_mass_rate": float(count_add["unsupported_mass_rate"]),
+        "pair_claimdelta_rewrite_coarse_preservation_gate": float(coarse_preservation_gate),
+        "pair_claimdelta_rewrite_semantic_stability_gate": float(semantic_stability_gate),
+        "pair_claimdelta_rewrite_object_relation_recall_gap": float(object_relation_recall_gap),
+        "pair_claimdelta_rewrite_relation_unsupported_add_mass_score": float(
+            rewrite_relation_unsupported_add_mass_score
+        ),
+        "pair_claimdelta_rewrite_relation_unsupported_add_rate_score": float(
+            rewrite_relation_unsupported_add_rate_score
+        ),
+        "pair_claimdelta_rewrite_object_preserved_relation_drop_score": float(
+            rewrite_object_preserved_relation_drop_score
+        ),
+        "pair_claimdelta_rewrite_object_preserved_relation_substitution_score": float(
+            rewrite_object_preserved_relation_substitution_score
+        ),
+        "pair_claimdelta_rewrite_semantic_substitution_score": float(
+            rewrite_semantic_substitution_score
+        ),
+        "pair_claimdelta_rewrite_count_relation_shift_score": float(rewrite_count_relation_shift_score),
         "pair_claimdelta_s_preserve": float(s_preserve),
         "pair_claimdelta_s_add": float(s_add),
+        "pair_claimdelta_s_rewrite": float(s_rewrite),
         "pair_claimdelta_s_degenerate": float(degenerate["s_degenerate"]),
         "pair_claimdelta_dropped_claim_heads": " || ".join(str(base_claims[key]["text"]) for key in dropped[:8]),
         "pair_claimdelta_added_claim_heads": " || ".join(str(int_claims[key]["text"]) for key in added[:8]),
