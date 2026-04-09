@@ -949,7 +949,10 @@ def claim_delta_features(
     object_retention = float(type_metrics.get("object", {}).get("retention", 1.0))
     relation_retention = float(type_metrics.get("relation", {}).get("retention", 1.0))
     relation_drop_rate = float(type_metrics.get("relation", {}).get("drop_rate", 0.0))
+    relation_shared_weaken_rate = float(type_metrics.get("relation", {}).get("shared_weaken_rate", 0.0))
     count_retention = float(type_metrics.get("count", {}).get("retention", 1.0))
+    count_drop_rate = float(type_metrics.get("count", {}).get("drop_rate", 0.0))
+    count_shared_weaken_rate = float(type_metrics.get("count", {}).get("shared_weaken_rate", 0.0))
     coarse_preservation_gate = float(clamp01(supported_recall_ge_085 * (1.0 - dropped_strong_rate_ge_085)))
     object_preservation_gate = float(clamp01(object_retention))
     semantic_stability_gate = float(
@@ -995,12 +998,49 @@ def claim_delta_features(
     )
     rewrite_semantic_substitution_score = float(semantic_stability_gate * relation_substitution_core)
     rewrite_count_relation_shift_score = float(coarse_preservation_gate * count_relation_shift_core)
+    rewrite_object_preserved_relation_weaken_score = float(object_preservation_gate * relation_shared_weaken_rate)
+    rewrite_object_preserved_detail_drop_score = float(
+        object_preservation_gate
+        * mean(
+            [
+                float(max(0.0, 1.0 - relation_retention)),
+                float(relation_shared_weaken_rate),
+                float(max(0.0, 1.0 - count_retention)),
+                float(count_shared_weaken_rate),
+            ]
+        )
+    )
+    rewrite_object_preserved_relation_detail_deficit_score = float(
+        object_preservation_gate
+        * mean(
+            [
+                float(max(0.0, 1.0 - relation_retention)),
+                float(relation_drop_rate),
+                float(relation_shared_weaken_rate),
+                float(max(0.0, 1.0 - count_retention)),
+                float(count_drop_rate),
+                float(count_shared_weaken_rate),
+            ]
+        )
+    )
+    rewrite_object_preserved_relation_detail_shutdown_score = float(
+        mean(
+            [
+                rewrite_object_preserved_relation_drop_score,
+                rewrite_object_preserved_relation_weaken_score,
+                rewrite_object_preserved_detail_drop_score,
+                rewrite_count_relation_shift_score,
+            ]
+        )
+    )
     s_rewrite = float(
         mean(
             [
                 object_relation_recall_gap,
                 rewrite_relation_unsupported_add_mass_score,
                 rewrite_object_preserved_relation_drop_score,
+                rewrite_object_preserved_relation_weaken_score,
+                rewrite_object_preserved_relation_detail_deficit_score,
                 rewrite_object_preserved_relation_substitution_score,
                 rewrite_semantic_substitution_score,
             ]
@@ -1143,6 +1183,18 @@ def claim_delta_features(
         ),
         "pair_claimdelta_rewrite_object_preserved_relation_drop_score": float(
             rewrite_object_preserved_relation_drop_score
+        ),
+        "pair_claimdelta_rewrite_object_preserved_relation_weaken_score": float(
+            rewrite_object_preserved_relation_weaken_score
+        ),
+        "pair_claimdelta_rewrite_object_preserved_detail_drop_score": float(
+            rewrite_object_preserved_detail_drop_score
+        ),
+        "pair_claimdelta_rewrite_object_preserved_relation_detail_deficit_score": float(
+            rewrite_object_preserved_relation_detail_deficit_score
+        ),
+        "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score": float(
+            rewrite_object_preserved_relation_detail_shutdown_score
         ),
         "pair_claimdelta_rewrite_object_preserved_relation_substitution_score": float(
             rewrite_object_preserved_relation_substitution_score

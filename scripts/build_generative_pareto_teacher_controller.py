@@ -221,6 +221,21 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
         ]
         return [feat for feat in ordered if feat in names]
     if spec_norm in {
+        "claimdelta_rewrite_v2",
+        "rewrite_v2",
+        "claimdelta_rewrite_focus_v2",
+        "claimdelta_mechanism_rewrite_v2",
+    }:
+        ordered = [
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_deficit_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_weaken_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_substitution_score",
+            "pair_claimdelta_rewrite_count_relation_shift_score",
+            "pair_claimdelta_rewrite_relation_unsupported_add_mass_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
         "claimdelta_preserve_rewrite_v1",
         "preserve_rewrite_v1",
         "claimdelta_collapse_rewrite_v1",
@@ -231,6 +246,21 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
             "pair_claimdelta_preserve_shared_weaken_mass_rate",
             "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
             "pair_claimdelta_s_rewrite",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_preserve_rewrite_v2",
+        "preserve_rewrite_v2",
+        "claimdelta_collapse_rewrite_v2",
+    }:
+        ordered = [
+            "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085",
+            "pair_claimdelta_preserve_relation_dropped_strong_support_claim_count_ge_075",
+            "pair_claimdelta_preserve_shared_weaken_mass_rate",
+            "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_deficit_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_substitution_score",
         ]
         return [feat for feat in ordered if feat in names]
     return []
