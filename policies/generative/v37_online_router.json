@@ -1,0 +1,67 @@
+{
+  "policy_type": "generative_teacher_union_v2",
+  "name": "v37_online_router",
+  "date": "2026-04-10",
+  "union_mode": "priority_a",
+  "expert_a_name": "collapse_proxy",
+  "expert_b_name": "rewrite_proxy_calibrated",
+  "expert_a_gate": "none",
+  "expert_b_gate": "none",
+  "expert_a_tau_offset": 0.5,
+  "expert_b_tau_offset": 0.0,
+  "expert_b_aux_feature": "pair_iharm_low_support_relation_claim_rate",
+  "expert_b_aux_direction": "high",
+  "expert_b_aux_tau": 0.3333333333333333,
+  "expert_a_policy": {
+    "policy_type": "generative_route_distill_proxy_v1",
+    "feature_specs": [
+      {
+        "feature": "probe_n_content_tokens",
+        "direction": "low",
+        "weight": 1.0
+      }
+    ],
+    "feature_stats": {
+      "probe_n_content_tokens": {
+        "mean": -100.592,
+        "std": 15.25744198743682
+      }
+    },
+    "tau": 2.136137894336199
+  },
+  "expert_b_policy": {
+    "policy_type": "generative_route_proxy_calibrated_v1",
+    "feature_specs": [
+      {
+        "feature": "pair_iharm_low_support_claim_mean",
+        "direction": "low",
+        "weight": 1.0
+      },
+      {
+        "feature": "pair_intprobe_object_diversity",
+        "direction": "low",
+        "weight": 1.0
+      }
+    ],
+    "feature_stats": {
+      "pair_iharm_low_support_claim_mean": {
+        "mean": -0.634001109650931,
+        "std": 0.022716450263278346
+      },
+      "pair_intprobe_object_diversity": {
+        "mean": -9.348,
+        "std": 1.0820794795207969
+      }
+    },
+    "tau": 1.0410282007456562,
+    "aux_feature": "pair_iharm_low_support_relation_claim_rate",
+    "aux_direction": "high",
+    "aux_tau": 0.3333333333333333
+  },
+  "reference_val_metrics": {
+    "baseline_rate": 0.054,
+    "mean_f1": 0.7839480287686181,
+    "mean_chair_i": 0.060459042719144984,
+    "mean_chair_s": 0.224
+  }
+}
