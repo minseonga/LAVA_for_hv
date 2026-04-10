@@ -76,18 +76,36 @@ def baseline_flag(score: float, tau: float, offset: float) -> bool:
     return float(score) >= float(tau) + float(offset)
 
 
+def teacher_label(row: Dict[str, Any]) -> Optional[int]:
+    if "teacher_fallback" not in row:
+        return None
+    value = row.get("teacher_fallback")
+    sval = str(value if value is not None else "").strip()
+    if sval == "" or sval.lower() in {"nan", "none", "null"}:
+        return None
+    maybe = base.maybe_int(value)
+    if maybe is None:
+        return None
+    return int(maybe)
+
+
 def teacher_precision_recall(rows: Sequence[Dict[str, Any]], routes: Sequence[str]) -> Tuple[float, float]:
     tp = 0
     n_sel = 0
     n_pos = 0
     for row, route in zip(rows, routes):
-        y = int(base.maybe_int(row.get("teacher_fallback")) or 0)
+        y_maybe = teacher_label(row)
+        if y_maybe is None:
+            continue
+        y = int(y_maybe)
         if y == 1:
             n_pos += 1
         if route == "baseline":
             n_sel += 1
             if y == 1:
                 tp += 1
+    if n_pos == 0 and not any(teacher_label(row) is not None for row in rows):
+        return float("nan"), float("nan")
     precision = base.safe_div(float(tp), float(max(1, n_sel)))
     recall = base.safe_div(float(tp), float(max(1, n_pos)))
     return float(precision), float(recall)
@@ -97,8 +115,10 @@ def route_summary(rows: Sequence[Dict[str, Any]], routes: Sequence[str]) -> Dict
     summary = base.aggregate_routes(rows, routes)
     summary.pop("decision_rows", None)
     precision, recall = teacher_precision_recall(rows, routes)
-    summary["teacher_precision"] = float(precision)
-    summary["teacher_recall"] = float(recall)
+    labels_available = not (precision != precision or recall != recall)
+    summary["teacher_labels_available"] = bool(labels_available)
+    summary["teacher_precision"] = None if not labels_available else float(precision)
+    summary["teacher_recall"] = None if not labels_available else float(recall)
     return summary
 
 
@@ -287,15 +307,26 @@ def main() -> None:
 
     baseline_summary = aggregate_without_rows(rows, ["baseline"] * len(rows))
     intervention_summary = aggregate_without_rows(rows, ["method"] * len(rows))
-    teacher_routes = [
-        "baseline" if int(base.maybe_int(row.get("teacher_fallback")) or 0) == 1 else "method"
-        for row in rows
-    ]
-    teacher_summary = route_summary(rows, teacher_routes)
-    teacher_summary["teacher_rate"] = base.safe_div(
-        float(sum(int(base.maybe_int(row.get("teacher_fallback")) or 0) for row in rows)),
-        float(max(1, len(rows))),
-    )
+    labeled_teacher_rows = [teacher_label(row) for row in rows]
+    teacher_labels_available = any(label is not None for label in labeled_teacher_rows)
+    if teacher_labels_available:
+        teacher_routes = [
+            "baseline" if int(label or 0) == 1 else "method"
+            for label in labeled_teacher_rows
+        ]
+        teacher_summary = route_summary(rows, teacher_routes)
+        teacher_summary["teacher_rate"] = base.safe_div(
+            float(sum(int(label or 0) for label in labeled_teacher_rows if label is not None)),
+            float(max(1, sum(1 for label in labeled_teacher_rows if label is not None))),
+        )
+    else:
+        teacher_summary = {
+            "n_eval": int(len(rows)),
+            "teacher_labels_available": False,
+            "teacher_precision": None,
+            "teacher_recall": None,
+            "teacher_rate": None,
+        }
 
     a_offsets = parse_float_list(args.expert_a_tau_offsets)
     b_offsets = parse_float_list(args.expert_b_tau_offsets)
@@ -435,7 +466,7 @@ def main() -> None:
             },
             "counts": {
                 "n_rows": int(len(rows)),
-                "teacher_positive_rate": teacher_summary.get("teacher_rate", 0.0),
+                "teacher_positive_rate": teacher_summary.get("teacher_rate"),
                 **best_counts,
             },
             "baseline": baseline_summary,
