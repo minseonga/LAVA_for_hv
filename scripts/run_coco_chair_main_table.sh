@@ -32,6 +32,7 @@ MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 VGA_MODEL_PATH="${VGA_MODEL_PATH:-$MODEL_PATH}"
 PAI_MODEL_PATH="${PAI_MODEL_PATH:-$MODEL_PATH}"
 
+BASELINE_MAX_NEW_TOKENS="${BASELINE_MAX_NEW_TOKENS:-128}"
 VGA_CONV_MODE="${VGA_CONV_MODE:-llava_v1}"
 VGA_MAX_GEN_LEN="${VGA_MAX_GEN_LEN:-128}"
 VGA_USE_ADD="${VGA_USE_ADD:-true}"
@@ -194,7 +195,7 @@ run_split() {
         --conv-mode llava_v1 \
         --temperature 0 \
         --num_beams 1 \
-        --max_new_tokens 128
+        --max_new_tokens "$BASELINE_MAX_NEW_TOKENS"
     )
   else
     echo "[reuse] $baseline_jsonl"
