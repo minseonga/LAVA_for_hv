@@ -280,15 +280,21 @@ SUMMARY_CSV="$SUMMARY_DIR/chair_main_table.csv"
 SUMMARY_JSON="$SUMMARY_DIR/chair_main_table.json"
 (
   cd "$CAL_ROOT"
-  "$CAL_PYTHON_BIN" scripts/summarize_chair_main_table.py \
-    --entry "baseline::val::$VAL_DIR/chair_baseline.json" \
-    --entry "vga::val::$VAL_DIR/chair_vga.json" \
-    --entry "pai::val::$VAL_DIR/chair_pai.json" \
-    --entry "baseline::test::$TEST_DIR/chair_baseline.json" \
-    --entry "vga::test::$TEST_DIR/chair_vga.json" \
-    --entry "pai::test::$TEST_DIR/chair_pai.json" \
-    --out_csv "$SUMMARY_CSV" \
+  summarize_args=(
+    --entry "baseline::val::$VAL_DIR/chair_baseline.json"
+    --entry "vga::val::$VAL_DIR/chair_vga.json"
+    --entry "baseline::test::$TEST_DIR/chair_baseline.json"
+    --entry "vga::test::$TEST_DIR/chair_vga.json"
+    --out_csv "$SUMMARY_CSV"
     --out_json "$SUMMARY_JSON"
+  )
+  if [[ "$RUN_PAI" == "1" ]]; then
+    summarize_args+=(
+      --entry "pai::val::$VAL_DIR/chair_pai.json"
+      --entry "pai::test::$TEST_DIR/chair_pai.json"
+    )
+  fi
+  "$CAL_PYTHON_BIN" scripts/summarize_chair_main_table.py "${summarize_args[@]}"
 )
 
 echo "[done] $OUT_ROOT"
