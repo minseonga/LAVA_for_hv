@@ -487,6 +487,45 @@ def compute_pack_values(pack: Any) -> Dict[str, List[float]]:
     }
 
 
+def compute_stop_values(pack: Any, tokenizer: Any) -> Dict[str, float]:
+    logits = pack.logits.to(torch.float32)
+    cont_label_positions = pack.cont_label_positions.long()
+    if int(cont_label_positions.numel()) <= 0:
+        return {
+            "stop_eos_logprob": 0.0,
+            "stop_eos_margin": 0.0,
+            "stop_eos_rank": 0.0,
+        }
+
+    eos_id = getattr(tokenizer, "eos_token_id", None)
+    next_pos = int(cont_label_positions[-1].item())
+    if eos_id is None or int(eos_id) < 0 or int(eos_id) >= int(logits.size(-1)):
+        return {
+            "stop_eos_logprob": 0.0,
+            "stop_eos_margin": 0.0,
+            "stop_eos_rank": 0.0,
+        }
+
+    next_logits = logits[next_pos]
+    log_probs = F.log_softmax(next_logits, dim=-1)
+    eos_logprob = float(log_probs[int(eos_id)].item())
+    eos_logit = float(next_logits[int(eos_id)].item())
+
+    top2_vals, top2_idx = torch.topk(next_logits, k=2, dim=-1)
+    top1_logit = float(top2_vals[0].item())
+    top2_logit = float(top2_vals[1].item())
+    top1_id = int(top2_idx[0].item())
+    best_other_logit = top2_logit if top1_id == int(eos_id) else top1_logit
+    eos_margin = float(eos_logit - best_other_logit)
+    eos_rank = float(int((next_logits > next_logits[int(eos_id)]).sum().item()) + 1)
+
+    return {
+        "stop_eos_logprob": float(eos_logprob),
+        "stop_eos_margin": float(eos_margin),
+        "stop_eos_rank": float(eos_rank),
+    }
+
+
 def pick(values: Sequence[float], idxs: Sequence[int]) -> List[float]:
     return [float(values[int(i)]) for i in idxs if 0 <= int(i) < len(values)]
 
@@ -513,6 +552,7 @@ def build_feature_payload(
     decoded_text, token_spans = decode_token_spans(runtime.tokenizer, pack.cont_ids)
     mentions, fallback_used = extract_mentions(decoded_text, max_mentions=max_mentions)
     values = compute_pack_values(pack)
+    stop_values = compute_stop_values(pack, runtime.tokenizer)
 
     mention_rows: List[Dict[str, Any]] = []
     for mention in mentions:
@@ -564,6 +604,11 @@ def build_feature_payload(
     gap_tail = pick(values["gap"], tail_slice)
     ent_head = pick(values["ent"], head_slice)
     ent_tail = pick(values["ent"], tail_slice)
+    last4_n = min(4, n_content) if n_content > 0 else 0
+    last4_slice = ordered_content[-last4_n:] if last4_n > 0 else []
+    lp_last4 = pick(values["lp"], last4_slice)
+    gap_last4 = pick(values["gap"], last4_slice)
+    ent_last4 = pick(values["ent"], last4_slice)
 
     midpoint = (n_content - 1) / 2.0 if n_content > 0 else 0.0
     first_half_object_mentions = sum(
@@ -612,6 +657,12 @@ def build_feature_payload(
         "probe_entropy_head_mean_real": float(mean_or_zero(ent_head)),
         "probe_entropy_tail_mean_real": float(mean_or_zero(ent_tail)),
         "probe_entropy_tail_minus_head_real": float(mean_or_zero(ent_tail) - mean_or_zero(ent_head)),
+        "probe_last4_lp_mean_real": float(mean_or_zero(lp_last4)),
+        "probe_last4_gap_mean_real": float(mean_or_zero(gap_last4)),
+        "probe_last4_entropy_mean_real": float(mean_or_zero(ent_last4)),
+        "probe_stop_eos_logprob_real": float(stop_values["stop_eos_logprob"]),
+        "probe_stop_eos_margin_real": float(stop_values["stop_eos_margin"]),
+        "probe_stop_eos_rank_real": float(stop_values["stop_eos_rank"]),
         "probe_mention_lp_min_real": float(weakest_lp["lp_min"]),
         "probe_mention_target_gap_min_real": float(weakest_gap["gap_min"]),
         "probe_mention_entropy_max_real": float(weakest_ent["ent_max"]),

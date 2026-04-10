@@ -47,6 +47,18 @@ def maybe_float(value: object) -> Optional[float]:
     return out
 
 
+def payload_probe_value(payload: Dict[str, Any], key: str, default: float = 0.0) -> float:
+    row = payload.get("row")
+    if isinstance(row, dict):
+        value = row.get(key, payload.get(key, default))
+    else:
+        value = payload.get(key, default)
+    out = maybe_float(value)
+    if out is None:
+        return float(default)
+    return float(out)
+
+
 def tokenize_words(text: str) -> List[str]:
     return [m.group(0).lower() for m in WORD_RE.finditer(str(text or ""))]
 
@@ -503,8 +515,8 @@ def degeneration_summary(
     strong_claims = [c for c in claims if float(c.get("support_score", 0.0)) >= 0.75]
     last_strong_pos = max((float(c.get("last_pos_frac", 0.0)) for c in strong_claims), default=0.0)
 
-    base_content = float(base_payload.get("probe_n_content_tokens", 0.0))
-    int_content = float(int_payload.get("probe_n_content_tokens", 0.0))
+    base_content = float(payload_probe_value(base_payload, "probe_n_content_tokens", 0.0))
+    int_content = float(payload_probe_value(int_payload, "probe_n_content_tokens", 0.0))
     content_ratio = float(safe_div(int_content, float(max(1.0, base_content))))
     base_claim_count = float(max(1, len(base_all_claims)))
     int_claim_count = float(len(int_all_claims))
@@ -1061,35 +1073,54 @@ def claim_delta_features(
 
     degenerate = degeneration_summary(base_payload, int_payload, base_all_claims, int_all_claims)
 
-    base_content = float(base_payload.get("probe_n_content_tokens", 0.0))
-    int_content = float(int_payload.get("probe_n_content_tokens", 0.0))
-    base_tail_tokens = float(base_payload.get("probe_tail_tokens_after_last_mention", 0.0))
-    int_tail_tokens = float(int_payload.get("probe_tail_tokens_after_last_mention", 0.0))
-    base_last_mention_pos = float(base_payload.get("probe_last_mention_pos_frac", 0.0))
-    int_last_mention_pos = float(int_payload.get("probe_last_mention_pos_frac", 0.0))
-    base_lp_tail = float(base_payload.get("probe_lp_tail_mean_real", 0.0))
-    int_lp_tail = float(int_payload.get("probe_lp_tail_mean_real", 0.0))
-    base_gap_tail = float(base_payload.get("probe_gap_tail_mean_real", 0.0))
-    int_gap_tail = float(int_payload.get("probe_gap_tail_mean_real", 0.0))
-    base_ent_tail = float(base_payload.get("probe_entropy_tail_mean_real", 0.0))
-    int_ent_tail = float(int_payload.get("probe_entropy_tail_mean_real", 0.0))
-    base_mentions_total = float(base_payload.get("probe_n_mentions_total", 0.0))
-    int_mentions_total = float(int_payload.get("probe_n_mentions_total", 0.0))
-    base_mentions_object = float(base_payload.get("probe_n_object_mentions", 0.0))
-    int_mentions_object = float(int_payload.get("probe_n_object_mentions", 0.0))
-    base_mentions_relation = float(base_payload.get("probe_n_relation_phrases", 0.0))
-    int_mentions_relation = float(int_payload.get("probe_n_relation_phrases", 0.0))
-    base_mentions_count = float(base_payload.get("probe_n_count_phrases", 0.0))
-    int_mentions_count = float(int_payload.get("probe_n_count_phrases", 0.0))
-    base_mentions_attr = float(base_payload.get("probe_n_attribute_phrases", 0.0))
-    int_mentions_attr = float(int_payload.get("probe_n_attribute_phrases", 0.0))
-    base_mention_diversity = float(base_payload.get("probe_mention_diversity", 0.0))
-    int_mention_diversity = float(int_payload.get("probe_mention_diversity", 0.0))
-    base_object_diversity = float(base_payload.get("probe_object_diversity", 0.0))
-    int_object_diversity = float(int_payload.get("probe_object_diversity", 0.0))
+    base_content = float(payload_probe_value(base_payload, "probe_n_content_tokens", 0.0))
+    int_content = float(payload_probe_value(int_payload, "probe_n_content_tokens", 0.0))
+    base_tail_tokens = float(payload_probe_value(base_payload, "probe_tail_tokens_after_last_mention", 0.0))
+    int_tail_tokens = float(payload_probe_value(int_payload, "probe_tail_tokens_after_last_mention", 0.0))
+    base_last_mention_pos = float(payload_probe_value(base_payload, "probe_last_mention_pos_frac", 0.0))
+    int_last_mention_pos = float(payload_probe_value(int_payload, "probe_last_mention_pos_frac", 0.0))
+    base_lp_tail = float(payload_probe_value(base_payload, "probe_lp_tail_mean_real", 0.0))
+    int_lp_tail = float(payload_probe_value(int_payload, "probe_lp_tail_mean_real", 0.0))
+    base_gap_tail = float(payload_probe_value(base_payload, "probe_gap_tail_mean_real", 0.0))
+    int_gap_tail = float(payload_probe_value(int_payload, "probe_gap_tail_mean_real", 0.0))
+    base_ent_tail = float(payload_probe_value(base_payload, "probe_entropy_tail_mean_real", 0.0))
+    int_ent_tail = float(payload_probe_value(int_payload, "probe_entropy_tail_mean_real", 0.0))
+    base_last4_lp = float(payload_probe_value(base_payload, "probe_last4_lp_mean_real", 0.0))
+    int_last4_lp = float(payload_probe_value(int_payload, "probe_last4_lp_mean_real", 0.0))
+    base_last4_gap = float(payload_probe_value(base_payload, "probe_last4_gap_mean_real", 0.0))
+    int_last4_gap = float(payload_probe_value(int_payload, "probe_last4_gap_mean_real", 0.0))
+    base_last4_ent = float(payload_probe_value(base_payload, "probe_last4_entropy_mean_real", 0.0))
+    int_last4_ent = float(payload_probe_value(int_payload, "probe_last4_entropy_mean_real", 0.0))
+    base_stop_eos_logprob = float(payload_probe_value(base_payload, "probe_stop_eos_logprob_real", 0.0))
+    int_stop_eos_logprob = float(payload_probe_value(int_payload, "probe_stop_eos_logprob_real", 0.0))
+    base_stop_eos_margin = float(payload_probe_value(base_payload, "probe_stop_eos_margin_real", 0.0))
+    int_stop_eos_margin = float(payload_probe_value(int_payload, "probe_stop_eos_margin_real", 0.0))
+    base_stop_eos_rank = float(payload_probe_value(base_payload, "probe_stop_eos_rank_real", 0.0))
+    int_stop_eos_rank = float(payload_probe_value(int_payload, "probe_stop_eos_rank_real", 0.0))
+    base_mentions_total = float(payload_probe_value(base_payload, "probe_n_mentions_total", 0.0))
+    int_mentions_total = float(payload_probe_value(int_payload, "probe_n_mentions_total", 0.0))
+    base_mentions_object = float(payload_probe_value(base_payload, "probe_n_object_mentions", 0.0))
+    int_mentions_object = float(payload_probe_value(int_payload, "probe_n_object_mentions", 0.0))
+    base_mentions_relation = float(payload_probe_value(base_payload, "probe_n_relation_phrases", 0.0))
+    int_mentions_relation = float(payload_probe_value(int_payload, "probe_n_relation_phrases", 0.0))
+    base_mentions_count = float(payload_probe_value(base_payload, "probe_n_count_phrases", 0.0))
+    int_mentions_count = float(payload_probe_value(int_payload, "probe_n_count_phrases", 0.0))
+    base_mentions_attr = float(payload_probe_value(base_payload, "probe_n_attribute_phrases", 0.0))
+    int_mentions_attr = float(payload_probe_value(int_payload, "probe_n_attribute_phrases", 0.0))
+    base_mention_diversity = float(payload_probe_value(base_payload, "probe_mention_diversity", 0.0))
+    int_mention_diversity = float(payload_probe_value(int_payload, "probe_mention_diversity", 0.0))
+    base_object_diversity = float(payload_probe_value(base_payload, "probe_object_diversity", 0.0))
+    int_object_diversity = float(payload_probe_value(int_payload, "probe_object_diversity", 0.0))
 
     detail_mentions_base = float(base_mentions_relation + base_mentions_count + base_mentions_attr)
     detail_mentions_int = float(int_mentions_relation + int_mentions_count + int_mentions_attr)
+
+    base_relation_claims = filter_claims_by_type(base_all_claims, "relation")
+    int_relation_claims = filter_claims_by_type(int_all_claims, "relation")
+    base_count_claims = filter_claims_by_type(base_all_claims, "count")
+    int_count_claims = filter_claims_by_type(int_all_claims, "count")
+    base_detail_budget_mass = float(support_mass(base_relation_claims) + support_mass(base_count_claims))
+    int_detail_budget_mass = float(support_mass(int_relation_claims) + support_mass(int_count_claims))
 
     mechanism_content_budget_deficit = float(max(0.0, base_content - int_content) / float(max(1.0, base_content)))
     mechanism_tail_budget_deficit = float(
@@ -1099,19 +1130,53 @@ def claim_delta_features(
     mechanism_late_confidence_drop_before_stop = float(
         mean(
             [
+                float(max(0.0, base_last4_lp - int_last4_lp)),
+                float(max(0.0, base_last4_gap - int_last4_gap)),
+                float(max(0.0, int_last4_ent - base_last4_ent)),
+            ]
+        )
+    )
+    mechanism_eos_pressure_int = float(
+        mean(
+            [
+                float(max(0.0, int_stop_eos_logprob - base_stop_eos_logprob)),
+                float(max(0.0, int_stop_eos_margin - base_stop_eos_margin)),
+                float(
+                    max(
+                        0.0,
+                        safe_div(1.0, float(max(1.0, int_stop_eos_rank)))
+                        - safe_div(1.0, float(max(1.0, base_stop_eos_rank))),
+                    )
+                ),
+            ]
+        )
+    )
+    mechanism_stop_confidence_collapse = float(
+        mean(
+            [
+                mechanism_late_confidence_drop_before_stop,
                 float(max(0.0, base_lp_tail - int_lp_tail)),
                 float(max(0.0, base_gap_tail - int_gap_tail)),
                 float(max(0.0, int_ent_tail - base_ent_tail)),
             ]
         )
     )
+    mechanism_stop_before_supported_tail_score = float(
+        mean(
+            [
+                mechanism_tail_budget_deficit,
+                mechanism_last_mention_advance,
+                late_drop_rate,
+                mechanism_eos_pressure_int,
+            ]
+        )
+    )
     mechanism_early_stop_score = float(
         mean(
             [
-                mechanism_content_budget_deficit,
-                mechanism_tail_budget_deficit,
-                mechanism_last_mention_advance,
-                mechanism_late_confidence_drop_before_stop,
+                mechanism_eos_pressure_int,
+                mechanism_stop_confidence_collapse,
+                mechanism_stop_before_supported_tail_score,
             ]
         )
     )
@@ -1134,16 +1199,31 @@ def claim_delta_features(
     mechanism_object_preserved_strong_support_budget_gap = float(
         object_preservation_gate * base_only_strong_support_rate_ge_085
     )
+    mechanism_expected_supported_claim_budget_base = float(base_detail_budget_mass)
+    mechanism_realized_detail_budget_int = float(int_detail_budget_mass)
+    mechanism_detail_budget_planning_gap = float(
+        max(0.0, base_detail_budget_mass - int_detail_budget_mass) / float(max(1.0, base_detail_budget_mass))
+    )
     mechanism_expected_supported_claim_budget_gap = float(
         max(0.0, float(len(base_all_claims)) - float(len(int_all_claims))) / float(max(1, len(base_all_claims)))
+    )
+    mechanism_object_preserved_plan_deficit = float(
+        object_preservation_gate
+        * mean(
+            [
+                mechanism_detail_budget_planning_gap,
+                mechanism_detail_mention_budget_deficit,
+                mechanism_mention_diversity_deficit,
+            ]
+        )
     )
     mechanism_planning_collapse_score = float(
         mean(
             [
+                mechanism_detail_budget_planning_gap,
                 mechanism_detail_mention_budget_deficit,
                 mechanism_mention_diversity_deficit,
-                mechanism_object_preserved_detail_budget_gap,
-                mechanism_object_preserved_strong_support_budget_gap,
+                mechanism_object_preserved_plan_deficit,
                 mechanism_expected_supported_claim_budget_gap,
             ]
         )
@@ -1157,7 +1237,7 @@ def claim_delta_features(
                 support_budget_deficit,
                 shared_weaken_mass_rate,
                 dropped_strong_rate_ge_085,
-                mechanism_detail_mention_budget_deficit,
+                mechanism_detail_budget_planning_gap,
             ]
         )
     )
@@ -1169,14 +1249,34 @@ def claim_delta_features(
     mechanism_hallsafe_support_loss_proxy = float(
         object_preservation_gate * support_loss_high * unsupported_add_risk_low
     )
+    mechanism_hallsafe_rewrite_score = float(
+        rewrite_object_preserved_relation_detail_shutdown_score
+        * unsupported_add_risk_low
+        * relation_unsupported_add_risk_low
+    )
+    mechanism_hallsafe_overprune_margin = float(
+        support_loss_high
+        + rewrite_object_preserved_relation_detail_shutdown_score
+        - float(add_all["unsupported_mass_rate"])
+    )
+    mechanism_high_object_support_low_detail_retention = float(
+        object_preservation_gate
+        * mean(
+            [
+                float(max(0.0, 1.0 - relation_retention)),
+                float(max(0.0, 1.0 - count_retention)),
+                float(relation_shared_weaken_rate),
+                float(count_shared_weaken_rate),
+            ]
+        )
+    )
     mechanism_safety_overcorrection_score = float(
         mean(
             [
                 mechanism_hallsafe_support_loss_proxy,
-                mechanism_object_preserved_safe_shutdown_score,
-                object_preservation_gate
-                * mechanism_detail_mention_budget_deficit
-                * unsupported_add_risk_low,
+                mechanism_hallsafe_rewrite_score,
+                float(max(0.0, mechanism_hallsafe_overprune_margin)),
+                mechanism_high_object_support_low_detail_retention,
             ]
         )
     )
@@ -1185,7 +1285,7 @@ def claim_delta_features(
             [
                 mechanism_early_stop_score,
                 mechanism_planning_collapse_score,
-                rewrite_object_preserved_relation_detail_shutdown_score,
+                mechanism_hallsafe_rewrite_score,
                 mechanism_safety_overcorrection_score,
             ]
         )
@@ -1339,6 +1439,13 @@ def claim_delta_features(
         "pair_claimdelta_mechanism_late_confidence_drop_before_stop": float(
             mechanism_late_confidence_drop_before_stop
         ),
+        "pair_claimdelta_mechanism_eos_pressure_int": float(mechanism_eos_pressure_int),
+        "pair_claimdelta_mechanism_stop_confidence_collapse": float(
+            mechanism_stop_confidence_collapse
+        ),
+        "pair_claimdelta_mechanism_stop_before_supported_tail_score": float(
+            mechanism_stop_before_supported_tail_score
+        ),
         "pair_claimdelta_mechanism_early_stop_score": float(mechanism_early_stop_score),
         "pair_claimdelta_mechanism_detail_mention_budget_deficit": float(
             mechanism_detail_mention_budget_deficit
@@ -1358,8 +1465,20 @@ def claim_delta_features(
         "pair_claimdelta_mechanism_object_preserved_strong_support_budget_gap": float(
             mechanism_object_preserved_strong_support_budget_gap
         ),
+        "pair_claimdelta_mechanism_expected_supported_claim_budget_base": float(
+            mechanism_expected_supported_claim_budget_base
+        ),
+        "pair_claimdelta_mechanism_realized_detail_budget_int": float(
+            mechanism_realized_detail_budget_int
+        ),
+        "pair_claimdelta_mechanism_detail_budget_planning_gap": float(
+            mechanism_detail_budget_planning_gap
+        ),
         "pair_claimdelta_mechanism_expected_supported_claim_budget_gap": float(
             mechanism_expected_supported_claim_budget_gap
+        ),
+        "pair_claimdelta_mechanism_object_preserved_plan_deficit": float(
+            mechanism_object_preserved_plan_deficit
         ),
         "pair_claimdelta_mechanism_planning_collapse_score": float(
             mechanism_planning_collapse_score
@@ -1373,6 +1492,15 @@ def claim_delta_features(
         ),
         "pair_claimdelta_mechanism_object_preserved_safe_shutdown_score": float(
             mechanism_object_preserved_safe_shutdown_score
+        ),
+        "pair_claimdelta_mechanism_hallsafe_rewrite_score": float(
+            mechanism_hallsafe_rewrite_score
+        ),
+        "pair_claimdelta_mechanism_hallsafe_overprune_margin": float(
+            mechanism_hallsafe_overprune_margin
+        ),
+        "pair_claimdelta_mechanism_high_object_support_low_detail_retention": float(
+            mechanism_high_object_support_low_detail_retention
         ),
         "pair_claimdelta_mechanism_safety_overcorrection_score": float(
             mechanism_safety_overcorrection_score

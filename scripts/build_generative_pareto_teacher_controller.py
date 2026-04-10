@@ -253,6 +253,63 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
         ]
         return [feat for feat in ordered if feat in names]
     if spec_norm in {
+        "claimdelta_earlystop_v1",
+        "earlystop_v1",
+        "claimdelta_stop_v1",
+        "stop_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_mechanism_eos_pressure_int",
+            "pair_claimdelta_mechanism_stop_confidence_collapse",
+            "pair_claimdelta_mechanism_stop_before_supported_tail_score",
+            "pair_claimdelta_mechanism_early_stop_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_planning_v1",
+        "planning_v1",
+        "claimdelta_plan_v1",
+        "plan_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_mechanism_detail_budget_planning_gap",
+            "pair_claimdelta_mechanism_object_preserved_plan_deficit",
+            "pair_claimdelta_mechanism_detail_mention_budget_deficit",
+            "pair_claimdelta_mechanism_mention_diversity_deficit",
+            "pair_claimdelta_mechanism_planning_collapse_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_hallsafe_v1",
+        "hallsafe_v1",
+        "claimdelta_safety_v1",
+        "safety_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_mechanism_hallsafe_rewrite_score",
+            "pair_claimdelta_mechanism_hallsafe_overprune_margin",
+            "pair_claimdelta_mechanism_high_object_support_low_detail_retention",
+            "pair_claimdelta_mechanism_safety_overcorrection_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_mechanism_v2",
+        "mechanism_v2",
+        "claimdelta_compression_mechanism_v2",
+        "compression_mechanism_v2",
+    }:
+        ordered = [
+            "pair_claimdelta_mechanism_eos_pressure_int",
+            "pair_claimdelta_mechanism_stop_confidence_collapse",
+            "pair_claimdelta_mechanism_stop_before_supported_tail_score",
+            "pair_claimdelta_mechanism_detail_budget_planning_gap",
+            "pair_claimdelta_mechanism_object_preserved_plan_deficit",
+            "pair_claimdelta_mechanism_hallsafe_rewrite_score",
+            "pair_claimdelta_mechanism_high_object_support_low_detail_retention",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
         "claimdelta_preserve_rewrite_v1",
         "preserve_rewrite_v1",
         "claimdelta_collapse_rewrite_v1",
@@ -295,6 +352,40 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
             "pair_claimdelta_mechanism_planning_collapse_score",
             "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
             "pair_claimdelta_mechanism_safety_overcorrection_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_preserve_hallsafe_v1",
+        "preserve_hallsafe_v1",
+        "claimdelta_collapse_hallsafe_v1",
+        "collapse_hallsafe_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085",
+            "pair_claimdelta_preserve_relation_dropped_strong_support_claim_count_ge_075",
+            "pair_claimdelta_preserve_shared_weaken_mass_rate",
+            "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
+            "pair_claimdelta_mechanism_hallsafe_rewrite_score",
+            "pair_claimdelta_mechanism_high_object_support_low_detail_retention",
+            "pair_claimdelta_mechanism_safety_overcorrection_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_preserve_mechanism_v2",
+        "preserve_mechanism_v2",
+        "claimdelta_collapse_mechanism_v2",
+        "collapse_mechanism_v2",
+    }:
+        ordered = [
+            "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085",
+            "pair_claimdelta_preserve_relation_dropped_strong_support_claim_count_ge_075",
+            "pair_claimdelta_preserve_shared_weaken_mass_rate",
+            "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
+            "pair_claimdelta_mechanism_detail_budget_planning_gap",
+            "pair_claimdelta_mechanism_object_preserved_plan_deficit",
+            "pair_claimdelta_mechanism_hallsafe_rewrite_score",
+            "pair_claimdelta_mechanism_high_object_support_low_detail_retention",
         ]
         return [feat for feat in ordered if feat in names]
     return []
