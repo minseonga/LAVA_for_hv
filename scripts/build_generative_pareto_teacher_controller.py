@@ -236,6 +236,23 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
         ]
         return [feat for feat in ordered if feat in names]
     if spec_norm in {
+        "claimdelta_compression_mechanism_v1",
+        "compression_mechanism_v1",
+        "claimdelta_mechanism_v1",
+        "mechanism_v1",
+        "claimdelta_cause_v1",
+        "cause_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_mechanism_early_stop_score",
+            "pair_claimdelta_mechanism_planning_collapse_score",
+            "pair_claimdelta_mechanism_object_preserved_detail_budget_gap",
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
+            "pair_claimdelta_mechanism_hallsafe_support_loss_proxy",
+            "pair_claimdelta_mechanism_safety_overcorrection_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
         "claimdelta_preserve_rewrite_v1",
         "preserve_rewrite_v1",
         "claimdelta_collapse_rewrite_v1",
@@ -261,6 +278,23 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
             "pair_claimdelta_rewrite_object_preserved_relation_detail_deficit_score",
             "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
             "pair_claimdelta_rewrite_object_preserved_relation_substitution_score",
+        ]
+        return [feat for feat in ordered if feat in names]
+    if spec_norm in {
+        "claimdelta_preserve_mechanism_v1",
+        "preserve_mechanism_v1",
+        "claimdelta_collapse_mechanism_v1",
+        "collapse_mechanism_v1",
+    }:
+        ordered = [
+            "pair_claimdelta_preserve_support_weighted_claim_recall_ge_085",
+            "pair_claimdelta_preserve_relation_dropped_strong_support_claim_count_ge_075",
+            "pair_claimdelta_preserve_shared_weaken_mass_rate",
+            "pair_claimdelta_preserve_dropped_strong_support_claim_rate_ge_085",
+            "pair_claimdelta_mechanism_early_stop_score",
+            "pair_claimdelta_mechanism_planning_collapse_score",
+            "pair_claimdelta_rewrite_object_preserved_relation_detail_shutdown_score",
+            "pair_claimdelta_mechanism_safety_overcorrection_score",
         ]
         return [feat for feat in ordered if feat in names]
     return []
