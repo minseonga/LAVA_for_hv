@@ -88,6 +88,7 @@ def main() -> None:
     ap.add_argument("--baseline_chair_json", type=str, required=True)
     ap.add_argument("--intervention_chair_json", type=str, required=True)
     ap.add_argument("--selected_policy_json", type=str, required=True)
+    ap.add_argument("--subpolicy_key", type=str, default="")
     ap.add_argument("--out_dir", type=str, required=True)
     args = ap.parse_args()
 
@@ -101,6 +102,12 @@ def main() -> None:
     )
     with open(os.path.abspath(args.selected_policy_json), "r", encoding="utf-8") as f:
         policy = json.load(f)
+    subpolicy_key = str(args.subpolicy_key or "").strip()
+    if subpolicy_key:
+        nested = policy.get(subpolicy_key)
+        if not isinstance(nested, dict):
+            raise ValueError(f"subpolicy_key not found or not a JSON object: {subpolicy_key}")
+        policy = dict(nested)
 
     routes, scores, aux_values = build_routes(rows, policy)
     summary = base.aggregate_routes(rows, routes)
@@ -147,6 +154,7 @@ def main() -> None:
                 "baseline_chair_json": os.path.abspath(args.baseline_chair_json),
                 "intervention_chair_json": os.path.abspath(args.intervention_chair_json),
                 "selected_policy_json": os.path.abspath(args.selected_policy_json),
+                "subpolicy_key": subpolicy_key,
             },
             "policy": {
                 "policy_type": policy_type,
