@@ -303,6 +303,9 @@ def evaluate_specs(
     chair_i_eps_vs_int: float,
     chair_s_eps_vs_int: float,
     min_recall_gain_vs_int: float,
+    require_f1_nondecrease_vs_int: bool,
+    min_teacher_precision: float,
+    min_teacher_recall: float,
 ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]], Dict[str, Dict[str, float]]]:
     scores, stats = build_scores(rows, specs)
     valid_scores = [float(s) for s in scores if s is not None and math.isfinite(float(s))]
@@ -318,6 +321,8 @@ def evaluate_specs(
         route_by_obj_id = {id(row): route for row, route in zip(rows, routes)}
         result = oracle.aggregate_counts(rows, lambda row, route_by_obj_id=route_by_obj_id: route_by_obj_id[id(row)])
         tp = sum(labels[idx] for idx in selected_idx)
+        teacher_precision = oracle.safe_div(float(tp), float(len(selected_idx)))
+        teacher_recall = oracle.safe_div(float(tp), float(n_pos))
         result.update(
             {
                 "features": " + ".join(feature for feature, _ in specs),
@@ -327,8 +332,8 @@ def evaluate_specs(
                 ),
                 "n_features": int(len(specs)),
                 "tau": float(tau),
-                "teacher_precision": oracle.safe_div(float(tp), float(len(selected_idx))),
-                "teacher_recall": oracle.safe_div(float(tp), float(n_pos)),
+                "teacher_precision": teacher_precision,
+                "teacher_recall": teacher_recall,
                 "delta_chair_i_vs_int": float(result["chair_i"] - intervention["chair_i"]),
                 "delta_chair_s_vs_int": float(result["chair_s"] - intervention["chair_s"]),
                 "delta_recall_vs_int": float(result["recall"] - intervention["recall"]),
@@ -338,6 +343,9 @@ def evaluate_specs(
                     and result["chair_i"] <= float(intervention["chair_i"] + chair_i_eps_vs_int)
                     and result["chair_s"] <= float(intervention["chair_s"] + chair_s_eps_vs_int)
                     and result["recall"] >= float(intervention["recall"] + min_recall_gain_vs_int)
+                    and (not require_f1_nondecrease_vs_int or result["f1"] >= float(intervention["f1"] - 1e-12))
+                    and teacher_precision >= float(min_teacher_precision)
+                    and teacher_recall >= float(min_teacher_recall)
                 ),
             }
         )
@@ -412,6 +420,9 @@ def evaluate_gated_specs(
     chair_i_eps_vs_int: float,
     chair_s_eps_vs_int: float,
     min_recall_gain_vs_int: float,
+    require_f1_nondecrease_vs_int: bool,
+    min_teacher_precision: float,
+    min_teacher_recall: float,
 ) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     labels = [int(row.get("teacher_positive") or 0) for row in rows]
     n_pos = sum(labels)
@@ -445,6 +456,8 @@ def evaluate_gated_specs(
             route_by_obj_id = {id(row): route for row, route in zip(rows, routes)}
             result = oracle.aggregate_counts(rows, lambda row, route_by_obj_id=route_by_obj_id: route_by_obj_id[id(row)])
             tp = sum(labels[idx] for idx in selected_idx)
+            teacher_precision = oracle.safe_div(float(tp), float(len(selected_idx)))
+            teacher_recall = oracle.safe_div(float(tp), float(n_pos))
             result.update(
                 {
                     "anchor_feature": anchor_spec[0],
@@ -453,8 +466,8 @@ def evaluate_gated_specs(
                     "gate_direction": "" if gate_spec is None else gate_spec[1],
                     "anchor_tau": float(anchor_tau),
                     "gate_tau": None if gate_spec is None else float(gate_tau),
-                    "teacher_precision": oracle.safe_div(float(tp), float(len(selected_idx))),
-                    "teacher_recall": oracle.safe_div(float(tp), float(n_pos)),
+                    "teacher_precision": teacher_precision,
+                    "teacher_recall": teacher_recall,
                     "delta_chair_i_vs_int": float(result["chair_i"] - intervention["chair_i"]),
                     "delta_chair_s_vs_int": float(result["chair_s"] - intervention["chair_s"]),
                     "delta_recall_vs_int": float(result["recall"] - intervention["recall"]),
@@ -464,6 +477,9 @@ def evaluate_gated_specs(
                         and result["chair_i"] <= float(intervention["chair_i"] + chair_i_eps_vs_int)
                         and result["chair_s"] <= float(intervention["chair_s"] + chair_s_eps_vs_int)
                         and result["recall"] >= float(intervention["recall"] + min_recall_gain_vs_int)
+                        and (not require_f1_nondecrease_vs_int or result["f1"] >= float(intervention["f1"] - 1e-12))
+                        and teacher_precision >= float(min_teacher_precision)
+                        and teacher_recall >= float(min_teacher_recall)
                     ),
                     "anchor_feature_stats": json.dumps(anchor_stats, ensure_ascii=False),
                     "gate_feature_stats": json.dumps(gate_stats, ensure_ascii=False),
@@ -509,6 +525,18 @@ def main() -> None:
     ap.add_argument("--anchor_feature", type=str, default="proxy_chairgen_generated_unique_drop")
     ap.add_argument("--gate_feature", action="append", default=[])
     ap.add_argument("--gate_feature_prefix", action="append", default=[])
+    ap.add_argument(
+        "--min_teacher_precision",
+        type=float,
+        default=0.0,
+        help="Minimum teacher precision required when fitting a policy on a labeled split.",
+    )
+    ap.add_argument(
+        "--min_teacher_recall",
+        type=float,
+        default=0.0,
+        help="Minimum teacher recall required when fitting a policy on a labeled split.",
+    )
     ap.add_argument(
         "--selected_policy_json",
         type=str,
@@ -701,6 +729,9 @@ def main() -> None:
                 chair_i_eps_vs_int=float(args.chair_i_eps),
                 chair_s_eps_vs_int=float(args.chair_s_eps),
                 min_recall_gain_vs_int=float(args.min_recall_gain),
+                require_f1_nondecrease_vs_int=bool(args.require_f1_nondecrease),
+                min_teacher_precision=float(args.min_teacher_precision),
+                min_teacher_recall=float(args.min_teacher_recall),
             )
             all_sweeps.extend(sweep)
             result: Dict[str, Any] = {
@@ -782,6 +813,8 @@ def main() -> None:
                 "gate_feature": [str(x) for x in args.gate_feature],
                 "gate_feature_prefix": [str(x) for x in args.gate_feature_prefix],
                 "top_n_features": int(args.top_n_features),
+                "min_teacher_precision": float(args.min_teacher_precision),
+                "min_teacher_recall": float(args.min_teacher_recall),
                 "tau_quantiles": quantiles,
             },
             "counts": {
@@ -833,6 +866,9 @@ def main() -> None:
             chair_i_eps_vs_int=float(args.chair_i_eps),
             chair_s_eps_vs_int=float(args.chair_s_eps),
             min_recall_gain_vs_int=float(args.min_recall_gain),
+            require_f1_nondecrease_vs_int=bool(args.require_f1_nondecrease),
+            min_teacher_precision=float(args.min_teacher_precision),
+            min_teacher_recall=float(args.min_teacher_recall),
         )
         all_single_sweeps.extend(sweep)
         out = dict(metric)
@@ -886,6 +922,9 @@ def main() -> None:
                 chair_i_eps_vs_int=float(args.chair_i_eps),
                 chair_s_eps_vs_int=float(args.chair_s_eps),
                 min_recall_gain_vs_int=float(args.min_recall_gain),
+                require_f1_nondecrease_vs_int=bool(args.require_f1_nondecrease),
+                min_teacher_precision=float(args.min_teacher_precision),
+                min_teacher_recall=float(args.min_teacher_recall),
             )
             row: Dict[str, Any] = {
                 "features": " + ".join(combo_features),
@@ -972,6 +1011,8 @@ def main() -> None:
             "top_n_features": int(args.top_n_features),
             "max_combo_size": int(args.max_combo_size),
             "tau_quantiles": quantiles,
+            "min_teacher_precision": float(args.min_teacher_precision),
+            "min_teacher_recall": float(args.min_teacher_recall),
         },
         "counts": {
             "n_rows": int(len(rows)),
