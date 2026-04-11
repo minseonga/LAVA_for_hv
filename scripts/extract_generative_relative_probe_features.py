@@ -80,6 +80,15 @@ PROBE_NUMERIC_KEYS = [
     "probe_lp_head_mean_real",
     "probe_lp_tail_mean_real",
     "probe_lp_tail_minus_head_real",
+    "probe_lp_content_mean_real",
+    "probe_lp_content_std_real",
+    "probe_lp_content_min_real",
+    "probe_target_gap_content_mean_real",
+    "probe_target_gap_content_std_real",
+    "probe_target_gap_content_min_real",
+    "probe_entropy_content_mean_real",
+    "probe_entropy_content_std_real",
+    "probe_entropy_content_max_real",
     "probe_mention_entropy_max_real",
     "probe_mention_lp_min_real",
     "probe_mention_lp_tail_gap_real",
@@ -145,6 +154,21 @@ def add_relative_probe_features(row: Dict[str, Any], intervention_probe: Dict[st
     int_lp_min = maybe_float(intervention_probe.get("probe_mention_lp_min_real"))
     if base_lp_min is not None and int_lp_min is not None:
         row["pair_probe_bad_shift_lp_min"] = float(base_lp_min - int_lp_min)
+
+    base_content_lp_min = maybe_float(row.get("probe_lp_content_min_real"))
+    int_content_lp_min = maybe_float(intervention_probe.get("probe_lp_content_min_real"))
+    if base_content_lp_min is not None and int_content_lp_min is not None:
+        row["pair_probe_bad_shift_lp_content_min"] = float(base_content_lp_min - int_content_lp_min)
+
+    base_content_gap_min = maybe_float(row.get("probe_target_gap_content_min_real"))
+    int_content_gap_min = maybe_float(intervention_probe.get("probe_target_gap_content_min_real"))
+    if base_content_gap_min is not None and int_content_gap_min is not None:
+        row["pair_probe_bad_shift_target_gap_content_min"] = float(base_content_gap_min - int_content_gap_min)
+
+    base_content_lp_std = maybe_float(row.get("probe_lp_content_std_real"))
+    int_content_lp_std = maybe_float(intervention_probe.get("probe_lp_content_std_real"))
+    if base_content_lp_std is not None and int_content_lp_std is not None:
+        row["pair_probe_bad_shift_lp_content_std"] = float(int_content_lp_std - base_content_lp_std)
 
     base_tokens = maybe_float(row.get("probe_n_cont_tokens"))
     int_tokens = maybe_float(intervention_probe.get("probe_n_cont_tokens"))

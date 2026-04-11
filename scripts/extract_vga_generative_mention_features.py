@@ -286,6 +286,15 @@ def mean_or_zero(values: Iterable[float]) -> float:
     return float(sum(seq) / float(len(seq)))
 
 
+def std_or_zero(values: Iterable[float]) -> float:
+    seq = [float(v) for v in values]
+    if len(seq) <= 1:
+        return 0.0
+    mu = mean_or_zero(seq)
+    var = sum((float(v) - mu) ** 2 for v in seq) / float(len(seq))
+    return float(max(var, 0.0) ** 0.5)
+
+
 def min_or_zero(values: Sequence[float]) -> float:
     seq = [float(v) for v in values]
     if not seq:
@@ -594,6 +603,9 @@ def build_feature_payload(
 
     ordered_content = sorted(int(x) for x in content_indices)
     n_content = len(ordered_content)
+    lp_content = pick(values["lp"], ordered_content)
+    gap_content = pick(values["gap"], ordered_content)
+    ent_content = pick(values["ent"], ordered_content)
     head_n = max(1, n_content // 3) if n_content > 0 else 0
     tail_n = head_n
     head_slice = ordered_content[:head_n]
@@ -648,6 +660,15 @@ def build_feature_payload(
         "probe_second_half_object_mentions": int(second_half_object_mentions),
         "probe_tail_tokens_after_last_mention": int(tail_tokens_after_last_mention),
         "probe_last_mention_pos_frac": float(last_mention_pos_frac),
+        "probe_lp_content_mean_real": float(mean_or_zero(lp_content)),
+        "probe_lp_content_std_real": float(std_or_zero(lp_content)),
+        "probe_lp_content_min_real": float(min_or_zero(lp_content)),
+        "probe_target_gap_content_mean_real": float(mean_or_zero(gap_content)),
+        "probe_target_gap_content_std_real": float(std_or_zero(gap_content)),
+        "probe_target_gap_content_min_real": float(min_or_zero(gap_content)),
+        "probe_entropy_content_mean_real": float(mean_or_zero(ent_content)),
+        "probe_entropy_content_std_real": float(std_or_zero(ent_content)),
+        "probe_entropy_content_max_real": float(max_or_zero(ent_content)),
         "probe_lp_head_mean_real": float(mean_or_zero(lp_head)),
         "probe_lp_tail_mean_real": float(mean_or_zero(lp_tail)),
         "probe_lp_tail_minus_head_real": float(mean_or_zero(lp_tail) - mean_or_zero(lp_head)),

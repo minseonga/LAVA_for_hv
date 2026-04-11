@@ -56,6 +56,23 @@ def preset_feature_cols(rows: Sequence[Dict[str, Any]], spec: str) -> List[str]:
         names.update(str(k) for k in row.keys())
 
     spec_norm = str(spec or "").strip().lower()
+    if spec_norm in {
+        "confidence_collapse_v1",
+        "gen_confidence_collapse_v1",
+        "probe_confidence_collapse_v1",
+    }:
+        ordered = [
+            "pair_intprobe_lp_content_min_real",
+            "pair_intprobe_target_gap_content_min_real",
+            "pair_intprobe_lp_content_std_real",
+            "pair_probe_bad_shift_lp_content_min",
+            "pair_probe_bad_shift_target_gap_content_min",
+            "pair_probe_bad_shift_lp_content_std",
+            "probe_lp_content_min_real",
+            "probe_target_gap_content_min_real",
+            "probe_lp_content_std_real",
+        ]
+        return [feat for feat in ordered if feat in names]
     if spec_norm in {"claimdelta_heads", "claimdelta_mechanism_heads", "mechanism_heads"}:
         ordered = [
             "pair_claimdelta_s_preserve",
