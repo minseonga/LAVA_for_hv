@@ -367,6 +367,10 @@ def route_metrics(row: Dict[str, Any], route: str) -> Dict[str, float]:
 def objective_value(metrics: Dict[str, float], objective: str) -> float:
     if objective == "f1":
         return float(metrics["mean_f1"])
+    if objective == "recall":
+        return float(metrics["mean_recall"])
+    if objective == "recall_minus_chairi":
+        return float(metrics["mean_recall"] - metrics["mean_chair_i"])
     if objective == "neg_chairi":
         return float(-metrics["mean_chair_i"])
     if objective == "claim_utility":
@@ -446,9 +450,10 @@ def aggregate_routes(
 
 
 def compare_key(summary: Dict[str, Any], objective: str) -> Tuple[float, float, float]:
+    tie_metric = "mean_recall" if str(objective).startswith("recall") else "mean_f1"
     return (
         objective_value(summary, objective),
-        float(summary["mean_f1"]),
+        float(summary[tie_metric]),
         -float(summary["baseline_rate"]),
     )
 
@@ -708,7 +713,7 @@ def main() -> None:
     ap.add_argument("--weight_grid", type=str, default="0.25,0.5,0.75,1.0,1.5,2.0,3.0")
     ap.add_argument("--delta_grid", type=str, default="0.0,0.25,0.5,0.75,1.0,1.5,2.0,3.0")
     ap.add_argument("--meta_modes", type=str, default="delta_then_fusion,delta_then_stronger,agree_fusion_else_stronger")
-    ap.add_argument("--selection_objective", type=str, default="f1_minus_chairi", choices=["f1_minus_chairi", "f1", "neg_chairi", "claim_utility"])
+    ap.add_argument("--selection_objective", type=str, default="f1_minus_chairi", choices=["f1_minus_chairi", "f1", "neg_chairi", "claim_utility", "recall", "recall_minus_chairi"])
     ap.add_argument("--min_baseline_rate", type=float, default=0.0)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
     args = ap.parse_args()

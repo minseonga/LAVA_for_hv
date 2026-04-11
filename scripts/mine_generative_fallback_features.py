@@ -184,12 +184,13 @@ def main() -> None:
     ap.add_argument("--intervention_chair_json", type=str, required=True)
     ap.add_argument("--out_csv", type=str, required=True)
     ap.add_argument("--out_summary_json", type=str, default="")
-    ap.add_argument("--teacher_mode", type=str, default="chairi_pareto", choices=["strict_pareto", "chairi_pareto", "f1_only"])
+    ap.add_argument("--teacher_mode", type=str, default="chairi_pareto", choices=["strict_pareto", "chairi_pareto", "f1_only", "recall_pareto", "recall_chairi_pareto", "recall_only"])
     ap.add_argument("--min_f1_gain", type=float, default=0.0)
+    ap.add_argument("--min_recall_gain", type=float, default=0.0)
     ap.add_argument("--feature_cols", type=str, default="auto")
     ap.add_argument("--feature_prefix", type=str, default="")
     ap.add_argument("--budgets", type=str, default="0.02,0.05,0.10,0.15")
-    ap.add_argument("--selection_objective", type=str, default="f1_minus_chairi", choices=["f1", "neg_chairi", "claim_utility", "f1_minus_chairi"])
+    ap.add_argument("--selection_objective", type=str, default="f1_minus_chairi", choices=["f1", "neg_chairi", "claim_utility", "f1_minus_chairi", "recall", "recall_minus_chairi"])
     ap.add_argument("--top_k_summary", type=int, default=20)
     ap.add_argument("--candidate_budget", type=float, default=0.05)
     ap.add_argument("--min_candidate_precision", type=float, default=0.0)
@@ -210,7 +211,12 @@ def main() -> None:
         baseline_chair_json=args.baseline_chair_json,
         intervention_chair_json=args.intervention_chair_json,
     )
-    rows = linear.attach_teacher_labels(rows, teacher_mode=args.teacher_mode, min_f1_gain=float(args.min_f1_gain))
+    rows = linear.attach_teacher_labels(
+        rows,
+        teacher_mode=args.teacher_mode,
+        min_f1_gain=float(args.min_f1_gain),
+        min_recall_gain=float(args.min_recall_gain),
+    )
 
     feature_cols: List[str]
     if str(args.feature_cols).strip().lower() == "auto":
@@ -271,6 +277,7 @@ def main() -> None:
                 "intervention_chair_json": os.path.abspath(args.intervention_chair_json),
                 "teacher_mode": args.teacher_mode,
                 "min_f1_gain": float(args.min_f1_gain),
+                "min_recall_gain": float(args.min_recall_gain),
                 "feature_cols": feature_cols,
                 "feature_prefix": str(args.feature_prefix or ""),
                 "budgets": budgets,

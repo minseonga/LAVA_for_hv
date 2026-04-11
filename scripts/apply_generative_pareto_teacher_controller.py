@@ -97,6 +97,7 @@ def main() -> None:
                 "policy_type": str(policy.get("policy_type", "")),
                 "teacher_mode": policy.get("teacher_mode"),
                 "min_f1_gain": policy.get("min_f1_gain"),
+                "min_recall_gain": policy.get("min_recall_gain"),
                 "constraint_mode": policy.get("constraint_mode"),
                 "chair_eps": policy.get("chair_eps"),
                 "selection_objective": policy.get("selection_objective"),

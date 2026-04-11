@@ -288,7 +288,7 @@ def main() -> None:
     ap.add_argument("--expert_b_aux_quantiles", type=str, default="")
     ap.add_argument("--constraint_mode", type=str, default="both", choices=["none", "chairi", "chairs", "both"])
     ap.add_argument("--chair_eps", type=float, default=0.0)
-    ap.add_argument("--selection_objective", type=str, default="f1", choices=["f1", "f1_minus_chairi", "neg_chairi", "claim_utility"])
+    ap.add_argument("--selection_objective", type=str, default="f1", choices=["f1", "f1_minus_chairi", "neg_chairi", "claim_utility", "recall", "recall_minus_chairi"])
     ap.add_argument("--min_baseline_rate", type=float, default=0.0)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
     args = ap.parse_args()

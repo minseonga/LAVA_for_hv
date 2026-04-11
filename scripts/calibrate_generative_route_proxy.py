@@ -75,16 +75,22 @@ def aux_pass(value: Optional[float], *, direction: str, tau: float) -> bool:
     return float(value) <= float(tau)
 
 
-def compare_key(summary: Dict[str, Any], objective: str) -> Tuple[float, float, float, float, float]:
+def compare_key(summary: Dict[str, Any], objective: str) -> Tuple[float, ...]:
     primary = float(summary["mean_f1"])
-    if str(objective) == "teacher_precision":
+    if str(objective) == "recall":
+        primary = float(summary["mean_recall"])
+    elif str(objective) == "recall_minus_chairi":
+        primary = float(summary["mean_recall"] - summary["mean_chair_i"])
+    elif str(objective) == "teacher_precision":
         primary = float(summary.get("teacher_precision") or 0.0)
     elif str(objective) == "target_precision":
         primary = float(summary.get("target_precision") or 0.0)
     elif str(objective) == "f1_minus_chairi":
         primary = float(summary["mean_f1_minus_chairi"])
+    tie_metric = float(summary["mean_recall"] if str(objective).startswith("recall") else summary["mean_f1"])
     return (
         primary,
+        tie_metric,
         -float(summary["mean_chair_i"]),
         -float(summary["mean_chair_s"]),
         float(summary.get("teacher_precision") or 0.0),
@@ -105,9 +111,10 @@ def main() -> None:
     ap.add_argument("--min_baseline_rate", type=float, default=0.02)
     ap.add_argument("--max_baseline_rate", type=float, default=0.08)
     ap.add_argument("--min_f1_gain_vs_intervention", type=float, default=0.0)
+    ap.add_argument("--min_recall_gain_vs_intervention", type=float, default=None)
     ap.add_argument("--max_chair_i_delta_vs_intervention", type=float, default=0.0)
     ap.add_argument("--max_chair_s_delta_vs_intervention", type=float, default=0.0)
-    ap.add_argument("--selection_objective", type=str, default="f1", choices=["f1", "f1_minus_chairi", "teacher_precision", "target_precision"])
+    ap.add_argument("--selection_objective", type=str, default="f1", choices=["f1", "f1_minus_chairi", "teacher_precision", "target_precision", "recall", "recall_minus_chairi"])
     args = ap.parse_args()
 
     rows = base.read_csv_rows(os.path.abspath(args.decision_rows_csv))
@@ -159,12 +166,17 @@ def main() -> None:
             summary["aux_tau"] = float(aux_tau)
             summary["aux_pass_rate"] = base.safe_div(float(aux_pass_count), float(max(1, len(rows))))
             summary["delta_f1_vs_int"] = float(summary["mean_f1"] - intervention["mean_f1"])
+            summary["delta_recall_vs_int"] = float(summary["mean_recall"] - intervention["mean_recall"])
             summary["delta_chair_i_vs_int"] = float(summary["mean_chair_i"] - intervention["mean_chair_i"])
             summary["delta_chair_s_vs_int"] = float(summary["mean_chair_s"] - intervention["mean_chair_s"])
+            if args.min_recall_gain_vs_intervention is None:
+                gain_ok = float(summary["delta_f1_vs_int"]) > float(args.min_f1_gain_vs_intervention)
+            else:
+                gain_ok = float(summary["delta_recall_vs_int"]) > float(args.min_recall_gain_vs_intervention)
             summary["feasible"] = int(
                 float(summary["baseline_rate"]) >= float(args.min_baseline_rate)
                 and float(summary["baseline_rate"]) <= float(args.max_baseline_rate)
-                and float(summary["delta_f1_vs_int"]) > float(args.min_f1_gain_vs_intervention)
+                and gain_ok
                 and float(summary["delta_chair_i_vs_int"]) <= float(args.max_chair_i_delta_vs_intervention)
                 and float(summary["delta_chair_s_vs_int"]) <= float(args.max_chair_s_delta_vs_intervention)
             )
@@ -195,6 +207,14 @@ def main() -> None:
                     "aux_direction": str(args.aux_direction),
                     "tau_offsets": tau_offsets,
                     "aux_quantiles": aux_quantiles,
+                    "target_col": str(args.target_col),
+                    "min_baseline_rate": float(args.min_baseline_rate),
+                    "max_baseline_rate": float(args.max_baseline_rate),
+                    "min_f1_gain_vs_intervention": float(args.min_f1_gain_vs_intervention),
+                    "min_recall_gain_vs_intervention": args.min_recall_gain_vs_intervention,
+                    "max_chair_i_delta_vs_intervention": float(args.max_chair_i_delta_vs_intervention),
+                    "max_chair_s_delta_vs_intervention": float(args.max_chair_s_delta_vs_intervention),
+                    "selection_objective": str(args.selection_objective),
                 },
                 "baseline": {k: v for k, v in base.aggregate_routes(rows, ["baseline"] * len(rows)).items() if k != "decision_rows"},
                 "intervention": {k: v for k, v in intervention.items() if k != "decision_rows"},
@@ -242,6 +262,7 @@ def main() -> None:
             "min_baseline_rate": float(args.min_baseline_rate),
             "max_baseline_rate": float(args.max_baseline_rate),
             "min_f1_gain_vs_intervention": float(args.min_f1_gain_vs_intervention),
+            "min_recall_gain_vs_intervention": args.min_recall_gain_vs_intervention,
             "max_chair_i_delta_vs_intervention": float(args.max_chair_i_delta_vs_intervention),
             "max_chair_s_delta_vs_intervention": float(args.max_chair_s_delta_vs_intervention),
             "selection_objective": str(args.selection_objective),

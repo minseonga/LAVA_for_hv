@@ -139,9 +139,19 @@ def teacher_stats(rows: Sequence[Dict[str, Any]], routes: Sequence[str]) -> Dict
     }
 
 
-def compare_key(summary: Dict[str, Any]) -> Tuple[float, float, float, float, float, float]:
+def compare_key(summary: Dict[str, Any], objective: str) -> Tuple[float, ...]:
+    if str(objective) == "recall":
+        primary = float(summary["mean_recall"])
+    elif str(objective) == "recall_minus_chairi":
+        primary = float(summary["mean_recall"] - summary["mean_chair_i"])
+    elif str(objective) == "f1_minus_chairi":
+        primary = float(summary["mean_f1_minus_chairi"])
+    else:
+        primary = float(summary["mean_f1"])
+    tie_metric = float(summary["mean_recall"] if str(objective).startswith("recall") else summary["mean_f1"])
     return (
-        float(summary["mean_f1"]),
+        primary,
+        tie_metric,
         -float(summary["mean_chair_i"]),
         -float(summary["mean_chair_s"]),
         float(summary.get("target_precision") or 0.0),
@@ -159,8 +169,10 @@ def evaluate_combo(
     min_baseline_rate: float,
     max_baseline_rate: float,
     min_f1_gain_vs_intervention: float,
+    min_recall_gain_vs_intervention: Optional[float],
     max_chair_i_delta_vs_intervention: float,
     max_chair_s_delta_vs_intervention: float,
+    selection_objective: str,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Dict[str, float]]]:
     intervention = base.aggregate_routes(rows, ["method"] * len(rows))
     feature_stats = compute_feature_stats(rows, combo)
@@ -182,19 +194,24 @@ def evaluate_combo(
         summary["n_features"] = int(len(combo))
         summary["distill_target_col"] = str(target_col)
         summary["delta_f1_vs_int"] = float(summary["mean_f1"] - intervention["mean_f1"])
+        summary["delta_recall_vs_int"] = float(summary["mean_recall"] - intervention["mean_recall"])
         summary["delta_chair_i_vs_int"] = float(summary["mean_chair_i"] - intervention["mean_chair_i"])
         summary["delta_chair_s_vs_int"] = float(summary["mean_chair_s"] - intervention["mean_chair_s"])
+        if min_recall_gain_vs_intervention is None:
+            gain_ok = float(summary["delta_f1_vs_int"]) > float(min_f1_gain_vs_intervention)
+        else:
+            gain_ok = float(summary["delta_recall_vs_int"]) > float(min_recall_gain_vs_intervention)
         summary["feasible"] = int(
             float(summary["baseline_rate"]) >= float(min_baseline_rate)
             and float(summary["baseline_rate"]) <= float(max_baseline_rate)
-            and float(summary["delta_f1_vs_int"]) > float(min_f1_gain_vs_intervention)
+            and gain_ok
             and float(summary["delta_chair_i_vs_int"]) <= float(max_chair_i_delta_vs_intervention)
             and float(summary["delta_chair_s_vs_int"]) <= float(max_chair_s_delta_vs_intervention)
         )
         sweep_rows.append(dict(summary))
         if int(summary["feasible"]) != 1:
             continue
-        if best_summary is None or compare_key(summary) > compare_key(best_summary):
+        if best_summary is None or compare_key(summary, selection_objective) > compare_key(best_summary, selection_objective):
             best_summary = dict(summary)
 
     return best_summary, sweep_rows, feature_stats
@@ -221,8 +238,10 @@ def main() -> None:
     ap.add_argument("--min_baseline_rate", type=float, default=0.02)
     ap.add_argument("--max_baseline_rate", type=float, default=0.08)
     ap.add_argument("--min_f1_gain_vs_intervention", type=float, default=0.0)
+    ap.add_argument("--min_recall_gain_vs_intervention", type=float, default=None)
     ap.add_argument("--max_chair_i_delta_vs_intervention", type=float, default=0.0)
     ap.add_argument("--max_chair_s_delta_vs_intervention", type=float, default=0.0)
+    ap.add_argument("--selection_objective", type=str, default="f1", choices=["f1", "f1_minus_chairi", "recall", "recall_minus_chairi"])
     args = ap.parse_args()
 
     raw_rows = base.read_csv_rows(os.path.abspath(args.decision_rows_csv))
@@ -263,8 +282,10 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_f1_gain_vs_intervention=float(args.min_f1_gain_vs_intervention),
+            min_recall_gain_vs_intervention=args.min_recall_gain_vs_intervention,
             max_chair_i_delta_vs_intervention=float(args.max_chair_i_delta_vs_intervention),
             max_chair_s_delta_vs_intervention=float(args.max_chair_s_delta_vs_intervention),
+            selection_objective=str(args.selection_objective),
         )
         if best_single is not None:
             best_single_by_feature[str(feature)] = dict(best_single)
@@ -289,6 +310,7 @@ def main() -> None:
                 "mean_f1_minus_chairi",
                 "mean_claim_utility",
                 "delta_f1_vs_int",
+                "delta_recall_vs_int",
                 "delta_chair_i_vs_int",
                 "delta_chair_s_vs_int",
                 "target_precision",
@@ -300,10 +322,11 @@ def main() -> None:
                 out[f"single_{key}"] = best_single.get(key)
         feature_metrics.append(out)
 
+    single_sort_key = "single_mean_recall" if str(args.selection_objective).startswith("recall") else "single_mean_f1"
     feature_metrics.sort(
         key=lambda r: (
             -int(r.get("has_feasible_single") or 0),
-            -float(r.get("single_mean_f1") or -1e9),
+            -float(r.get(single_sort_key) or -1e9),
             -float(r.get("auroc") or 0.0),
             -float(r.get("average_precision") or 0.0),
             str(r.get("feature") or ""),
@@ -333,8 +356,10 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_f1_gain_vs_intervention=float(args.min_f1_gain_vs_intervention),
+            min_recall_gain_vs_intervention=args.min_recall_gain_vs_intervention,
             max_chair_i_delta_vs_intervention=float(args.max_chair_i_delta_vs_intervention),
             max_chair_s_delta_vs_intervention=float(args.max_chair_s_delta_vs_intervention),
+            selection_objective=str(args.selection_objective),
         )
         row: Dict[str, Any] = {
             "features": " + ".join(feature for feature, _ in combo),
@@ -345,7 +370,7 @@ def main() -> None:
         }
         if best_summary is not None:
             row.update(best_summary)
-            if best_combo_summary is None or compare_key(best_summary) > compare_key(best_combo_summary):
+            if best_combo_summary is None or compare_key(best_summary, str(args.selection_objective)) > compare_key(best_combo_summary, str(args.selection_objective)):
                 best_combo_summary = dict(best_summary)
                 best_combo_specs = list(combo)
                 best_combo_stats = dict(feature_stats)
@@ -379,6 +404,7 @@ def main() -> None:
                     "feature_prefix": str(args.feature_prefix),
                     "top_n_features": int(args.top_n_features),
                     "max_combo_size": int(args.max_combo_size),
+                    "selection_objective": str(args.selection_objective),
                 },
                 "counts": {
                     "n_rows": int(len(rows)),
@@ -447,8 +473,10 @@ def main() -> None:
             "min_baseline_rate": float(args.min_baseline_rate),
             "max_baseline_rate": float(args.max_baseline_rate),
             "min_f1_gain_vs_intervention": float(args.min_f1_gain_vs_intervention),
+            "min_recall_gain_vs_intervention": args.min_recall_gain_vs_intervention,
             "max_chair_i_delta_vs_intervention": float(args.max_chair_i_delta_vs_intervention),
             "max_chair_s_delta_vs_intervention": float(args.max_chair_s_delta_vs_intervention),
+            "selection_objective": str(args.selection_objective),
         },
         "counts": {
             "n_rows": int(len(rows)),

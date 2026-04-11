@@ -406,9 +406,16 @@ def resolve_feature_cols(
     return parse_feature_cols_spec(str(feature_cols))
 
 
-def teacher_label(row: Dict[str, Any], mode: str, min_f1_gain: float = 0.0) -> int:
+def teacher_label(
+    row: Dict[str, Any],
+    mode: str,
+    min_f1_gain: float = 0.0,
+    min_recall_gain: float = 0.0,
+) -> int:
     bf = float(row["base_f1"])
     if1 = float(row["int_f1"])
+    br = float(row["base_recall"])
+    ir = float(row["int_recall"])
     bci = float(row["base_chair_i"])
     ici = float(row["int_chair_i"])
     bcs = float(row["base_chair_s"])
@@ -431,6 +438,23 @@ def teacher_label(row: Dict[str, Any], mode: str, min_f1_gain: float = 0.0) -> i
         return int(choose)
     if mode == "f1_only":
         return int(bf > (if1 + float(min_f1_gain)))
+    if mode == "recall_pareto":
+        choose = (
+            (br > (ir + float(min_recall_gain)))
+            and (bci <= ici)
+            and (bcs <= ics)
+            and ((br - ir) > 1e-12 or (ici - bci) > 1e-12 or (ics - bcs) > 1e-12)
+        )
+        return int(choose)
+    if mode == "recall_chairi_pareto":
+        choose = (
+            (br > (ir + float(min_recall_gain)))
+            and (bci <= ici)
+            and ((br - ir) > 1e-12 or (ici - bci) > 1e-12)
+        )
+        return int(choose)
+    if mode == "recall_only":
+        return int(br > (ir + float(min_recall_gain)))
     raise ValueError(f"Unsupported teacher mode: {mode}")
 
 
@@ -438,11 +462,17 @@ def attach_teacher_labels(
     rows: Sequence[Dict[str, Any]],
     teacher_mode: str,
     min_f1_gain: float,
+    min_recall_gain: float = 0.0,
 ) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for row in rows:
         item = dict(row)
-        item["teacher_fallback"] = teacher_label(item, teacher_mode, min_f1_gain=float(min_f1_gain))
+        item["teacher_fallback"] = teacher_label(
+            item,
+            teacher_mode,
+            min_f1_gain=float(min_f1_gain),
+            min_recall_gain=float(min_recall_gain),
+        )
         out.append(item)
     return out
 
@@ -697,7 +727,21 @@ def feasible_under_constraints(
     raise ValueError(f"Unsupported constraint mode: {constraint_mode}")
 
 
-def selection_key(row: Dict[str, Any], objective: str) -> Tuple[float, float, float]:
+def selection_key(row: Dict[str, Any], objective: str) -> Tuple[float, ...]:
+    if objective == "recall":
+        return (
+            float(row["mean_recall"]),
+            -float(row["mean_chair_i"]),
+            -float(row["mean_chair_s"]),
+            -float(row["baseline_rate"]),
+        )
+    if objective == "recall_minus_chairi":
+        return (
+            float(row["mean_recall"]) - float(row["mean_chair_i"]),
+            float(row["mean_recall"]),
+            -float(row["mean_chair_s"]),
+            -float(row["baseline_rate"]),
+        )
     if objective == "f1_minus_chairi":
         return (
             float(row["mean_f1_minus_chairi"]),
@@ -730,8 +774,9 @@ def main() -> None:
     ap.add_argument("--baseline_chair_json", type=str, required=True)
     ap.add_argument("--intervention_chair_json", type=str, required=True)
     ap.add_argument("--out_dir", type=str, required=True)
-    ap.add_argument("--teacher_mode", type=str, default="strict_pareto", choices=["strict_pareto", "chairi_pareto", "f1_only"])
+    ap.add_argument("--teacher_mode", type=str, default="strict_pareto", choices=["strict_pareto", "chairi_pareto", "f1_only", "recall_pareto", "recall_chairi_pareto", "recall_only"])
     ap.add_argument("--min_f1_gain", type=float, default=0.0)
+    ap.add_argument("--min_recall_gain", type=float, default=0.0)
     ap.add_argument("--feature_cols", type=str, default="auto")
     ap.add_argument("--feature_cols_file", type=str, default="")
     ap.add_argument("--min_feature_auroc", type=float, default=0.55)
@@ -745,7 +790,7 @@ def main() -> None:
     ap.add_argument("--tau_quantiles", type=str, default="0.0,0.01,0.02,0.05,0.1,0.15,0.2,0.25,0.3,0.4,0.5,0.6,0.7,0.8,0.9,0.95,0.98,0.99,1.0")
     ap.add_argument("--constraint_mode", type=str, default="both", choices=["none", "chairi", "chairs", "both"])
     ap.add_argument("--chair_eps", type=float, default=0.0)
-    ap.add_argument("--selection_objective", type=str, default="f1", choices=["f1", "f1_minus_chairi", "neg_chairi", "claim_utility"])
+    ap.add_argument("--selection_objective", type=str, default="f1", choices=["f1", "f1_minus_chairi", "neg_chairi", "claim_utility", "recall", "recall_minus_chairi"])
     ap.add_argument("--min_baseline_rate", type=float, default=0.0)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
     args = ap.parse_args()
@@ -758,7 +803,12 @@ def main() -> None:
         os.path.abspath(args.baseline_chair_json),
         os.path.abspath(args.intervention_chair_json),
     )
-    rows = attach_teacher_labels(rows, str(args.teacher_mode), float(args.min_f1_gain))
+    rows = attach_teacher_labels(
+        rows,
+        str(args.teacher_mode),
+        float(args.min_f1_gain),
+        min_recall_gain=float(args.min_recall_gain),
+    )
     feature_cols = resolve_feature_cols(rows, str(args.feature_cols), str(args.feature_cols_file))
     feature_metrics_all: List[Dict[str, Any]] = []
     for feat in feature_cols:
@@ -845,6 +895,7 @@ def main() -> None:
             "policy_type": "generative_pareto_teacher_linear_v1",
             "teacher_mode": str(args.teacher_mode),
             "min_f1_gain": float(args.min_f1_gain),
+            "min_recall_gain": float(args.min_recall_gain),
             "fit_mode": str(args.fit_mode),
             "constraint_mode": str(args.constraint_mode),
             "chair_eps": float(args.chair_eps),
@@ -868,6 +919,7 @@ def main() -> None:
                 "intervention_chair_json": os.path.abspath(args.intervention_chair_json),
                 "teacher_mode": str(args.teacher_mode),
                 "min_f1_gain": float(args.min_f1_gain),
+                "min_recall_gain": float(args.min_recall_gain),
                 "constraint_mode": str(args.constraint_mode),
                 "chair_eps": float(args.chair_eps),
                 "selection_objective": str(args.selection_objective),
