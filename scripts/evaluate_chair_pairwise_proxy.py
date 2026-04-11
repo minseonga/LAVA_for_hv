@@ -136,6 +136,88 @@ def add_extra_numeric_features(rows: Sequence[Dict[str, Any]], paths: Sequence[s
     return added
 
 
+def add_rollback_gain_cost_features(rows: Sequence[Dict[str, Any]]) -> List[str]:
+    """Expose rollback value as support gain minus baseline hallucination cost.
+
+    The expensive claimdelta extractor already computes baseline-only strong support
+    and baseline-only weak support deficit. This derives explicit balance scores so
+    the policy search does not have to infer a gain/cost tradeoff from unrelated
+    one-dimensional gates.
+    """
+    added: List[str] = []
+    seen = set()
+
+    def get(row: Dict[str, Any], key: str, default: float = 0.0) -> float:
+        value = maybe_float(row.get(key))
+        return float(default if value is None else value)
+
+    def put(row: Dict[str, Any], key: str, value: float) -> None:
+        row[key] = float(value)
+        if key not in seen:
+            seen.add(key)
+            added.append(key)
+
+    def add_balance_family(
+        *,
+        prefix: str,
+        gain: float,
+        cost: float,
+        denom: float,
+    ) -> Dict[str, float]:
+        denom = float(max(1.0, denom))
+        gain_rate = float(gain / denom)
+        cost_rate = float(cost / denom)
+        return {
+            f"{prefix}_support_gain_mass": float(gain),
+            f"{prefix}_hall_cost_mass": float(cost),
+            f"{prefix}_support_gain_rate": gain_rate,
+            f"{prefix}_hall_cost_rate": cost_rate,
+            f"{prefix}_gain_minus_cost": float(gain - cost),
+            f"{prefix}_gain_rate_minus_cost_rate": float(gain_rate - cost_rate),
+            f"{prefix}_gain_cost_ratio_eps_010": float(gain / (cost + 0.10)),
+            f"{prefix}_gain_cost_ratio_eps_100": float(gain / (cost + 1.00)),
+            f"{prefix}_gain_x_low_cost_rate": float(gain * max(0.0, 1.0 - min(1.0, cost_rate))),
+        }
+
+    type_gain_specs = [
+        ("object", "pair_claimdelta_preserve_object_base_only_strong_support_mass_ge_085"),
+        ("relation", "pair_claimdelta_preserve_relation_base_only_strong_support_mass_ge_075"),
+        ("count", "pair_claimdelta_preserve_count_base_only_strong_support_mass_ge_085"),
+    ]
+
+    for row in rows:
+        base_mass = get(row, "pair_claimdelta_preserve_support_mass_base", 1.0)
+        gain_all = get(row, "pair_claimdelta_preserve_base_only_strong_support_mass_ge_085")
+        cost_all = get(row, "pair_claimdelta_preserve_base_only_weak_support_deficit_mass_le_050")
+        if (
+            "pair_claimdelta_preserve_base_only_strong_support_mass_ge_085" not in row
+            and "pair_claimdelta_preserve_base_only_weak_support_deficit_mass_le_050" not in row
+        ):
+            continue
+
+        for key, value in add_balance_family(
+            prefix="pair_claimdelta_rollback_all",
+            gain=gain_all,
+            cost=cost_all,
+            denom=base_mass,
+        ).items():
+            put(row, key, value)
+
+        for claim_type, gain_key in type_gain_specs:
+            if gain_key not in row:
+                continue
+            gain_t = get(row, gain_key)
+            for key, value in add_balance_family(
+                prefix=f"pair_claimdelta_rollback_{claim_type}",
+                gain=gain_t,
+                cost=cost_all,
+                denom=base_mass,
+            ).items():
+                put(row, key, value)
+
+    return added
+
+
 def feature_direction(rows: Sequence[Dict[str, Any]], feature: str) -> Optional[Dict[str, Any]]:
     xs: List[float] = []
     ys: List[int] = []
@@ -559,6 +641,8 @@ def main() -> None:
     feature_names = add_caption_pair_proxy_features(rows)
     extra_feature_names = add_extra_numeric_features(rows, args.extra_features_csv)
     feature_names.extend([name for name in extra_feature_names if name not in set(feature_names)])
+    rollback_feature_names = add_rollback_gain_cost_features(rows)
+    feature_names.extend([name for name in rollback_feature_names if name not in set(feature_names)])
     if str(args.selected_policy_json).strip():
         policy = json.load(open(os.path.abspath(args.selected_policy_json), "r", encoding="utf-8"))
         if str(policy.get("policy_type")) == "chair_pairwise_caption_gated_proxy_v1":
@@ -649,6 +733,7 @@ def main() -> None:
                     float(len(rows)),
                 ),
                 "n_proxy_features": int(len(feature_names)),
+                "n_rollback_gain_cost_features": int(len(rollback_feature_names)),
             },
             "baseline": oracle.aggregate_counts(rows, lambda _: "baseline"),
             "intervention": intervention,
@@ -825,6 +910,7 @@ def main() -> None:
                 ),
                 "n_proxy_features": int(len(feature_names)),
                 "n_extra_features": int(len(extra_feature_names)),
+                "n_rollback_gain_cost_features": int(len(rollback_feature_names)),
                 "n_gate_candidates": int(len(gate_metrics)),
             },
             "baseline": oracle.aggregate_counts(rows, lambda _: "baseline"),
@@ -1021,6 +1107,7 @@ def main() -> None:
                 float(len(rows)),
             ),
             "n_proxy_features": int(len(feature_metrics)),
+            "n_rollback_gain_cost_features": int(len(rollback_feature_names)),
         },
         "baseline": baseline,
         "intervention": intervention,
