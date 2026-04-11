@@ -98,6 +98,184 @@ def top_budget_eval(
     return result
 
 
+def join_items(values: Sequence[Any]) -> str:
+    return " | ".join(str(x) for x in values)
+
+
+def object_fields(sentence: Dict[str, Any]) -> Dict[str, Any]:
+    gt = sorted(oracle.object_set(sentence.get("mscoco_gt_words", [])))
+    generated = oracle.object_list(sentence.get("mscoco_generated_words", []))
+    generated_unique = sorted(set(generated))
+    hallucinated = oracle.object_list(sentence.get("mscoco_hallucinated_words", []))
+    if not hallucinated and generated:
+        hallucinated = [obj for obj in generated if obj not in set(gt)]
+    hallucinated_unique = sorted(set(hallucinated))
+    supported_unique = sorted(set(generated) & set(gt))
+    return {
+        "caption": str(sentence.get("caption", "")),
+        "gt_objects": join_items(gt),
+        "generated_objects": join_items(generated),
+        "generated_unique_objects": join_items(generated_unique),
+        "supported_unique_objects": join_items(supported_unique),
+        "hallucinated_objects": join_items(hallucinated),
+        "hallucinated_unique_objects": join_items(hallucinated_unique),
+    }
+
+
+def enrich_example(
+    row: Dict[str, Any],
+    *,
+    group: str,
+    rank: int,
+    feature: str,
+    direction: str,
+    raw_score: float,
+    oriented_score: float,
+    budget: float,
+    base_map: Dict[str, Dict[str, Any]],
+    int_map: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    sid = str(row.get("image_id", "")).strip()
+    base_obj = object_fields(base_map.get(sid, {}))
+    int_obj = object_fields(int_map.get(sid, {}))
+    base_supported = set(str(base_obj["supported_unique_objects"]).split(" | ")) if base_obj["supported_unique_objects"] else set()
+    int_supported = set(str(int_obj["supported_unique_objects"]).split(" | ")) if int_obj["supported_unique_objects"] else set()
+    base_hall = set(str(base_obj["hallucinated_unique_objects"]).split(" | ")) if base_obj["hallucinated_unique_objects"] else set()
+    int_hall = set(str(int_obj["hallucinated_unique_objects"]).split(" | ")) if int_obj["hallucinated_unique_objects"] else set()
+    out: Dict[str, Any] = {
+        "group": group,
+        "rank": int(rank),
+        "image_id": sid,
+        "teacher_positive": int(row.get("teacher_positive") or 0),
+        "feature": feature,
+        "direction": direction,
+        "budget": float(budget),
+        "raw_feature_value": float(raw_score),
+        "oriented_score": float(oriented_score),
+        "pair_recall_gain": row.get("pair_recall_gain"),
+        "pair_f1_gain": row.get("pair_f1_gain"),
+        "pair_supported_gain": row.get("pair_supported_gain"),
+        "pair_hall_cost": row.get("pair_hall_cost"),
+        "pair_chair_i_cost": row.get("pair_chair_i_cost"),
+        "pair_chair_s_cost": row.get("pair_chair_s_cost"),
+        "base_chair_s": row.get("base_chair_s"),
+        "int_chair_s": row.get("int_chair_s"),
+        "base_chair_i": row.get("base_chair_i"),
+        "int_chair_i": row.get("int_chair_i"),
+        "base_recall": row.get("base_recall"),
+        "int_recall": row.get("int_recall"),
+        "base_f1": row.get("base_f1"),
+        "int_f1": row.get("int_f1"),
+        "base_n_generated_unique": row.get("base_n_generated_unique"),
+        "int_n_generated_unique": row.get("int_n_generated_unique"),
+        "base_n_supported_unique": row.get("base_n_supported_unique"),
+        "int_n_supported_unique": row.get("int_n_supported_unique"),
+        "base_n_hallucinated_instances": row.get("base_n_hallucinated_instances"),
+        "int_n_hallucinated_instances": row.get("int_n_hallucinated_instances"),
+        "base_only_supported_unique_objects": join_items(sorted(base_supported - int_supported)),
+        "base_only_hallucinated_unique_objects": join_items(sorted(base_hall - int_hall)),
+        "int_only_hallucinated_unique_objects": join_items(sorted(int_hall - base_hall)),
+        "gt_objects": base_obj["gt_objects"] or int_obj["gt_objects"],
+        "base_generated_unique_objects": base_obj["generated_unique_objects"],
+        "int_generated_unique_objects": int_obj["generated_unique_objects"],
+        "base_supported_unique_objects": base_obj["supported_unique_objects"],
+        "int_supported_unique_objects": int_obj["supported_unique_objects"],
+        "base_hallucinated_unique_objects": base_obj["hallucinated_unique_objects"],
+        "int_hallucinated_unique_objects": int_obj["hallucinated_unique_objects"],
+        "base_caption": base_obj["caption"],
+        "int_caption": int_obj["caption"],
+    }
+    for key in [
+        "pair_claimdelta_rollback_all_support_gain_mass",
+        "pair_claimdelta_rollback_all_hall_cost_mass",
+        "pair_claimdelta_rollback_all_gain_minus_cost",
+        "pair_claimdelta_rollback_all_gain_cost_ratio_eps_010",
+        "pair_claimdelta_rollback_relation_support_gain_mass",
+        "pair_claimdelta_rollback_relation_gain_cost_ratio_eps_010",
+        "pair_claimdelta_rollback_object_support_gain_mass",
+        "pair_claimdelta_rollback_object_gain_cost_ratio_eps_010",
+        "pair_claimdelta_preserve_base_only_strong_support_mass_ge_085",
+        "pair_claimdelta_preserve_base_only_weak_support_deficit_mass_le_050",
+        "pair_claimdelta_add_unsupported_added_support_mass_rate",
+        "pair_claimdelta_rewrite_semantic_substitution_score",
+    ]:
+        if key in row:
+            out[key] = row.get(key)
+    return out
+
+
+def build_example_rows(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    feature: str,
+    direction: str,
+    budget: float,
+    limit: int,
+    base_map: Dict[str, Dict[str, Any]],
+    int_map: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    scored: List[Tuple[int, Dict[str, Any], float, float]] = []
+    for idx, row in enumerate(rows):
+        raw = proxy.maybe_float(row.get(feature))
+        if raw is None:
+            continue
+        oriented = float(raw) if direction == "high" else -float(raw)
+        scored.append((idx, row, float(raw), float(oriented)))
+    ranked = sorted(scored, key=lambda item: item[3], reverse=True)
+    n_select = min(len(ranked), max(1, int(round(float(len(rows)) * float(budget)))))
+    selected = ranked[:n_select]
+
+    examples: List[Dict[str, Any]] = []
+    for rank, (_, row, raw, oriented) in enumerate(selected, start=1):
+        group = "top_budget_tp" if int(row.get("teacher_positive") or 0) == 1 else "top_budget_fp"
+        examples.append(
+            enrich_example(
+                row,
+                group=group,
+                rank=rank,
+                feature=feature,
+                direction=direction,
+                raw_score=raw,
+                oriented_score=oriented,
+                budget=budget,
+                base_map=base_map,
+                int_map=int_map,
+            )
+        )
+
+    oracle_positive = sorted(
+        [
+            (idx, row, proxy.maybe_float(row.get(feature)) or 0.0)
+            for idx, row in enumerate(rows)
+            if int(row.get("teacher_positive") or 0) == 1
+        ],
+        key=lambda item: (
+            float(item[1].get("pair_f1_gain") or 0.0),
+            float(item[1].get("pair_recall_gain") or 0.0),
+            -float(item[1].get("pair_hall_cost") or 0.0),
+        ),
+        reverse=True,
+    )[: max(0, int(limit))]
+    for rank, (_, row, raw) in enumerate(oracle_positive, start=1):
+        oriented = float(raw) if direction == "high" else -float(raw)
+        examples.append(
+            enrich_example(
+                row,
+                group="oracle_positive_best",
+                rank=rank,
+                feature=feature,
+                direction=direction,
+                raw_score=float(raw),
+                oriented_score=oriented,
+                budget=budget,
+                base_map=base_map,
+                int_map=int_map,
+            )
+        )
+
+    return examples
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Diagnose why GT-free CHAIR pairwise rollback proxies miss the oracle-positive samples."
@@ -114,6 +292,10 @@ def main() -> None:
     ap.add_argument("--feature_prefix", action="append", default=[])
     ap.add_argument("--top_n", type=int, default=40)
     ap.add_argument("--budgets", type=str, default="0.01,0.02,0.05,0.08")
+    ap.add_argument("--example_feature", type=str, default="")
+    ap.add_argument("--example_direction", type=str, default="auto", choices=["auto", "high", "low"])
+    ap.add_argument("--example_budget", type=float, default=0.01)
+    ap.add_argument("--example_limit", type=int, default=20)
     args = ap.parse_args()
 
     rows = oracle.build_rows(
@@ -203,6 +385,30 @@ def main() -> None:
     os.makedirs(out_dir, exist_ok=True)
     oracle.write_csv(os.path.join(out_dir, "feature_gap_metrics.csv"), metrics)
     oracle.write_csv(os.path.join(out_dir, "budget_eval.csv"), budget_rows)
+    example_rows: List[Dict[str, Any]] = []
+    example_feature = str(args.example_feature or "").strip()
+    example_direction = str(args.example_direction or "auto")
+    if not example_feature and budget_rows:
+        example_feature = str(budget_rows[0].get("feature") or "")
+        example_direction = str(budget_rows[0].get("direction") or "auto")
+    if example_feature:
+        if example_direction == "auto":
+            metric = proxy.feature_direction(rows, example_feature)
+            if metric is not None:
+                example_direction = str(metric["direction"])
+        if example_direction in {"high", "low"}:
+            base_map = oracle.load_sentence_map(os.path.abspath(args.baseline_chair_json))
+            int_map = oracle.load_sentence_map(os.path.abspath(args.intervention_chair_json))
+            example_rows = build_example_rows(
+                rows,
+                feature=example_feature,
+                direction=example_direction,
+                budget=float(args.example_budget),
+                limit=int(args.example_limit),
+                base_map=base_map,
+                int_map=int_map,
+            )
+    oracle.write_csv(os.path.join(out_dir, "proxy_gap_examples.csv"), example_rows)
     summary = {
         "inputs": {
             "baseline_chair_json": os.path.abspath(args.baseline_chair_json),
@@ -215,6 +421,10 @@ def main() -> None:
             "feature": requested,
             "feature_prefix": prefixes,
             "budgets": budgets,
+            "example_feature": example_feature,
+            "example_direction": example_direction,
+            "example_budget": float(args.example_budget),
+            "example_limit": int(args.example_limit),
         },
         "counts": {
             "n_rows": int(len(rows)),
@@ -234,6 +444,7 @@ def main() -> None:
         "outputs": {
             "feature_gap_metrics_csv": os.path.join(out_dir, "feature_gap_metrics.csv"),
             "budget_eval_csv": os.path.join(out_dir, "budget_eval.csv"),
+            "proxy_gap_examples_csv": os.path.join(out_dir, "proxy_gap_examples.csv"),
             "summary_json": os.path.join(out_dir, "summary.json"),
         },
     }
