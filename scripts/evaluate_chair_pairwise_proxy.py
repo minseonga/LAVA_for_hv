@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import itertools
 import json
 import math
@@ -74,6 +75,65 @@ def average_precision(scores: Sequence[float], labels: Sequence[int]) -> Optiona
             tp += 1
             total += float(tp) / float(rank)
     return float(total / float(n_pos))
+
+
+def read_csv_rows(path: str) -> List[Dict[str, str]]:
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def row_id_candidates(row: Dict[str, Any]) -> List[str]:
+    vals: List[str] = []
+    for key in ["image_id", "id", "question_id"]:
+        value = str(row.get(key, "")).strip()
+        if not value:
+            continue
+        vals.append(value)
+        try:
+            vals.append(str(int(value)))
+        except Exception:
+            pass
+    out: List[str] = []
+    seen = set()
+    for value in vals:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def add_extra_numeric_features(rows: Sequence[Dict[str, Any]], paths: Sequence[str]) -> List[str]:
+    added: List[str] = []
+    seen = set()
+    if not paths:
+        return added
+    for path in paths:
+        table = read_csv_rows(os.path.abspath(path))
+        feature_map: Dict[str, Dict[str, str]] = {}
+        for item in table:
+            for sid in row_id_candidates(item):
+                feature_map[sid] = item
+        for row in rows:
+            matched = None
+            for sid in row_id_candidates(row):
+                matched = feature_map.get(sid)
+                if matched is not None:
+                    break
+            if matched is None:
+                continue
+            for key, value in matched.items():
+                if key in {"id", "image_id", "question_id", "image", "question"}:
+                    continue
+                x = maybe_float(value)
+                if x is None:
+                    continue
+                out_key = str(key)
+                row[out_key] = float(x)
+                if out_key not in seen:
+                    seen.add(out_key)
+                    added.append(out_key)
+    return added
 
 
 def feature_direction(rows: Sequence[Dict[str, Any]], feature: str) -> Optional[Dict[str, Any]]:
@@ -325,6 +385,109 @@ def routes_for_policy(
     return routes, scores
 
 
+def score_with_policy_stats(
+    row: Dict[str, Any],
+    specs: Sequence[Tuple[str, str]],
+    stats: Dict[str, Dict[str, float]],
+) -> Optional[float]:
+    zvals: List[float] = []
+    for feature, direction in specs:
+        x = maybe_float(row.get(feature))
+        if x is None:
+            return None
+        oriented = float(x) if direction == "high" else -float(x)
+        mu = float(stats.get(feature, {}).get("mean", 0.0))
+        sd = float(stats.get(feature, {}).get("std", 1.0) or 1.0)
+        zvals.append((oriented - mu) / sd)
+    return mean(zvals) if zvals else None
+
+
+def evaluate_gated_specs(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    anchor_spec: Tuple[str, str],
+    gate_spec: Optional[Tuple[str, str]],
+    quantiles: Sequence[float],
+    max_baseline_rate: float,
+    chair_i_eps_vs_int: float,
+    chair_s_eps_vs_int: float,
+    min_recall_gain_vs_int: float,
+) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    labels = [int(row.get("teacher_positive") or 0) for row in rows]
+    n_pos = sum(labels)
+    intervention = oracle.aggregate_counts(rows, lambda _: "method")
+
+    anchor_scores, anchor_stats = build_scores(rows, [anchor_spec])
+    anchor_valid = [float(s) for s in anchor_scores if s is not None and math.isfinite(float(s))]
+    anchor_thresholds = oracle.quantile_thresholds(anchor_valid, quantiles)
+    if gate_spec is None:
+        gate_scores = [0.0 for _ in rows]
+        gate_stats: Dict[str, Dict[str, float]] = {}
+        gate_thresholds = [0.0]
+    else:
+        gate_scores, gate_stats = build_scores(rows, [gate_spec])
+        gate_valid = [float(s) for s in gate_scores if s is not None and math.isfinite(float(s))]
+        gate_thresholds = oracle.quantile_thresholds(gate_valid, quantiles)
+
+    sweep: List[Dict[str, Any]] = []
+    for anchor_tau in anchor_thresholds:
+        for gate_tau in gate_thresholds:
+            routes: List[str] = []
+            selected_idx: List[int] = []
+            for idx, (a_score, g_score) in enumerate(zip(anchor_scores, gate_scores)):
+                selected = a_score is not None and float(a_score) >= float(anchor_tau)
+                if gate_spec is not None:
+                    selected = selected and g_score is not None and float(g_score) >= float(gate_tau)
+                route = "baseline" if selected else "method"
+                routes.append(route)
+                if selected:
+                    selected_idx.append(idx)
+            route_by_obj_id = {id(row): route for row, route in zip(rows, routes)}
+            result = oracle.aggregate_counts(rows, lambda row, route_by_obj_id=route_by_obj_id: route_by_obj_id[id(row)])
+            tp = sum(labels[idx] for idx in selected_idx)
+            result.update(
+                {
+                    "anchor_feature": anchor_spec[0],
+                    "anchor_direction": anchor_spec[1],
+                    "gate_feature": "" if gate_spec is None else gate_spec[0],
+                    "gate_direction": "" if gate_spec is None else gate_spec[1],
+                    "anchor_tau": float(anchor_tau),
+                    "gate_tau": None if gate_spec is None else float(gate_tau),
+                    "teacher_precision": oracle.safe_div(float(tp), float(len(selected_idx))),
+                    "teacher_recall": oracle.safe_div(float(tp), float(n_pos)),
+                    "delta_chair_i_vs_int": float(result["chair_i"] - intervention["chair_i"]),
+                    "delta_chair_s_vs_int": float(result["chair_s"] - intervention["chair_s"]),
+                    "delta_recall_vs_int": float(result["recall"] - intervention["recall"]),
+                    "delta_f1_vs_int": float(result["f1"] - intervention["f1"]),
+                    "feasible": int(
+                        result["baseline_rate"] <= float(max_baseline_rate)
+                        and result["chair_i"] <= float(intervention["chair_i"] + chair_i_eps_vs_int)
+                        and result["chair_s"] <= float(intervention["chair_s"] + chair_s_eps_vs_int)
+                        and result["recall"] >= float(intervention["recall"] + min_recall_gain_vs_int)
+                    ),
+                    "anchor_feature_stats": json.dumps(anchor_stats, ensure_ascii=False),
+                    "gate_feature_stats": json.dumps(gate_stats, ensure_ascii=False),
+                }
+            )
+            sweep.append(result)
+
+    feasible = [row for row in sweep if int(row["feasible"]) == 1]
+    if not feasible:
+        return sweep, None
+    best = sorted(
+        feasible,
+        key=lambda row: (
+            float(row["delta_recall_vs_int"]),
+            float(row["delta_f1_vs_int"]),
+            -float(row["delta_chair_i_vs_int"]),
+            -float(row["delta_chair_s_vs_int"]),
+            -float(row["baseline_rate"]),
+        ),
+        reverse=True,
+    )[0]
+    return sweep, best
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Distill a CHAIR pairwise rollback oracle into GT-free caption-pair proxy features."
@@ -340,7 +503,12 @@ def main() -> None:
     ap.add_argument("--top_n_features", type=int, default=12)
     ap.add_argument("--max_combo_size", type=int, default=2)
     ap.add_argument("--feature", action="append", default=[])
+    ap.add_argument("--extra_features_csv", action="append", default=[])
     ap.add_argument("--tau_quantiles", type=str, default=",".join(str(x) for x in DEFAULT_TAU_QUANTILES))
+    ap.add_argument("--fit_gated", action="store_true")
+    ap.add_argument("--anchor_feature", type=str, default="proxy_chairgen_generated_unique_drop")
+    ap.add_argument("--gate_feature", action="append", default=[])
+    ap.add_argument("--gate_feature_prefix", action="append", default=[])
     ap.add_argument(
         "--selected_policy_json",
         type=str,
@@ -361,18 +529,47 @@ def main() -> None:
         raise RuntimeError("No overlapping CHAIR rows.")
 
     feature_names = add_caption_pair_proxy_features(rows)
+    extra_feature_names = add_extra_numeric_features(rows, args.extra_features_csv)
+    feature_names.extend([name for name in extra_feature_names if name not in set(feature_names)])
     if str(args.selected_policy_json).strip():
         policy = json.load(open(os.path.abspath(args.selected_policy_json), "r", encoding="utf-8"))
-        specs = [
-            (str(item["feature"]), str(item["direction"]))
-            for item in policy.get("feature_specs", [])
-        ]
-        stats = {
-            str(feature): {"mean": float(values.get("mean", 0.0)), "std": float(values.get("std", 1.0) or 1.0)}
-            for feature, values in dict(policy.get("feature_stats", {})).items()
-        }
-        tau = float(policy["tau"])
-        routes, scores = routes_for_policy(rows, specs, stats, tau)
+        if str(policy.get("policy_type")) == "chair_pairwise_caption_gated_proxy_v1":
+            anchor_spec = (str(policy["anchor_feature"]), str(policy["anchor_direction"]))
+            gate_feature = str(policy.get("gate_feature") or "").strip()
+            gate_spec = None
+            if gate_feature:
+                gate_spec = (gate_feature, str(policy["gate_direction"]))
+            anchor_stats = {
+                str(feature): {"mean": float(values.get("mean", 0.0)), "std": float(values.get("std", 1.0) or 1.0)}
+                for feature, values in dict(policy.get("anchor_feature_stats", {})).items()
+            }
+            gate_stats = {
+                str(feature): {"mean": float(values.get("mean", 0.0)), "std": float(values.get("std", 1.0) or 1.0)}
+                for feature, values in dict(policy.get("gate_feature_stats", {})).items()
+            }
+            anchor_tau = float(policy["anchor_tau"])
+            gate_tau = None if policy.get("gate_tau") is None else float(policy["gate_tau"])
+            routes = []
+            scores = []
+            for row in rows:
+                anchor_score = score_with_policy_stats(row, [anchor_spec], anchor_stats)
+                gate_score = None if gate_spec is None else score_with_policy_stats(row, [gate_spec], gate_stats)
+                selected = anchor_score is not None and anchor_score >= anchor_tau
+                if gate_spec is not None:
+                    selected = selected and gate_score is not None and gate_tau is not None and gate_score >= gate_tau
+                routes.append("baseline" if selected else "method")
+                scores.append(anchor_score)
+        else:
+            specs = [
+                (str(item["feature"]), str(item["direction"]))
+                for item in policy.get("feature_specs", [])
+            ]
+            stats = {
+                str(feature): {"mean": float(values.get("mean", 0.0)), "std": float(values.get("std", 1.0) or 1.0)}
+                for feature, values in dict(policy.get("feature_stats", {})).items()
+            }
+            tau = float(policy["tau"])
+            routes, scores = routes_for_policy(rows, specs, stats, tau)
         evaluation = oracle.aggregate_counts(
             rows,
             lambda row, route_by_obj_id={id(row): route for row, route in zip(rows, routes)}: route_by_obj_id[id(row)],
@@ -432,8 +629,15 @@ def main() -> None:
                 lambda row: "baseline" if int(row["teacher_positive"]) == 1 else "method",
             ),
             "applied_proxy_policy": {
+                "policy_type": policy.get("policy_type"),
                 "feature_specs": policy.get("feature_specs", []),
-                "tau": tau,
+                "anchor_feature": policy.get("anchor_feature"),
+                "anchor_direction": policy.get("anchor_direction"),
+                "gate_feature": policy.get("gate_feature"),
+                "gate_direction": policy.get("gate_direction"),
+                "tau": policy.get("tau"),
+                "anchor_tau": policy.get("anchor_tau"),
+                "gate_tau": policy.get("gate_tau"),
                 **evaluation,
             },
             "outputs": {
@@ -443,6 +647,166 @@ def main() -> None:
         }
         oracle.write_json(os.path.join(out_dir, "summary.json"), summary)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+
+    if bool(args.fit_gated):
+        anchor_metric = feature_direction(rows, str(args.anchor_feature))
+        if anchor_metric is None:
+            raise RuntimeError(f"Anchor feature is not usable: {args.anchor_feature}")
+        anchor_spec = (str(args.anchor_feature), str(anchor_metric["direction"]))
+
+        if args.gate_feature:
+            gate_candidates = [str(x) for x in args.gate_feature]
+        else:
+            gate_prefixes = [str(x) for x in args.gate_feature_prefix]
+            if gate_prefixes:
+                gate_candidates = [
+                    name for name in feature_names
+                    if any(str(name).startswith(prefix) for prefix in gate_prefixes)
+                ]
+            else:
+                gate_candidates = [name for name in feature_names if name != str(args.anchor_feature)]
+
+        gate_metrics: List[Dict[str, Any]] = []
+        for feature in gate_candidates:
+            metric = feature_direction(rows, feature)
+            if metric is not None:
+                gate_metrics.append(metric)
+        gate_metrics.sort(
+            key=lambda row: (
+                -float(row.get("teacher_auroc") or 0.0),
+                -float(row.get("teacher_ap") or 0.0),
+                str(row.get("feature") or ""),
+            )
+        )
+        gate_metrics = gate_metrics[: max(0, int(args.top_n_features))]
+
+        quantiles = parse_quantiles(args.tau_quantiles)
+        gated_results: List[Dict[str, Any]] = []
+        all_sweeps: List[Dict[str, Any]] = []
+        best_policy: Optional[Dict[str, Any]] = None
+        best_sweep: List[Dict[str, Any]] = []
+
+        candidates: List[Optional[Dict[str, Any]]] = [None] + gate_metrics
+        for gate_metric in candidates:
+            gate_spec = None
+            if gate_metric is not None:
+                gate_spec = (str(gate_metric["feature"]), str(gate_metric["direction"]))
+            sweep, best = evaluate_gated_specs(
+                rows,
+                anchor_spec=anchor_spec,
+                gate_spec=gate_spec,
+                quantiles=quantiles,
+                max_baseline_rate=float(args.max_baseline_rate),
+                chair_i_eps_vs_int=float(args.chair_i_eps),
+                chair_s_eps_vs_int=float(args.chair_s_eps),
+                min_recall_gain_vs_int=float(args.min_recall_gain),
+            )
+            all_sweeps.extend(sweep)
+            result: Dict[str, Any] = {
+                "anchor_feature": anchor_spec[0],
+                "anchor_direction": anchor_spec[1],
+                "gate_feature": "" if gate_spec is None else gate_spec[0],
+                "gate_direction": "" if gate_spec is None else gate_spec[1],
+                "anchor_teacher_auroc": anchor_metric["teacher_auroc"],
+                "anchor_teacher_ap": anchor_metric["teacher_ap"],
+                "gate_teacher_auroc": None if gate_metric is None else gate_metric["teacher_auroc"],
+                "gate_teacher_ap": None if gate_metric is None else gate_metric["teacher_ap"],
+                "has_feasible_policy": int(best is not None),
+            }
+            if best is not None:
+                result.update(best)
+                if best_policy is None or (
+                    float(best["delta_recall_vs_int"]),
+                    float(best["delta_f1_vs_int"]),
+                    -float(best["delta_chair_i_vs_int"]),
+                    -float(best["delta_chair_s_vs_int"]),
+                    -float(best["baseline_rate"]),
+                ) > (
+                    float(best_policy["delta_recall_vs_int"]),
+                    float(best_policy["delta_f1_vs_int"]),
+                    -float(best_policy["delta_chair_i_vs_int"]),
+                    -float(best_policy["delta_chair_s_vs_int"]),
+                    -float(best_policy["baseline_rate"]),
+                ):
+                    best_policy = dict(best)
+                    best_sweep = list(sweep)
+            gated_results.append(result)
+
+        out_dir = os.path.abspath(args.out_dir)
+        os.makedirs(out_dir, exist_ok=True)
+        oracle.write_csv(os.path.join(out_dir, "gate_feature_metrics.csv"), gate_metrics)
+        oracle.write_csv(os.path.join(out_dir, "gated_results.csv"), gated_results)
+        oracle.write_csv(os.path.join(out_dir, "gated_tau_sweep_all.csv"), all_sweeps)
+
+        outputs = {
+            "gate_feature_metrics_csv": os.path.join(out_dir, "gate_feature_metrics.csv"),
+            "gated_results_csv": os.path.join(out_dir, "gated_results.csv"),
+            "gated_tau_sweep_all_csv": os.path.join(out_dir, "gated_tau_sweep_all.csv"),
+        }
+        if best_policy is not None:
+            anchor_stats = json.loads(str(best_policy.get("anchor_feature_stats") or "{}"))
+            gate_stats = json.loads(str(best_policy.get("gate_feature_stats") or "{}"))
+            selected = {
+                "policy_type": "chair_pairwise_caption_gated_proxy_v1",
+                "source": "caption-pair recall expert with optional GT-free/extra-feature safety gate; CHAIR GT used only for teacher/evaluation",
+                "anchor_feature": str(best_policy["anchor_feature"]),
+                "anchor_direction": str(best_policy["anchor_direction"]),
+                "anchor_feature_stats": anchor_stats,
+                "anchor_tau": float(best_policy["anchor_tau"]),
+                "gate_feature": str(best_policy.get("gate_feature") or ""),
+                "gate_direction": str(best_policy.get("gate_direction") or ""),
+                "gate_feature_stats": gate_stats,
+                "gate_tau": best_policy.get("gate_tau"),
+            }
+            oracle.write_json(os.path.join(out_dir, "selected_policy.json"), selected)
+            oracle.write_csv(os.path.join(out_dir, "gated_tau_sweep.csv"), best_sweep)
+            outputs.update(
+                {
+                    "selected_policy_json": os.path.join(out_dir, "selected_policy.json"),
+                    "gated_tau_sweep_csv": os.path.join(out_dir, "gated_tau_sweep.csv"),
+                }
+            )
+
+        summary = {
+            "inputs": {
+                "baseline_chair_json": os.path.abspath(args.baseline_chair_json),
+                "intervention_chair_json": os.path.abspath(args.intervention_chair_json),
+                "extra_features_csv": [os.path.abspath(p) for p in args.extra_features_csv],
+                "chair_i_eps": float(args.chair_i_eps),
+                "chair_s_eps": float(args.chair_s_eps),
+                "min_recall_gain": float(args.min_recall_gain),
+                "require_f1_nondecrease": bool(args.require_f1_nondecrease),
+                "max_baseline_rate": float(args.max_baseline_rate),
+                "anchor_feature": str(args.anchor_feature),
+                "gate_feature": [str(x) for x in args.gate_feature],
+                "gate_feature_prefix": [str(x) for x in args.gate_feature_prefix],
+                "top_n_features": int(args.top_n_features),
+                "tau_quantiles": quantiles,
+            },
+            "counts": {
+                "n_rows": int(len(rows)),
+                "teacher_positive_rate": oracle.safe_div(
+                    float(sum(int(r["teacher_positive"]) for r in rows)),
+                    float(len(rows)),
+                ),
+                "n_proxy_features": int(len(feature_names)),
+                "n_extra_features": int(len(extra_feature_names)),
+                "n_gate_candidates": int(len(gate_metrics)),
+            },
+            "baseline": oracle.aggregate_counts(rows, lambda _: "baseline"),
+            "intervention": oracle.aggregate_counts(rows, lambda _: "method"),
+            "teacher_oracle": oracle.aggregate_counts(
+                rows,
+                lambda row: "baseline" if int(row["teacher_positive"]) == 1 else "method",
+            ),
+            "best_gated_policy": best_policy,
+            "outputs": outputs,
+        }
+        oracle.write_json(os.path.join(out_dir, "summary.json"), summary)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        if best_policy is None:
+            raise RuntimeError("No feasible gated proxy policy found.")
         return
 
     if args.feature:
