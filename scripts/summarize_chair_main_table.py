@@ -5,7 +5,7 @@ import argparse
 import csv
 import json
 import os
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
 def write_csv(path: str, rows: Sequence[Dict[str, Any]]) -> None:
@@ -30,17 +30,64 @@ def write_json(path: str, obj: Any) -> None:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
 
+def normalize_rate(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    if abs(out) > 1.0:
+        out /= 100.0
+    return out
+
+
+def canonical_object(value: Any) -> str:
+    if isinstance(value, (list, tuple)) and value:
+        return str(value[-1]).strip()
+    return str(value).strip()
+
+
+def compute_object_pr_from_sentences(sentences: Sequence[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float]]:
+    n_supported_unique = 0
+    n_generated_unique = 0
+    n_gt_objects = 0
+    for row in sentences:
+        generated = [canonical_object(value) for value in row.get("mscoco_generated_words", [])]
+        generated = [value for value in generated if value]
+        gt_objects = {canonical_object(value) for value in row.get("mscoco_gt_words", [])}
+        gt_objects = {value for value in gt_objects if value}
+        supported = {value for value in generated if value in gt_objects}
+        n_supported_unique += len(supported)
+        n_generated_unique += len(set(generated))
+        n_gt_objects += len(gt_objects)
+    if n_generated_unique <= 0 or n_gt_objects <= 0:
+        return None, None
+    precision = float(n_supported_unique) / float(n_generated_unique)
+    recall = float(n_supported_unique) / float(n_gt_objects)
+    return precision, recall
+
+
 def load_chair_metrics(path: str) -> Tuple[Dict[str, float], int]:
     obj = json.load(open(path, "r", encoding="utf-8"))
     overall = obj.get("overall_metrics", {})
     sentences = obj.get("sentences", [])
-    chair_s = float(overall.get("CHAIRs", 0.0))
-    chair_i = float(overall.get("CHAIRi", 0.0))
-    recall = float(overall.get("Recall", 0.0))
+    chair_s = float(normalize_rate(overall.get("CHAIRs")) or 0.0)
+    chair_i = float(normalize_rate(overall.get("CHAIRi")) or 0.0)
+    recall = float(normalize_rate(overall.get("Recall")) or 0.0)
     length = float(overall.get("Len", 0.0))
-    precision = 1.0 - chair_i
-    denom = precision + recall
-    f1 = 0.0 if denom <= 0.0 else (2.0 * precision * recall / denom)
+    recomputed_precision, recomputed_recall = compute_object_pr_from_sentences(sentences)
+    if recomputed_recall is not None and normalize_rate(overall.get("Recall")) is None:
+        recall = recomputed_recall
+    precision = normalize_rate(overall.get("Precision"))
+    if precision is None:
+        precision = recomputed_precision
+    if precision is None:
+        precision = 1.0 - chair_i
+    f1 = normalize_rate(overall.get("F1"))
+    if f1 is None:
+        denom = precision + recall
+        f1 = 0.0 if denom <= 0.0 else (2.0 * precision * recall / denom)
     return (
         {
             "CHAIRs": chair_s,
