@@ -10,6 +10,7 @@ OUT_ROOT="${OUT_ROOT:-}"
 
 TEACHER_MODE="${TEACHER_MODE:-strict_pareto}"
 MIN_F1_GAIN="${MIN_F1_GAIN:-0.0}"
+MIN_RECALL_GAIN="${MIN_RECALL_GAIN:-0.0}"
 FEATURE_COLS="${FEATURE_COLS:-auto}"
 MIN_FEATURE_AUROC="${MIN_FEATURE_AUROC:-0.55}"
 TOP_N_FEATURES="${TOP_N_FEATURES:-6}"
@@ -40,6 +41,7 @@ PYTHONPATH="${PYTHONPATH:-.}" "$CAL_PYTHON_BIN" scripts/build_generative_pareto_
   --out_dir "$OUT_ROOT" \
   --teacher_mode "$TEACHER_MODE" \
   --min_f1_gain "$MIN_F1_GAIN" \
+  --min_recall_gain "$MIN_RECALL_GAIN" \
   --feature_cols "$FEATURE_COLS" \
   --min_feature_auroc "$MIN_FEATURE_AUROC" \
   --top_n_features "$TOP_N_FEATURES" \
