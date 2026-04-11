@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import os
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Counter, Dict, Iterable, List, Optional, Sequence, Set
 
 
 RATE_KEYS = ("CHAIRs", "CHAIRi", "Recall", "Precision", "F1")
@@ -52,6 +53,10 @@ def compute(sentences: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     n_gt_objects = 0
     n_supported_unique = 0
     n_words = 0
+    n_sentences_with_duplicate_objects = 0
+    generated_counter: Counter[str] = collections.Counter()
+    hallucinated_counter: Counter[str] = collections.Counter()
+    supported_counter: Counter[str] = collections.Counter()
 
     for row in sentences:
         caption = str(row.get("caption", "")).strip()
@@ -63,6 +68,12 @@ def compute(sentences: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             hallucinated = [obj for obj in generated if obj not in gt]
 
         supported = {obj for obj in generated if obj in gt}
+        unique_generated = set(generated)
+        if len(generated) > len(unique_generated):
+            n_sentences_with_duplicate_objects += 1
+        generated_counter.update(generated)
+        hallucinated_counter.update(hallucinated)
+        supported_counter.update(supported)
         words = row.get("words")
         if isinstance(words, list):
             n_words += len(words)
@@ -73,7 +84,7 @@ def compute(sentences: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         n_hall_caps += int(bool(hallucinated))
         n_hall_instances += len(hallucinated)
         n_generated_instances += len(generated)
-        n_generated_unique += len(set(generated))
+        n_generated_unique += len(unique_generated)
         n_gt_objects += len(gt)
         n_supported_unique += len(supported)
 
@@ -92,6 +103,8 @@ def compute(sentences: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             "n_generated_unique": n_generated_unique,
             "n_gt_objects": n_gt_objects,
             "n_supported_unique": n_supported_unique,
+            "n_duplicate_object_mentions": n_generated_instances - n_generated_unique,
+            "n_sentences_with_duplicate_objects": n_sentences_with_duplicate_objects,
         },
         "metrics": {
             "CHAIRs": chair_s,
@@ -102,7 +115,21 @@ def compute(sentences: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             "Precision_1_minus_CHAIRi": 1.0 - chair_i,
             "F1_1_minus_CHAIRi": f1(1.0 - chair_i, recall),
             "Len": length,
+            "avg_generated_object_mentions": n_generated_instances / float(n_caps) if n_caps else 0.0,
+            "avg_generated_unique_objects": n_generated_unique / float(n_caps) if n_caps else 0.0,
+            "avg_gt_objects": n_gt_objects / float(n_caps) if n_caps else 0.0,
+            "avg_supported_unique_objects": n_supported_unique / float(n_caps) if n_caps else 0.0,
+            "avg_hallucinated_object_mentions": n_hall_instances / float(n_caps) if n_caps else 0.0,
+            "duplicate_object_mention_rate": (
+                (n_generated_instances - n_generated_unique) / float(n_generated_instances)
+                if n_generated_instances
+                else 0.0
+            ),
+            "duplicate_sentence_rate": n_sentences_with_duplicate_objects / float(n_caps) if n_caps else 0.0,
         },
+        "top_generated_objects": generated_counter.most_common(25),
+        "top_supported_objects": supported_counter.most_common(25),
+        "top_hallucinated_objects": hallucinated_counter.most_common(25),
     }
 
 
@@ -140,6 +167,19 @@ def print_audit(result: Dict[str, Any]) -> None:
     print(f"Precision_1_minus_CHAIRi,NA,{fmt_rate(metrics['Precision_1_minus_CHAIRi'])},NA")
     print(f"F1_1_minus_CHAIRi,NA,{fmt_rate(metrics['F1_1_minus_CHAIRi'])},NA")
     print(f"Len,{reported.get('Len', 'NA')},{metrics['Len']:.4f},NA")
+    print("diagnostics:")
+    for key in (
+        "avg_generated_object_mentions",
+        "avg_generated_unique_objects",
+        "avg_gt_objects",
+        "avg_supported_unique_objects",
+        "avg_hallucinated_object_mentions",
+        "duplicate_object_mention_rate",
+        "duplicate_sentence_rate",
+    ):
+        print(f"  {key}: {metrics[key]:.6f}")
+    for key in ("top_generated_objects", "top_supported_objects", "top_hallucinated_objects"):
+        print(f"  {key}: {result['recomputed'][key][:10]}")
 
 
 def main() -> None:
