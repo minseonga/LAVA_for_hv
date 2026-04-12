@@ -171,6 +171,61 @@ def add_prefix_stats(out: Dict[str, Any], prefix: str, items: Sequence[Dict[str,
     out[f"{prefix}_yes_precision_gt_070"] = float(out[f"{prefix}_yes_prob_gt_070_count"] / n)
 
 
+def add_competition_features(out: Dict[str, Any]) -> None:
+    def get_float(key: str) -> float:
+        try:
+            return float(out.get(key, 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
+    base_yes_sum = get_float("pair_chairyn_base_only_yes_prob_sum")
+    int_yes_sum = get_float("pair_chairyn_int_only_yes_prob_sum")
+    base_yes_mean = get_float("pair_chairyn_base_only_yes_prob_mean")
+    int_yes_mean = get_float("pair_chairyn_int_only_yes_prob_mean")
+    base_yes_min = get_float("pair_chairyn_base_only_yes_prob_min")
+    int_yes_max = get_float("pair_chairyn_int_only_yes_prob_max")
+    base_lp_mean = get_float("pair_chairyn_base_only_lp_margin_mean")
+    int_lp_mean = get_float("pair_chairyn_int_only_lp_margin_mean")
+    base_lp_min = get_float("pair_chairyn_base_only_lp_margin_min")
+    int_lp_max = get_float("pair_chairyn_int_only_lp_margin_max")
+    int_count = get_float("pair_chairyn_int_only_object_count")
+    base_no_risk = get_float("pair_chairyn_base_only_no_risk_sum")
+    int_no_risk = get_float("pair_chairyn_int_only_no_risk_sum")
+    gain_cost_ratio = get_float("pair_chairyn_rollback_gain_cost_ratio_eps_010")
+    net_gain_cost_ratio = get_float("pair_chairyn_rollback_net_gain_cost_ratio_eps_010")
+    yes_mean_margin = float(base_yes_mean - int_yes_mean)
+    lp_mean_margin = float(base_lp_mean - int_lp_mean)
+    no_competition = float(1.0 if int_count <= 0.0 else 0.0)
+
+    out.update(
+        {
+            "pair_chairyn_comp_yes_sum_margin": float(base_yes_sum - int_yes_sum),
+            "pair_chairyn_comp_yes_mean_margin": yes_mean_margin,
+            "pair_chairyn_comp_yes_min_vs_int_max_margin": float(base_yes_min - int_yes_max),
+            "pair_chairyn_comp_lp_mean_margin": lp_mean_margin,
+            "pair_chairyn_comp_lp_min_vs_int_max_margin": float(base_lp_min - int_lp_max),
+            "pair_chairyn_comp_base_advantage_yes_sum": float(max(0.0, base_yes_sum - int_yes_sum)),
+            "pair_chairyn_comp_base_advantage_yes_mean": float(max(0.0, yes_mean_margin)),
+            "pair_chairyn_comp_base_advantage_lp_mean": float(max(0.0, lp_mean_margin)),
+            "pair_chairyn_comp_int_competition_count": float(int_count),
+            "pair_chairyn_comp_base_only_no_competition": no_competition,
+            "pair_chairyn_comp_base_yes_sum_x_no_competition": float(base_yes_sum * no_competition),
+            "pair_chairyn_comp_base_yes_sum_x_comp_margin": float(base_yes_sum * max(0.0, yes_mean_margin)),
+            "pair_chairyn_comp_gain_cost_ratio_no_competition": float(gain_cost_ratio * no_competition),
+            "pair_chairyn_comp_gain_cost_ratio_x_comp_margin": float(gain_cost_ratio * max(0.0, yes_mean_margin)),
+            "pair_chairyn_comp_net_gain_cost_ratio_x_comp_margin": float(
+                net_gain_cost_ratio * max(0.0, yes_mean_margin)
+            ),
+            "pair_chairyn_comp_safe_support_score": float(
+                base_yes_sum * max(0.0, 1.0 - base_no_risk) * max(0.0, 1.0 - int_yes_sum)
+            ),
+            "pair_chairyn_comp_safe_net_score": float(
+                (base_yes_sum + int_no_risk) * max(0.0, 1.0 - base_no_risk) * max(0.0, 1.0 - int_yes_sum)
+            ),
+        }
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Extract CHAIR-vocabulary object-delta yes/no visual support features without using GT labels."
@@ -296,6 +351,7 @@ def main() -> None:
                     "pair_chairyn_rollback_net_gain_x_low_cost": float(net_gain * max(0.0, 1.0 - net_cost)),
                 }
             )
+            add_competition_features(row)
         except Exception as exc:
             n_errors += 1
             row["pair_chairyn_error"] = str(exc)
