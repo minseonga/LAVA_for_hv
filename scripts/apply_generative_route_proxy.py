@@ -44,10 +44,33 @@ def aux_pass(value: Optional[float], *, direction: str, tau: Optional[float]) ->
     return float(value) >= float(tau)
 
 
+def threshold_pass(value: Optional[float], *, direction: str, tau: Optional[float]) -> bool:
+    return aux_pass(value, direction=direction, tau=tau)
+
+
 def build_routes(
     rows: Sequence[Dict[str, Any]],
     policy: Dict[str, Any],
 ) -> tuple[List[str], List[Optional[float]], List[Optional[float]]]:
+    policy_type = str(policy.get("policy_type", "")).strip()
+    if policy_type == "generative_trace_cascade_proxy_v1":
+        anchor_feature = str(policy.get("anchor_feature") or "").strip()
+        anchor_direction = str(policy.get("anchor_direction") or "high").strip()
+        anchor_tau = base.maybe_float(policy.get("anchor_tau"))
+        gate_feature = str(policy.get("gate_feature") or "").strip()
+        gate_direction = str(policy.get("gate_direction") or "high").strip()
+        gate_tau = base.maybe_float(policy.get("gate_tau"))
+        anchor_values = [base.maybe_float(row.get(anchor_feature)) for row in rows]
+        gate_values = [base.maybe_float(row.get(gate_feature)) for row in rows]
+        routes: List[str] = []
+        scores: List[Optional[float]] = []
+        for anchor_value, gate_value in zip(anchor_values, gate_values):
+            anchor_ok = threshold_pass(anchor_value, direction=anchor_direction, tau=anchor_tau)
+            gate_ok = threshold_pass(gate_value, direction=gate_direction, tau=gate_tau)
+            routes.append("baseline" if anchor_ok and gate_ok else "method")
+            scores.append(gate_value if anchor_ok else None)
+        return routes, scores, anchor_values
+
     feature_specs = list(policy.get("feature_specs", []))
     feature_stats = {
         str(k): {"mean": float(v.get("mean", 0.0)), "std": float(v.get("std", 1.0))}
@@ -55,8 +78,6 @@ def build_routes(
     }
     tau = float(base.maybe_float(policy.get("tau")) or 0.0)
     scores = build_scores(rows, feature_specs, feature_stats)
-    policy_type = str(policy.get("policy_type", "")).strip()
-
     aux_feature = ""
     aux_direction = ""
     aux_tau: Optional[float] = None

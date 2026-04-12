@@ -535,6 +535,35 @@ def compute_stop_values(pack: Any, tokenizer: Any) -> Dict[str, float]:
     }
 
 
+def compute_eos_values(pack: Any, tokenizer: Any) -> Dict[str, List[float]]:
+    logits = pack.logits.to(torch.float32)
+    decision_positions = pack.decision_positions.long()
+    eos_id = getattr(tokenizer, "eos_token_id", None)
+    n_tokens = int(decision_positions.numel())
+    zeros = [0.0 for _ in range(n_tokens)]
+    if eos_id is None or int(eos_id) < 0 or int(eos_id) >= int(logits.size(-1)):
+        return {"logprob": list(zeros), "margin": list(zeros), "rank": list(zeros)}
+
+    token_logits = logits[decision_positions]
+    log_probs = F.log_softmax(token_logits, dim=-1)
+    eos_logprob = log_probs[:, int(eos_id)]
+    eos_logit = token_logits[:, int(eos_id)]
+
+    top2_vals, top2_idx = torch.topk(token_logits, k=2, dim=-1)
+    top1_logit = top2_vals[:, 0]
+    top2_logit = top2_vals[:, 1]
+    top1_id = top2_idx[:, 0]
+    best_other_logit = torch.where(top1_id == int(eos_id), top2_logit, top1_logit)
+    eos_margin = eos_logit - best_other_logit
+    eos_rank = (token_logits > eos_logit.unsqueeze(-1)).sum(dim=-1).to(torch.float32) + 1.0
+
+    return {
+        "logprob": [float(x.item()) for x in eos_logprob],
+        "margin": [float(x.item()) for x in eos_margin],
+        "rank": [float(x.item()) for x in eos_rank],
+    }
+
+
 def pick(values: Sequence[float], idxs: Sequence[int]) -> List[float]:
     return [float(values[int(i)]) for i in idxs if 0 <= int(i) < len(values)]
 
@@ -562,6 +591,7 @@ def build_feature_payload(
     mentions, fallback_used = extract_mentions(decoded_text, max_mentions=max_mentions)
     values = compute_pack_values(pack)
     stop_values = compute_stop_values(pack, runtime.tokenizer)
+    eos_values = compute_eos_values(pack, runtime.tokenizer)
 
     mention_rows: List[Dict[str, Any]] = []
     for mention in mentions:
@@ -578,6 +608,7 @@ def build_feature_payload(
                 "n_tokens": int(len(idxs)),
                 "first_idx": int(min(idxs)),
                 "last_idx": int(max(idxs)),
+                "token_indices": [int(idx) for idx in idxs],
                 "lp_min": min_or_zero(lp_vals),
                 "gap_min": min_or_zero(gap_vals),
                 "ent_max": max_or_zero(ent_vals),
@@ -600,12 +631,22 @@ def build_feature_payload(
     count_mentions = sum(1 for row in mention_rows if "count_phrase" in str(row["kinds"]).split("|"))
     object_texts = unique_nonempty(row["text"] for row in mention_rows if "object_mention" in str(row["kinds"]).split("|"))
     mention_texts = unique_nonempty(row["text"] for row in mention_rows)
+    object_rows = [row for row in mention_rows if "object_mention" in str(row["kinds"]).split("|")]
+    object_token_indices = sorted(
+        {
+            int(idx)
+            for row in object_rows
+            for idx in row.get("token_indices", [])
+        }
+    )
 
     ordered_content = sorted(int(x) for x in content_indices)
     n_content = len(ordered_content)
     lp_content = pick(values["lp"], ordered_content)
     gap_content = pick(values["gap"], ordered_content)
     ent_content = pick(values["ent"], ordered_content)
+    eos_margin_content = pick(eos_values["margin"], ordered_content)
+    eos_logprob_content = pick(eos_values["logprob"], ordered_content)
     head_n = max(1, n_content // 3) if n_content > 0 else 0
     tail_n = head_n
     head_slice = ordered_content[:head_n]
@@ -621,6 +662,14 @@ def build_feature_payload(
     lp_last4 = pick(values["lp"], last4_slice)
     gap_last4 = pick(values["gap"], last4_slice)
     ent_last4 = pick(values["ent"], last4_slice)
+    eos_margin_last4 = pick(eos_values["margin"], last4_slice)
+    eos_logprob_last4 = pick(eos_values["logprob"], last4_slice)
+
+    lp_object = pick(values["lp"], object_token_indices)
+    gap_object = pick(values["gap"], object_token_indices)
+    ent_object = pick(values["ent"], object_token_indices)
+    eos_margin_object = pick(eos_values["margin"], object_token_indices)
+    eos_logprob_object = pick(eos_values["logprob"], object_token_indices)
 
     midpoint = (n_content - 1) / 2.0 if n_content > 0 else 0.0
     first_half_object_mentions = sum(
@@ -637,6 +686,21 @@ def build_feature_payload(
     max_content_idx = max(ordered_content) if ordered_content else 0
     tail_tokens_after_last_mention = max(0, int(max_content_idx - last_mention_idx))
     last_mention_pos_frac = float(last_mention_idx / float(max(1, max_content_idx))) if max_content_idx > 0 else 0.0
+    if object_rows:
+        last_object_idx = max(int(row["last_idx"]) for row in object_rows)
+    else:
+        last_object_idx = int(last_mention_idx)
+    tail_tokens_after_last_object = max(0, int(max_content_idx - last_object_idx))
+    last_object_pos_frac = float(last_object_idx / float(max(1, max_content_idx))) if max_content_idx > 0 else 0.0
+    after_last_object_slice = [idx for idx in ordered_content if int(idx) > int(last_object_idx)]
+    lp_after_last_object = pick(values["lp"], after_last_object_slice)
+    gap_after_last_object = pick(values["gap"], after_last_object_slice)
+    ent_after_last_object = pick(values["ent"], after_last_object_slice)
+    eos_margin_after_last_object = pick(eos_values["margin"], after_last_object_slice)
+    eos_logprob_after_last_object = pick(eos_values["logprob"], after_last_object_slice)
+    after_object_last4_slice = after_last_object_slice[-min(4, len(after_last_object_slice)):] if after_last_object_slice else []
+    eos_margin_after_object_last4 = pick(eos_values["margin"], after_object_last4_slice)
+    eos_logprob_after_object_last4 = pick(eos_values["logprob"], after_object_last4_slice)
 
     feature_row = {
         "id": sample_id,
@@ -650,6 +714,7 @@ def build_feature_payload(
         "probe_n_content_tokens": int(len(content_indices)),
         "probe_n_mentions_total": int(len(mention_rows)),
         "probe_n_object_mentions": int(object_mentions),
+        "probe_n_unique_object_mentions": int(len(object_texts)),
         "probe_n_noun_phrases": int(noun_mentions),
         "probe_n_attribute_phrases": int(attr_mentions),
         "probe_n_relation_phrases": int(relation_mentions),
@@ -660,6 +725,10 @@ def build_feature_payload(
         "probe_second_half_object_mentions": int(second_half_object_mentions),
         "probe_tail_tokens_after_last_mention": int(tail_tokens_after_last_mention),
         "probe_last_mention_pos_frac": float(last_mention_pos_frac),
+        "probe_tail_tokens_after_last_object": int(tail_tokens_after_last_object),
+        "probe_last_object_pos_frac": float(last_object_pos_frac),
+        "probe_object_token_count": int(len(object_token_indices)),
+        "probe_object_token_fraction": float(len(object_token_indices) / float(max(1, len(content_indices)))),
         "probe_lp_content_mean_real": float(mean_or_zero(lp_content)),
         "probe_lp_content_std_real": float(std_or_zero(lp_content)),
         "probe_lp_content_min_real": float(min_or_zero(lp_content)),
@@ -669,6 +738,10 @@ def build_feature_payload(
         "probe_entropy_content_mean_real": float(mean_or_zero(ent_content)),
         "probe_entropy_content_std_real": float(std_or_zero(ent_content)),
         "probe_entropy_content_max_real": float(max_or_zero(ent_content)),
+        "probe_eos_margin_content_mean_real": float(mean_or_zero(eos_margin_content)),
+        "probe_eos_margin_content_max_real": float(max_or_zero(eos_margin_content)),
+        "probe_eos_logprob_content_mean_real": float(mean_or_zero(eos_logprob_content)),
+        "probe_eos_logprob_content_max_real": float(max_or_zero(eos_logprob_content)),
         "probe_lp_head_mean_real": float(mean_or_zero(lp_head)),
         "probe_lp_tail_mean_real": float(mean_or_zero(lp_tail)),
         "probe_lp_tail_minus_head_real": float(mean_or_zero(lp_tail) - mean_or_zero(lp_head)),
@@ -681,9 +754,31 @@ def build_feature_payload(
         "probe_last4_lp_mean_real": float(mean_or_zero(lp_last4)),
         "probe_last4_gap_mean_real": float(mean_or_zero(gap_last4)),
         "probe_last4_entropy_mean_real": float(mean_or_zero(ent_last4)),
+        "probe_last4_eos_margin_mean_real": float(mean_or_zero(eos_margin_last4)),
+        "probe_last4_eos_logprob_mean_real": float(mean_or_zero(eos_logprob_last4)),
         "probe_stop_eos_logprob_real": float(stop_values["stop_eos_logprob"]),
         "probe_stop_eos_margin_real": float(stop_values["stop_eos_margin"]),
         "probe_stop_eos_rank_real": float(stop_values["stop_eos_rank"]),
+        "probe_object_token_lp_mean_real": float(mean_or_zero(lp_object)),
+        "probe_object_token_lp_min_real": float(min_or_zero(lp_object)),
+        "probe_object_token_gap_mean_real": float(mean_or_zero(gap_object)),
+        "probe_object_token_gap_min_real": float(min_or_zero(gap_object)),
+        "probe_object_token_entropy_mean_real": float(mean_or_zero(ent_object)),
+        "probe_object_token_entropy_max_real": float(max_or_zero(ent_object)),
+        "probe_object_token_eos_margin_mean_real": float(mean_or_zero(eos_margin_object)),
+        "probe_object_token_eos_logprob_mean_real": float(mean_or_zero(eos_logprob_object)),
+        "probe_tail_after_last_object_lp_mean_real": float(mean_or_zero(lp_after_last_object)),
+        "probe_tail_after_last_object_lp_min_real": float(min_or_zero(lp_after_last_object)),
+        "probe_tail_after_last_object_gap_mean_real": float(mean_or_zero(gap_after_last_object)),
+        "probe_tail_after_last_object_gap_min_real": float(min_or_zero(gap_after_last_object)),
+        "probe_tail_after_last_object_entropy_mean_real": float(mean_or_zero(ent_after_last_object)),
+        "probe_tail_after_last_object_entropy_max_real": float(max_or_zero(ent_after_last_object)),
+        "probe_tail_after_last_object_eos_margin_mean_real": float(mean_or_zero(eos_margin_after_last_object)),
+        "probe_tail_after_last_object_eos_margin_max_real": float(max_or_zero(eos_margin_after_last_object)),
+        "probe_tail_after_last_object_eos_logprob_mean_real": float(mean_or_zero(eos_logprob_after_last_object)),
+        "probe_tail_after_last_object_eos_logprob_max_real": float(max_or_zero(eos_logprob_after_last_object)),
+        "probe_tail_after_last_object_last4_eos_margin_mean_real": float(mean_or_zero(eos_margin_after_object_last4)),
+        "probe_tail_after_last_object_last4_eos_logprob_mean_real": float(mean_or_zero(eos_logprob_after_object_last4)),
         "probe_mention_lp_min_real": float(weakest_lp["lp_min"]),
         "probe_mention_target_gap_min_real": float(weakest_gap["gap_min"]),
         "probe_mention_entropy_max_real": float(weakest_ent["ent_max"]),

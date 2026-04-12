@@ -35,6 +35,10 @@ STRICT_MAX_BASELINE_RATE="${STRICT_MAX_BASELINE_RATE:-0.08}"
 STRICT_MIN_RECALL_GAIN="${STRICT_MIN_RECALL_GAIN:-0.005}"
 STRICT_MAX_CHAIR_I_DELTA="${STRICT_MAX_CHAIR_I_DELTA:-0.005}"
 STRICT_MAX_CHAIR_S_DELTA="${STRICT_MAX_CHAIR_S_DELTA:-0.005}"
+ANCHOR_FEATURES="${ANCHOR_FEATURES:-probe_n_unique_object_mentions,probe_n_object_mentions,probe_last_object_pos_frac,probe_tail_tokens_after_last_object,probe_tail_after_last_object_eos_margin_mean_real,probe_tail_after_last_object_entropy_mean_real,probe_object_token_fraction,probe_n_content_tokens}"
+GATE_FEATURES="${GATE_FEATURES:-probe_object_token_gap_min_real,probe_object_token_lp_min_real,probe_object_token_entropy_max_real,probe_tail_after_last_object_gap_min_real,probe_tail_after_last_object_lp_mean_real,probe_tail_after_last_object_entropy_mean_real,probe_tail_after_last_object_eos_margin_mean_real,probe_last4_eos_margin_mean_real,probe_entropy_tail_minus_head_real,probe_gap_tail_minus_head_real,probe_lp_tail_minus_head_real}"
+CASCADE_MIN_ANCHOR_TARGET_RECALL="${CASCADE_MIN_ANCHOR_TARGET_RECALL:-0.5}"
+CASCADE_MAX_ANCHOR_RATE="${CASCADE_MAX_ANCHOR_RATE:-0.4}"
 
 echo "[config] CAL_ROOT=$CAL_ROOT"
 echo "[config] SRC=$SRC"
@@ -45,6 +49,8 @@ echo "[config] PY_BIN=$PY_BIN"
 echo "[config] METHOD_PRED_NAME=$METHOD_PRED_NAME"
 echo "[config] TARGET_COL=$TARGET_COL TARGET_REQUIRES_TEACHER_POSITIVE=$TARGET_REQUIRES_TEACHER_POSITIVE"
 echo "[config] LIMIT=$LIMIT REUSE_IF_EXISTS=$REUSE_IF_EXISTS"
+echo "[config] ANCHOR_FEATURES=$ANCHOR_FEATURES"
+echo "[config] GATE_FEATURES=$GATE_FEATURES"
 
 for path in "$PY_BIN" "$SRC/splits/val_caption_q.jsonl" "$SRC/splits/test_caption_q.jsonl"; do
   if [[ ! -e "$path" ]]; then
@@ -167,5 +173,38 @@ else
   echo "[optional] strict intervention-trace policy was not feasible; inspect $OUT/distill/trace_val_strict/summary.json if present"
 fi
 
+echo "[cascade][val] fit intervention-trace anchor/gate policy"
+set +e
+PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/build_generative_trace_cascade_proxy.py \
+  --decision_rows_csv "$OUT/distill/val_rows.csv" \
+  --target_col "$TARGET_COL" \
+  --anchor_target_col proxy_route \
+  --anchor_positive_value baseline \
+  --anchor_features "$ANCHOR_FEATURES" \
+  --gate_features "$GATE_FEATURES" \
+  --min_anchor_target_recall "$CASCADE_MIN_ANCHOR_TARGET_RECALL" \
+  --max_anchor_rate "$CASCADE_MAX_ANCHOR_RATE" \
+  --min_baseline_rate 0.0 \
+  --max_baseline_rate "$STRICT_MAX_BASELINE_RATE" \
+  --min_recall_gain_vs_intervention "$STRICT_MIN_RECALL_GAIN" \
+  --max_chair_i_delta_vs_intervention "$STRICT_MAX_CHAIR_I_DELTA" \
+  --max_chair_s_delta_vs_intervention "$STRICT_MAX_CHAIR_S_DELTA" \
+  --selection_objective recall_minus_chairi \
+  --out_dir "$OUT/distill/trace_val_cascade"
+cascade_status=$?
+set -e
+
+if [[ "$cascade_status" -eq 0 && -f "$OUT/distill/trace_val_cascade/selected_policy.json" ]]; then
+  echo "[cascade][test] apply intervention-trace anchor/gate policy"
+  PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/apply_generative_route_distill_proxy_to_rows.py \
+    --rows_csv "$OUT/distill/test_rows.csv" \
+    --selected_policy_json "$OUT/distill/trace_val_cascade/selected_policy.json" \
+    --out_dir "$OUT/distill/test_apply_cascade" \
+    --target_col "$TARGET_COL"
+else
+  echo "[cascade] intervention-trace cascade policy was not feasible; inspect $OUT/distill/trace_val_cascade/summary.json if present"
+fi
+
 echo "[done] diag summary: $OUT/distill/test_apply_diag/summary.json"
 echo "[done] strict summary: $OUT/distill/test_apply_strict/summary.json"
+echo "[done] cascade summary: $OUT/distill/test_apply_cascade/summary.json"
