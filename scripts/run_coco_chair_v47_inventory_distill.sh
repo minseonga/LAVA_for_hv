@@ -90,7 +90,8 @@ for split in val test; do
     --positive_route baseline \
     --target_col v46_target \
     --out_csv "$OUT/distill/${split}_rows.csv" \
-    --out_summary_json "$OUT/distill/${split}_rows.summary.json"
+    --out_summary_json "$OUT/distill/${split}_rows.summary.json" \
+    --drop_unmatched_feature_rows
 done
 
 echo "[3/4][val] fit relaxed invyn distill diagnostic"

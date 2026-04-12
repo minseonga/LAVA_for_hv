@@ -87,6 +87,11 @@ def main() -> None:
     ap.add_argument("--route_col", default="", help="Optional route column used to create a binary distillation target.")
     ap.add_argument("--positive_route", default="baseline")
     ap.add_argument("--target_col", default="", help="Optional binary target column to create from route_col.")
+    ap.add_argument(
+        "--drop_unmatched_feature_rows",
+        action="store_true",
+        help="Drop route rows that did not receive any feature values. Useful for LIMIT-based smoke tests.",
+    )
     args = ap.parse_args()
 
     route_rows = read_csv_rows(os.path.abspath(args.route_rows_csv))
@@ -109,6 +114,7 @@ def main() -> None:
     n_feature_rows = 0
     n_merged_feature_rows = 0
     n_feature_cols_added = 0
+    ids_with_features = set()
     for feature_csv in args.feature_rows_csv:
         feature_rows = read_csv_rows(os.path.abspath(feature_csv))
         for feature_row in feature_rows:
@@ -118,6 +124,7 @@ def main() -> None:
                 continue
             n_merged_feature_rows += 1
             target = merged_by_id[sid]
+            row_added = False
             for key, value in feature_row.items():
                 skey = str(key)
                 if skey in {"id", "image", "image_id", "question", "question_id"}:
@@ -128,8 +135,14 @@ def main() -> None:
                     continue
                 target[skey] = value
                 n_feature_cols_added += 1
+                row_added = True
+            if row_added:
+                ids_with_features.add(sid)
 
-    rows = [merged_by_id[sid] for sid in sorted(merged_by_id.keys(), key=lambda x: int(x) if x.isdigit() else x)]
+    output_ids = sorted(merged_by_id.keys(), key=lambda x: int(x) if x.isdigit() else x)
+    if bool(args.drop_unmatched_feature_rows):
+        output_ids = [sid for sid in output_ids if sid in ids_with_features]
+    rows = [merged_by_id[sid] for sid in output_ids]
     write_csv(args.out_csv, rows)
     if str(args.out_summary_json or "").strip():
         write_json(
@@ -144,12 +157,14 @@ def main() -> None:
                     "route_col": str(args.route_col),
                     "positive_route": str(args.positive_route),
                     "target_col": str(args.target_col),
+                    "drop_unmatched_feature_rows": bool(args.drop_unmatched_feature_rows),
                 },
                 "counts": {
                     "n_route_rows": int(len(route_rows)),
                     "n_output_rows": int(len(rows)),
                     "n_feature_rows_seen": int(n_feature_rows),
                     "n_feature_rows_merged": int(n_merged_feature_rows),
+                    "n_route_rows_with_features": int(len(ids_with_features)),
                     "n_feature_values_added": int(n_feature_cols_added),
                 },
                 "outputs": {"out_csv": os.path.abspath(args.out_csv)},
