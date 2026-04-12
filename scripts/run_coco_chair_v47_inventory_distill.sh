@@ -18,6 +18,7 @@ MODEL_BASE="${MODEL_BASE:-}"
 CONV_MODE="${CONV_MODE:-llava_v1}"
 IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
+LIMIT="${LIMIT:-0}"
 
 SRC="${SRC:-$CAL_ROOT/experiments/coco_chair_vga_pvg_ablation_first_next_len512}"
 V46_ROOT="${V46_ROOT:-$CAL_ROOT/experiments/coco_chair_vga_linear_v46_competition_distill}"
@@ -38,6 +39,7 @@ echo "[config] GPU=$GPU"
 echo "[config] PY_BIN=$PY_BIN"
 echo "[config] METHOD_PRED_NAME=$METHOD_PRED_NAME"
 echo "[config] OBJECT_VOCAB=$OBJECT_VOCAB SUPPORT_THRESHOLD=$SUPPORT_THRESHOLD"
+echo "[config] LIMIT=$LIMIT"
 
 for path in "$PY_BIN" "$SRC/splits/val_caption_q.jsonl" "$SRC/splits/test_caption_q.jsonl"; do
   if [[ ! -e "$path" ]]; then
@@ -72,6 +74,7 @@ for split in val test; do
     --model_base "$MODEL_BASE" \
     --conv_mode "$CONV_MODE" \
     --device "$DEVICE" \
+    --limit "$LIMIT" \
     --object_vocab "$OBJECT_VOCAB" \
     --support_threshold "$SUPPORT_THRESHOLD" \
     --pred_text_key auto \
