@@ -94,6 +94,30 @@ STOPWORDS = {
     "yours",
 }
 
+GENERIC_NARRATION_WORDS = {
+    "appear",
+    "appears",
+    "background",
+    "center",
+    "depict",
+    "depicts",
+    "feature",
+    "features",
+    "foreground",
+    "image",
+    "indicate",
+    "indicates",
+    "located",
+    "overall",
+    "possibly",
+    "scene",
+    "seems",
+    "shows",
+    "suggest",
+    "suggests",
+    "visible",
+}
+
 ATTRIBUTE_WORDS = {
     "beige",
     "black",
@@ -312,6 +336,78 @@ def max_or_zero(values: Sequence[float]) -> float:
 def normalize_word(text: str) -> str:
     m = WORD_RE.search(str(text or "").lower())
     return m.group(0) if m else ""
+
+
+def content_words(text: str) -> List[str]:
+    out: List[str] = []
+    for _, _, word in extract_word_spans(text):
+        w = normalize_word(word)
+        if not w or w in STOPWORDS:
+            continue
+        out.append(w)
+    return out
+
+
+def ngram_repeat_rate(words: Sequence[str], n: int) -> float:
+    if len(words) < n or n <= 0:
+        return 0.0
+    seen = set()
+    repeats = 0
+    total = 0
+    for idx in range(0, len(words) - n + 1):
+        gram = tuple(str(x) for x in words[idx : idx + n])
+        total += 1
+        if gram in seen:
+            repeats += 1
+        seen.add(gram)
+    return float(repeats / float(max(1, total)))
+
+
+def compute_text_novelty_features(text: str) -> Dict[str, float]:
+    words = content_words(text)
+    n_words = int(len(words))
+    if n_words <= 0:
+        return {
+            "probe_content_word_count": 0.0,
+            "probe_unique_content_word_count": 0.0,
+            "probe_content_word_diversity": 0.0,
+            "probe_tail_content_repeat_rate": 0.0,
+            "probe_tail_content_new_word_rate": 0.0,
+            "probe_tail_content_generic_rate": 0.0,
+            "probe_generic_narration_word_rate": 0.0,
+            "probe_last_new_content_word_pos_frac": 0.0,
+            "probe_content_bigram_repeat_rate": 0.0,
+            "probe_content_trigram_repeat_rate": 0.0,
+        }
+
+    tail_n = max(1, n_words // 3)
+    head = words[: max(0, n_words - tail_n)]
+    tail = words[-tail_n:]
+    seen_before_tail = set(head)
+    tail_repeats = sum(1 for word in tail if word in seen_before_tail)
+    tail_new = sum(1 for word in tail if word not in seen_before_tail)
+    generic_total = sum(1 for word in words if word in GENERIC_NARRATION_WORDS)
+    generic_tail = sum(1 for word in tail if word in GENERIC_NARRATION_WORDS)
+
+    seen = set()
+    last_new_idx = 0
+    for idx, word in enumerate(words):
+        if word not in seen:
+            last_new_idx = int(idx)
+            seen.add(word)
+
+    return {
+        "probe_content_word_count": float(n_words),
+        "probe_unique_content_word_count": float(len(set(words))),
+        "probe_content_word_diversity": float(len(set(words)) / float(max(1, n_words))),
+        "probe_tail_content_repeat_rate": float(tail_repeats / float(max(1, len(tail)))),
+        "probe_tail_content_new_word_rate": float(tail_new / float(max(1, len(tail)))),
+        "probe_tail_content_generic_rate": float(generic_tail / float(max(1, len(tail)))),
+        "probe_generic_narration_word_rate": float(generic_total / float(max(1, n_words))),
+        "probe_last_new_content_word_pos_frac": float(last_new_idx / float(max(1, n_words - 1))),
+        "probe_content_bigram_repeat_rate": ngram_repeat_rate(words, 2),
+        "probe_content_trigram_repeat_rate": ngram_repeat_rate(words, 3),
+    }
 
 
 def common_prefix_len(a: str, b: str) -> int:
@@ -589,6 +685,7 @@ def build_feature_payload(
     content_indices = select_content_indices(runtime.tokenizer, pack.cont_ids)
     decoded_text, token_spans = decode_token_spans(runtime.tokenizer, pack.cont_ids)
     mentions, fallback_used = extract_mentions(decoded_text, max_mentions=max_mentions)
+    novelty_features = compute_text_novelty_features(decoded_text)
     values = compute_pack_values(pack)
     stop_values = compute_stop_values(pack, runtime.tokenizer)
     eos_values = compute_eos_values(pack, runtime.tokenizer)
@@ -789,6 +886,7 @@ def build_feature_payload(
         "probe_weakest_tail_mention": str(weakest_tail["text"]),
         "probe_mention_texts": " || ".join(str(row["text"]) for row in mention_rows[:8]),
     }
+    feature_row.update(novelty_features)
     return {
         "row": feature_row,
         "decoded_text": str(decoded_text),
