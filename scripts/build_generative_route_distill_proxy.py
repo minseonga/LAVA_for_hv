@@ -14,7 +14,17 @@ import build_generative_b_c_meta_controller as base
 def infer_numeric_probe_features(rows: Sequence[Dict[str, Any]]) -> List[str]:
     if not rows:
         return []
-    return list(base.infer_probe_feature_cols(rows))
+    out: List[str] = []
+    seen = set()
+    for row in rows:
+        for key in row.keys():
+            skey = str(key)
+            if skey in seen:
+                continue
+            seen.add(skey)
+            if base.maybe_float(row.get(skey)) is not None:
+                out.append(skey)
+    return out
 
 
 def add_distill_target(
