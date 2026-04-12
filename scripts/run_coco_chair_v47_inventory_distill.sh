@@ -26,6 +26,8 @@ OUT="${OUT:-$CAL_ROOT/experiments/coco_chair_vga_linear_v47_inventory_distill}"
 METHOD_PRED_NAME="${METHOD_PRED_NAME:-pred_vga_full_pvg_caption.jsonl}"
 OBJECT_VOCAB="${OBJECT_VOCAB:-coco80}"
 SUPPORT_THRESHOLD="${SUPPORT_THRESHOLD:-0.50}"
+HIGH_SUPPORT_THRESHOLD="${HIGH_SUPPORT_THRESHOLD:-0.70}"
+AMBIGUITY_LOW_THRESHOLD="${AMBIGUITY_LOW_THRESHOLD:-0.35}"
 
 TOP_N_FEATURES="${TOP_N_FEATURES:-64}"
 MAX_COMBO_SIZE="${MAX_COMBO_SIZE:-3}"
@@ -38,7 +40,7 @@ echo "[config] OUT=$OUT"
 echo "[config] GPU=$GPU"
 echo "[config] PY_BIN=$PY_BIN"
 echo "[config] METHOD_PRED_NAME=$METHOD_PRED_NAME"
-echo "[config] OBJECT_VOCAB=$OBJECT_VOCAB SUPPORT_THRESHOLD=$SUPPORT_THRESHOLD"
+echo "[config] OBJECT_VOCAB=$OBJECT_VOCAB SUPPORT_THRESHOLD=$SUPPORT_THRESHOLD HIGH_SUPPORT_THRESHOLD=$HIGH_SUPPORT_THRESHOLD AMBIGUITY_LOW_THRESHOLD=$AMBIGUITY_LOW_THRESHOLD"
 echo "[config] LIMIT=$LIMIT"
 
 for path in "$PY_BIN" "$SRC/splits/val_caption_q.jsonl" "$SRC/splits/test_caption_q.jsonl"; do
@@ -77,6 +79,8 @@ for split in val test; do
     --limit "$LIMIT" \
     --object_vocab "$OBJECT_VOCAB" \
     --support_threshold "$SUPPORT_THRESHOLD" \
+    --high_support_threshold "$HIGH_SUPPORT_THRESHOLD" \
+    --ambiguity_low_threshold "$AMBIGUITY_LOW_THRESHOLD" \
     --pred_text_key auto \
     --reuse_if_exists "$REUSE_IF_EXISTS"
 

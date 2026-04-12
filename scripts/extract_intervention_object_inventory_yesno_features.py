@@ -291,6 +291,24 @@ def topk_sum(values: Sequence[float], k: int) -> float:
     return float(sum(sorted((float(x) for x in values), reverse=True)[: max(0, int(k))]))
 
 
+def max_or_zero(values: Sequence[float]) -> float:
+    return float(max(values)) if values else 0.0
+
+
+def normalized_entropy(values: Sequence[float]) -> float:
+    vals = [max(0.0, float(x)) for x in values]
+    total = sum(vals)
+    if total <= 0.0 or len(vals) <= 1:
+        return 0.0
+    entropy = 0.0
+    for value in vals:
+        if value <= 0.0:
+            continue
+        p = value / total
+        entropy -= p * math.log(max(p, 1e-12))
+    return float(entropy / math.log(float(len(vals))))
+
+
 def support_prob(item: Dict[str, Any]) -> float:
     return float(item.get("yesno_prob", 0.0))
 
@@ -302,25 +320,50 @@ def add_inventory_features(
     mentioned: Sequence[str],
     scored: Sequence[Dict[str, Any]],
     support_threshold: float,
+    high_support_threshold: float,
+    ambiguity_low_threshold: float,
 ) -> None:
     mentioned_set = set(str(x) for x in mentioned)
     inventory_items = [item for item in scored if support_prob(item) >= float(support_threshold)]
     mentioned_items = [item for item in scored if str(item.get("object")) in mentioned_set]
+    unmentioned_items = [item for item in scored if str(item.get("object")) not in mentioned_set]
     missing_items = [item for item in inventory_items if str(item.get("object")) not in mentioned_set]
+    missing_hi_items = [item for item in unmentioned_items if support_prob(item) >= float(high_support_threshold)]
+    ambiguity_items = [
+        item
+        for item in unmentioned_items
+        if float(ambiguity_low_threshold) <= support_prob(item) < float(high_support_threshold)
+    ]
     mentioned_supported = [item for item in mentioned_items if support_prob(item) >= float(support_threshold)]
     mentioned_unsupported = [item for item in mentioned_items if support_prob(item) < float(support_threshold)]
 
     inventory_probs = [support_prob(item) for item in inventory_items]
+    unmentioned_probs = [support_prob(item) for item in unmentioned_items]
     missing_probs = [support_prob(item) for item in missing_items]
+    missing_hi_probs = [support_prob(item) for item in missing_hi_items]
+    ambiguity_probs = [support_prob(item) for item in ambiguity_items]
     mentioned_probs = [support_prob(item) for item in mentioned_items]
     mentioned_risks = [float(item.get("yesno_risk", 0.0)) for item in mentioned_items]
     mentioned_unsupported_risks = [float(item.get("yesno_risk", 0.0)) for item in mentioned_unsupported]
 
     inv_sum = sum_vals(inventory_probs)
+    unmentioned_sum = sum_vals(unmentioned_probs)
     missing_sum = sum_vals(missing_probs)
+    missing_hi_sum = sum_vals(missing_hi_probs)
+    ambiguity_sum = sum_vals(ambiguity_probs)
     mentioned_sum = sum_vals(mentioned_probs)
     risk_sum = sum_vals(mentioned_risks)
     unsupported_risk_sum = sum_vals(mentioned_unsupported_risks)
+    missing_top1 = topk_sum(missing_probs, 1)
+    missing_hi_top1 = topk_sum(missing_hi_probs, 1)
+    ambiguity_count = int(len(ambiguity_items))
+    ambiguity_entropy = normalized_entropy(ambiguity_probs)
+    unmentioned_entropy = normalized_entropy(unmentioned_probs)
+    missing_concentration = float(missing_top1 / max(1e-6, missing_sum))
+    missing_hi_concentration = float(missing_hi_top1 / max(1e-6, missing_hi_sum))
+    unmentioned_concentration = float(max_or_zero(unmentioned_probs) / max(1e-6, unmentioned_sum))
+    mentioned_risk_max = max_or_zero(mentioned_risks)
+    mentioned_support_max = max_or_zero(mentioned_probs)
 
     row.update(
         {
@@ -335,31 +378,60 @@ def add_inventory_features(
             "invyn_missing_supported_names": " | ".join(str(item.get("object", "")) for item in missing_items),
             "invyn_missing_support_prob_sum": missing_sum,
             "invyn_missing_support_prob_mean": mean(missing_probs),
-            "invyn_missing_support_top1_prob": topk_sum(missing_probs, 1),
+            "invyn_missing_support_top1_prob": missing_top1,
             "invyn_missing_support_top3_sum": topk_sum(missing_probs, 3),
             "invyn_missing_support_top5_sum": topk_sum(missing_probs, 5),
             "invyn_missing_supported_rate": float(len(missing_items) / max(1, len(inventory_items))),
+            "invyn_missing_hi_count": int(len(missing_hi_items)),
+            "invyn_missing_hi_names": " | ".join(str(item.get("object", "")) for item in missing_hi_items),
+            "invyn_missing_hi_mass": missing_hi_sum,
+            "invyn_missing_hi_top1_prob": missing_hi_top1,
+            "invyn_missing_hi_top3_sum": topk_sum(missing_hi_probs, 3),
+            "invyn_missing_concentration": missing_concentration,
+            "invyn_missing_hi_concentration": missing_hi_concentration,
             "invyn_mentioned_support_prob_sum": mentioned_sum,
             "invyn_mentioned_support_prob_mean": mean(mentioned_probs),
+            "invyn_mentioned_support_max": mentioned_support_max,
             "invyn_mentioned_supported_count": int(len(mentioned_supported)),
             "invyn_mentioned_unsupported_count": int(len(mentioned_unsupported)),
             "invyn_mentioned_unsupported_risk_sum": unsupported_risk_sum,
             "invyn_mentioned_unsupported_risk_mean": mean(mentioned_unsupported_risks),
             "invyn_mentioned_risk_sum": risk_sum,
+            "invyn_mentioned_risk_max": mentioned_risk_max,
             "invyn_coverage_by_inventory_count": float(len(mentioned_supported) / max(1, len(inventory_items))),
             "invyn_coverage_by_inventory_mass": float(mentioned_sum / max(1e-6, inv_sum)),
             "invyn_inventory_deficit_count": int(max(0, len(inventory_items) - len(mentioned_supported))),
             "invyn_inventory_deficit_mass": float(max(0.0, inv_sum - mentioned_sum)),
+            "invyn_unmentioned_support_prob_sum": unmentioned_sum,
+            "invyn_unmentioned_support_top1_prob": max_or_zero(unmentioned_probs),
+            "invyn_unmentioned_concentration": unmentioned_concentration,
+            "invyn_unmentioned_entropy": unmentioned_entropy,
+            "invyn_ambiguity_count": ambiguity_count,
+            "invyn_ambiguity_mass": ambiguity_sum,
+            "invyn_ambiguity_mean": mean(ambiguity_probs),
+            "invyn_ambiguity_entropy": ambiguity_entropy,
+            "invyn_ambiguity_rate": float(ambiguity_count / max(1, len(unmentioned_items))),
             "invyn_missing_minus_mentioned_risk": float(missing_sum - risk_sum),
             "invyn_missing_minus_unsupported_risk": float(missing_sum - unsupported_risk_sum),
+            "invyn_missing_hi_minus_mentioned_risk": float(missing_hi_sum - risk_sum),
+            "invyn_missing_hi_minus_ambiguity_mass": float(missing_hi_sum - ambiguity_sum),
+            "invyn_missing_hi_conc_minus_ambiguity_entropy": float(missing_hi_concentration - ambiguity_entropy),
             "invyn_missing_risk_ratio_eps_010": float(missing_sum / (risk_sum + 0.10)),
             "invyn_missing_risk_ratio_eps_100": float(missing_sum / (risk_sum + 1.00)),
             "invyn_missing_x_low_risk": float(missing_sum * max(0.0, 1.0 - min(1.0, risk_sum))),
+            "invyn_missing_hi_x_low_risk": float(missing_hi_sum * max(0.0, 1.0 - min(1.0, risk_sum))),
+            "invyn_benefit_cost_score_v1": float(missing_hi_sum - risk_sum - ambiguity_sum),
+            "invyn_benefit_cost_score_v2": float(missing_top1 * missing_concentration - risk_sum - ambiguity_sum),
+            "invyn_substitution_joint_score": float(missing_top1 * mentioned_risk_max),
+            "invyn_substitution_margin_vs_mentioned_support": float(missing_top1 - mentioned_support_max),
+            "invyn_substitution_score_v1": float(missing_top1 + mentioned_risk_max - ambiguity_entropy),
         }
     )
     add_prefix_stats(row, "invyn_all_objects", scored)
     add_prefix_stats(row, "invyn_mentioned_objects", mentioned_items)
     add_prefix_stats(row, "invyn_missing_supported_objects", missing_items)
+    add_prefix_stats(row, "invyn_missing_hi_objects", missing_hi_items)
+    add_prefix_stats(row, "invyn_ambiguity_objects", ambiguity_items)
 
 
 def main() -> None:
@@ -378,6 +450,8 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--object_vocab", default="coco80")
     ap.add_argument("--support_threshold", type=float, default=0.50)
+    ap.add_argument("--high_support_threshold", type=float, default=0.70)
+    ap.add_argument("--ambiguity_low_threshold", type=float, default=0.35)
     ap.add_argument("--pred_text_key", default="auto")
     ap.add_argument("--question_template", default="Is there a {object} in the image? Answer yes or no.")
     ap.add_argument("--yes_text", default="Yes")
@@ -452,6 +526,8 @@ def main() -> None:
                 mentioned=mentioned,
                 scored=scored,
                 support_threshold=float(args.support_threshold),
+                high_support_threshold=float(args.high_support_threshold),
+                ambiguity_low_threshold=float(args.ambiguity_low_threshold),
             )
         except Exception as exc:
             n_errors += 1
@@ -478,6 +554,8 @@ def main() -> None:
                     "object_vocab": str(args.object_vocab),
                     "n_object_vocab": int(len(vocab)),
                     "support_threshold": float(args.support_threshold),
+                    "high_support_threshold": float(args.high_support_threshold),
+                    "ambiguity_low_threshold": float(args.ambiguity_low_threshold),
                     "pred_text_key": str(args.pred_text_key),
                     "question_template": str(args.question_template),
                     "yes_text": str(args.yes_text),
