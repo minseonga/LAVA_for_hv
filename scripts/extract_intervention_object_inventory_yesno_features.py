@@ -516,6 +516,7 @@ def main() -> None:
                 question_template=str(args.question_template),
                 yes_text=str(args.yes_text),
                 no_text=str(args.no_text),
+                score_mode="yesno",
                 cache={},
             )
             n_object_probes += int(len(scored))

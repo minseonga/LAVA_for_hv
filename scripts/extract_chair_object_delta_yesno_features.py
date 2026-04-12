@@ -66,10 +66,11 @@ def yesno_metrics(
     question_template: str,
     yes_text: str,
     no_text: str,
+    score_mode: str,
     cache: Dict[str, Dict[str, float]],
 ) -> Dict[str, float]:
     question = str(question_template).replace("{object}", str(object_name))
-    cache_key = f"{question}\t{yes_text}\t{no_text}"
+    cache_key = f"{score_mode}\t{question}\t{yes_text}\t{no_text}"
     cached = cache.get(cache_key)
     if cached is not None:
         return dict(cached)
@@ -78,10 +79,14 @@ def yesno_metrics(
         yes = replay_claim_metrics(runtime, image=image, question=question, claim_text=str(yes_text))
     except Exception:
         yes = zero_replay_metrics()
-    try:
-        no = replay_claim_metrics(runtime, image=image, question=question, claim_text=str(no_text))
-    except Exception:
+
+    if str(score_mode) == "yes_only":
         no = zero_replay_metrics()
+    else:
+        try:
+            no = replay_claim_metrics(runtime, image=image, question=question, claim_text=str(no_text))
+        except Exception:
+            no = zero_replay_metrics()
 
     yes_lp = float(yes.get("replay_lp_mean", 0.0))
     no_lp = float(no.get("replay_lp_mean", 0.0))
@@ -119,6 +124,7 @@ def score_objects(
     question_template: str,
     yes_text: str,
     no_text: str,
+    score_mode: str,
     cache: Dict[str, Dict[str, float]],
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
@@ -130,6 +136,7 @@ def score_objects(
             question_template=question_template,
             yes_text=yes_text,
             no_text=no_text,
+            score_mode=score_mode,
             cache=cache,
         )
         rows.append({"object": str(obj), **metrics})
@@ -137,6 +144,8 @@ def score_objects(
 
 
 def add_prefix_stats(out: Dict[str, Any], prefix: str, items: Sequence[Dict[str, Any]]) -> None:
+    yes_lps = [float(item.get("yesno_yes_lp", 0.0)) for item in items]
+    no_lps = [float(item.get("yesno_no_lp", 0.0)) for item in items]
     probs = [float(item.get("yesno_prob", 0.0)) for item in items]
     risks = [float(item.get("yesno_risk", 0.0)) for item in items]
     lp_margins = [float(item.get("yesno_lp_margin", 0.0)) for item in items]
@@ -145,6 +154,14 @@ def add_prefix_stats(out: Dict[str, Any], prefix: str, items: Sequence[Dict[str,
     out.update(
         {
             f"{prefix}_count": int(len(items)),
+            f"{prefix}_yes_lp_sum": sum_vals(yes_lps),
+            f"{prefix}_yes_lp_mean": mean(yes_lps),
+            f"{prefix}_yes_lp_min": min_or_zero(yes_lps),
+            f"{prefix}_yes_lp_max": max_or_zero(yes_lps),
+            f"{prefix}_no_lp_sum": sum_vals(no_lps),
+            f"{prefix}_no_lp_mean": mean(no_lps),
+            f"{prefix}_no_lp_min": min_or_zero(no_lps),
+            f"{prefix}_no_lp_max": max_or_zero(no_lps),
             f"{prefix}_yes_prob_sum": sum_vals(probs),
             f"{prefix}_yes_prob_mean": mean(probs),
             f"{prefix}_yes_prob_min": min_or_zero(probs),
@@ -182,6 +199,10 @@ def add_competition_features(out: Dict[str, Any]) -> None:
     int_yes_sum = get_float("pair_chairyn_int_only_yes_prob_sum")
     base_yes_mean = get_float("pair_chairyn_base_only_yes_prob_mean")
     int_yes_mean = get_float("pair_chairyn_int_only_yes_prob_mean")
+    base_yes_lp_sum = get_float("pair_chairyn_base_only_yes_lp_sum")
+    int_yes_lp_sum = get_float("pair_chairyn_int_only_yes_lp_sum")
+    base_yes_lp_mean = get_float("pair_chairyn_base_only_yes_lp_mean")
+    int_yes_lp_mean = get_float("pair_chairyn_int_only_yes_lp_mean")
     base_yes_min = get_float("pair_chairyn_base_only_yes_prob_min")
     int_yes_max = get_float("pair_chairyn_int_only_yes_prob_max")
     base_lp_mean = get_float("pair_chairyn_base_only_lp_margin_mean")
@@ -194,6 +215,7 @@ def add_competition_features(out: Dict[str, Any]) -> None:
     gain_cost_ratio = get_float("pair_chairyn_rollback_gain_cost_ratio_eps_010")
     net_gain_cost_ratio = get_float("pair_chairyn_rollback_net_gain_cost_ratio_eps_010")
     yes_mean_margin = float(base_yes_mean - int_yes_mean)
+    yes_lp_mean_margin = float(base_yes_lp_mean - int_yes_lp_mean)
     lp_mean_margin = float(base_lp_mean - int_lp_mean)
     no_competition = float(1.0 if int_count <= 0.0 else 0.0)
 
@@ -201,11 +223,15 @@ def add_competition_features(out: Dict[str, Any]) -> None:
         {
             "pair_chairyn_comp_yes_sum_margin": float(base_yes_sum - int_yes_sum),
             "pair_chairyn_comp_yes_mean_margin": yes_mean_margin,
+            "pair_chairyn_comp_yes_lp_sum_margin": float(base_yes_lp_sum - int_yes_lp_sum),
+            "pair_chairyn_comp_yes_lp_mean_margin": yes_lp_mean_margin,
             "pair_chairyn_comp_yes_min_vs_int_max_margin": float(base_yes_min - int_yes_max),
             "pair_chairyn_comp_lp_mean_margin": lp_mean_margin,
             "pair_chairyn_comp_lp_min_vs_int_max_margin": float(base_lp_min - int_lp_max),
             "pair_chairyn_comp_base_advantage_yes_sum": float(max(0.0, base_yes_sum - int_yes_sum)),
             "pair_chairyn_comp_base_advantage_yes_mean": float(max(0.0, yes_mean_margin)),
+            "pair_chairyn_comp_base_advantage_yes_lp_sum": float(max(0.0, base_yes_lp_sum - int_yes_lp_sum)),
+            "pair_chairyn_comp_base_advantage_yes_lp_mean": float(max(0.0, yes_lp_mean_margin)),
             "pair_chairyn_comp_base_advantage_lp_mean": float(max(0.0, lp_mean_margin)),
             "pair_chairyn_comp_int_competition_count": float(int_count),
             "pair_chairyn_comp_base_only_no_competition": no_competition,
@@ -244,6 +270,12 @@ def main() -> None:
     ap.add_argument("--question_template", default="Is there a {object} in the image? Answer yes or no.")
     ap.add_argument("--yes_text", default="Yes")
     ap.add_argument("--no_text", default="No")
+    ap.add_argument(
+        "--score_mode",
+        choices=["yesno", "yes_only"],
+        default="yesno",
+        help="yes_only skips the No replay pass and exposes one-sided yes-likelihood competition features.",
+    )
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=True)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -301,6 +333,7 @@ def main() -> None:
                 question_template=str(args.question_template),
                 yes_text=str(args.yes_text),
                 no_text=str(args.no_text),
+                score_mode=str(args.score_mode),
                 cache=cache,
             )
             int_only_scored = score_objects(
@@ -310,6 +343,7 @@ def main() -> None:
                 question_template=str(args.question_template),
                 yes_text=str(args.yes_text),
                 no_text=str(args.no_text),
+                score_mode=str(args.score_mode),
                 cache=cache,
             )
             n_object_probes += int(len(base_only_scored) + len(int_only_scored))
@@ -378,13 +412,16 @@ def main() -> None:
                     "question_template": str(args.question_template),
                     "yes_text": str(args.yes_text),
                     "no_text": str(args.no_text),
+                    "score_mode": str(args.score_mode),
                     "limit": int(args.limit),
                 },
                 "counts": {
                     "n_rows": int(len(rows)),
                     "n_errors": int(n_errors),
                     "n_object_probes": int(n_object_probes),
-                    "n_forward_passes_est": int(n_object_probes * 2),
+                    "n_forward_passes_est": int(
+                        n_object_probes * (1 if str(args.score_mode) == "yes_only" else 2)
+                    ),
                     "n_features": int(len(feature_keys)),
                 },
                 "feature_keys": feature_keys,
