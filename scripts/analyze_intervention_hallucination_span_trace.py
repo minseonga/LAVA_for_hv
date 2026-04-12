@@ -134,6 +134,36 @@ def words(text: str) -> List[str]:
     return [m.group(0).lower() for m in WORD_RE.finditer(str(text or ""))]
 
 
+def singularize_word(word: str) -> str:
+    word = str(word or "").lower()
+    irregular = {
+        "children": "child",
+        "feet": "foot",
+        "geese": "goose",
+        "knives": "knife",
+        "men": "man",
+        "mice": "mouse",
+        "people": "person",
+        "teeth": "tooth",
+        "women": "woman",
+    }
+    if word in irregular:
+        return irregular[word]
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith("ves"):
+        return word[:-3] + "f"
+    if len(word) > 3 and word.endswith(("ses", "xes", "zes", "ches", "shes")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
+def word_matches(a: str, b: str) -> bool:
+    return singularize_word(a) == singularize_word(b)
+
+
 def contains_object(mention_text: str, obj: str) -> bool:
     mt = str(mention_text or "").lower()
     oo = str(obj or "").lower()
@@ -143,8 +173,8 @@ def contains_object(mention_text: str, obj: str) -> bool:
     if re.search(pattern, mt):
         return True
     obj_words = words(oo)
-    mention_words = set(words(mt))
-    return bool(obj_words) and all(word in mention_words for word in obj_words)
+    mention_words = words(mt)
+    return bool(obj_words) and all(any(word_matches(word, cand) for cand in mention_words) for word in obj_words)
 
 
 def match_object_to_mention(obj: str, mention_rows: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
