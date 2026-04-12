@@ -700,6 +700,8 @@ def build_feature_payload(
         ent_vals = pick(values["ent"], idxs)
         mention_rows.append(
             {
+                "start": int(mention["start"]),
+                "end": int(mention["end"]),
                 "text": str(mention["text"]),
                 "kinds": "|".join(str(x) for x in mention["kinds"]),
                 "n_tokens": int(len(idxs)),
