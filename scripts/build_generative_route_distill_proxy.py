@@ -14,13 +14,7 @@ import build_generative_b_c_meta_controller as base
 def infer_numeric_probe_features(rows: Sequence[Dict[str, Any]]) -> List[str]:
     if not rows:
         return []
-    out: List[str] = []
-    for feature in base.infer_probe_feature_cols(rows):
-        s = str(feature)
-        if not s.startswith("probe_"):
-            continue
-        out.append(s)
-    return out
+    return list(base.infer_probe_feature_cols(rows))
 
 
 def add_distill_target(
