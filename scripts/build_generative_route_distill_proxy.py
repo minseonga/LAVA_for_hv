@@ -234,6 +234,11 @@ def main() -> None:
     ap.add_argument("--route_source_col", type=str, default="route_source")
     ap.add_argument("--positive_route_source", type=str, default="")
     ap.add_argument("--target_col", type=str, default="distill_target")
+    ap.add_argument(
+        "--use_existing_target",
+        action="store_true",
+        help="Use target_col already present in decision_rows_csv instead of rebuilding it from route_col.",
+    )
     ap.add_argument("--feature_cols", type=str, default="auto")
     ap.add_argument("--feature_prefix", type=str, default="probe_")
     ap.add_argument("--top_n_features", type=int, default=8)
@@ -249,14 +254,19 @@ def main() -> None:
     args = ap.parse_args()
 
     raw_rows = base.read_csv_rows(os.path.abspath(args.decision_rows_csv))
-    rows = add_distill_target(
-        raw_rows,
-        route_col=str(args.route_col),
-        positive_route=str(args.positive_route),
-        route_source_col=str(args.route_source_col),
-        positive_route_source=str(args.positive_route_source),
-        target_col=str(args.target_col),
-    )
+    if bool(args.use_existing_target):
+        rows = [dict(row) for row in raw_rows]
+        if rows and str(args.target_col) not in rows[0]:
+            raise ValueError(f"target_col not found in decision rows: {args.target_col}")
+    else:
+        rows = add_distill_target(
+            raw_rows,
+            route_col=str(args.route_col),
+            positive_route=str(args.positive_route),
+            route_source_col=str(args.route_source_col),
+            positive_route_source=str(args.positive_route_source),
+            target_col=str(args.target_col),
+        )
     target_spec = f"{args.target_col}:binary:0"
 
     if str(args.feature_cols).strip().lower() == "auto":
@@ -400,11 +410,12 @@ def main() -> None:
             {
                 "inputs": {
                     "decision_rows_csv": os.path.abspath(args.decision_rows_csv),
-                "route_col": str(args.route_col),
-                "positive_route": str(args.positive_route),
-                "route_source_col": str(args.route_source_col),
-                "positive_route_source": str(args.positive_route_source),
-                "target_col": str(args.target_col),
+                    "route_col": str(args.route_col),
+                    "positive_route": str(args.positive_route),
+                    "route_source_col": str(args.route_source_col),
+                    "positive_route_source": str(args.positive_route_source),
+                    "target_col": str(args.target_col),
+                    "use_existing_target": bool(args.use_existing_target),
                     "feature_prefix": str(args.feature_prefix),
                     "top_n_features": int(args.top_n_features),
                     "max_combo_size": int(args.max_combo_size),
@@ -470,6 +481,7 @@ def main() -> None:
             "route_source_col": str(args.route_source_col),
             "positive_route_source": str(args.positive_route_source),
             "target_col": str(args.target_col),
+            "use_existing_target": bool(args.use_existing_target),
             "feature_prefix": str(args.feature_prefix),
             "top_n_features": int(args.top_n_features),
             "max_combo_size": int(args.max_combo_size),

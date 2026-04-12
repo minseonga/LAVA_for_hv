@@ -57,6 +57,13 @@ def maybe_float(value: Any) -> float | None:
         return None
 
 
+def is_truthy_flag(value: Any) -> bool:
+    s = str(value if value is not None else "").strip().lower()
+    if not s or s in {"0", "false", "no", "none", "null", "nan"}:
+        return False
+    return True
+
+
 def add_missing_utility(row: Dict[str, Any]) -> None:
     base_f1 = maybe_float(row.get("base_f1"))
     base_chair_i = maybe_float(row.get("base_chair_i"))
@@ -88,6 +95,11 @@ def main() -> None:
     ap.add_argument("--positive_route", default="baseline")
     ap.add_argument("--target_col", default="", help="Optional binary target column to create from route_col.")
     ap.add_argument(
+        "--target_requires_teacher_positive",
+        action="store_true",
+        help="When creating target_col, require teacher_fallback/teacher_positive to be true in addition to positive_route.",
+    )
+    ap.add_argument(
         "--drop_unmatched_feature_rows",
         action="store_true",
         help="Drop route rows that did not receive any feature values. Useful for LIMIT-based smoke tests.",
@@ -104,9 +116,13 @@ def main() -> None:
         if str(item.get(args.teacher_fallback_col, "")).strip() == "" and str(item.get(args.teacher_positive_col, "")).strip() != "":
             item[str(args.teacher_fallback_col)] = item.get(args.teacher_positive_col)
         if str(args.route_col or "").strip() and str(args.target_col or "").strip():
-            item[str(args.target_col)] = int(
-                str(item.get(str(args.route_col), "")).strip() == str(args.positive_route).strip()
-            )
+            is_positive = str(item.get(str(args.route_col), "")).strip() == str(args.positive_route).strip()
+            if bool(args.target_requires_teacher_positive):
+                teacher_value = item.get(str(args.teacher_fallback_col), item.get(str(args.teacher_positive_col), ""))
+                if str(teacher_value if teacher_value is not None else "").strip() == "":
+                    teacher_value = item.get(str(args.teacher_positive_col), "")
+                is_positive = is_positive and is_truthy_flag(teacher_value)
+            item[str(args.target_col)] = int(is_positive)
         add_missing_utility(item)
         merged_by_id[sid] = item
 
@@ -157,6 +173,7 @@ def main() -> None:
                     "route_col": str(args.route_col),
                     "positive_route": str(args.positive_route),
                     "target_col": str(args.target_col),
+                    "target_requires_teacher_positive": bool(args.target_requires_teacher_positive),
                     "drop_unmatched_feature_rows": bool(args.drop_unmatched_feature_rows),
                 },
                 "counts": {
