@@ -310,6 +310,7 @@ def main() -> None:
     ap.add_argument("--tail_new_word_rate_max", type=float, default=0.20)
     ap.add_argument("--tail_repeat_rate_min", type=float, default=0.80)
     ap.add_argument("--min_content_words_for_repair", type=int, default=6)
+    ap.add_argument("--min_suffix_content_words", type=int, default=1)
     ap.add_argument("--min_prefix_content_words", type=int, default=4)
     ap.add_argument("--prefix_margin_content_words", type=int, default=1)
     ap.add_argument("--fallback_prefix_frac", type=float, default=0.60)
@@ -370,8 +371,9 @@ def main() -> None:
 
         suffix = ""
         final_text = int_text
+        repair_attempted = bool(repair and int_text)
+        repair_applied = False
         if repair and int_text:
-            n_repaired += 1
             image = Image.open(os.path.join(args.image_folder, str(q["image"]))).convert("RGB")
             image_tensor = process_images([image], image_processor, model.config)[0]
             image_tensor = image_tensor.unsqueeze(0).to(device=device, dtype=torch.float16)
@@ -401,7 +403,13 @@ def main() -> None:
                 )
             raw_suffix = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
             suffix = clean_suffix(raw_suffix, prefix)
-            final_text = join_prefix_suffix(prefix, suffix)
+            if len(content_word_spans(suffix)) >= int(args.min_suffix_content_words):
+                final_text = join_prefix_suffix(prefix, suffix)
+                repair_applied = True
+                n_repaired += 1
+            else:
+                final_text = int_text
+                repair_reason = f"{repair_reason}:short_or_empty_suffix"
 
         image_id = q.get("image_id", pred.get("image_id", sid))
         out_rows.append(
@@ -413,7 +421,8 @@ def main() -> None:
                 "text": final_text,
                 "output": final_text,
                 "intervention_text": int_text,
-                "repair_applied": int(bool(repair and int_text)),
+                "repair_attempted": int(bool(repair_attempted)),
+                "repair_applied": int(bool(repair_applied)),
                 "repair_reason": repair_reason,
                 "repair_prefix": prefix,
                 "repair_suffix": suffix,
