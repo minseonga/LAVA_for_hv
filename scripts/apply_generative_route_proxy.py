@@ -48,6 +48,13 @@ def threshold_pass(value: Optional[float], *, direction: str, tau: Optional[floa
     return aux_pass(value, direction=direction, tau=tau)
 
 
+def oriented_threshold_pass(value: Optional[float], *, direction: str, tau: Optional[float]) -> bool:
+    if tau is None or value is None:
+        return False
+    oriented = float(value) if str(direction).strip().lower() == "high" else -float(value)
+    return oriented >= float(tau)
+
+
 def build_routes(
     rows: Sequence[Dict[str, Any]],
     policy: Dict[str, Any],
@@ -65,8 +72,8 @@ def build_routes(
         routes: List[str] = []
         scores: List[Optional[float]] = []
         for anchor_value, gate_value in zip(anchor_values, gate_values):
-            anchor_ok = threshold_pass(anchor_value, direction=anchor_direction, tau=anchor_tau)
-            gate_ok = threshold_pass(gate_value, direction=gate_direction, tau=gate_tau)
+            anchor_ok = oriented_threshold_pass(anchor_value, direction=anchor_direction, tau=anchor_tau)
+            gate_ok = oriented_threshold_pass(gate_value, direction=gate_direction, tau=gate_tau)
             routes.append("baseline" if anchor_ok and gate_ok else "method")
             scores.append(gate_value if anchor_ok else None)
         return routes, scores, anchor_values
