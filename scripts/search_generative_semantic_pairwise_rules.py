@@ -307,6 +307,8 @@ def search_rules(
     require_benefit_cost_combo: bool,
     benefit_prefix: str,
     cost_prefix: str,
+    benefit_direction: str,
+    cost_direction: str,
     min_feature_valid: int,
     constraints: Dict[str, float],
     top_k: int,
@@ -321,11 +323,27 @@ def search_rules(
     candidates: List[Dict[str, Any]] = []
     benefit_prefixes = [x for x in str(benefit_prefix).split(",") if x]
     cost_prefixes = [x for x in str(cost_prefix).split(",") if x]
+    benefit_direction = str(benefit_direction).strip()
+    cost_direction = str(cost_direction).strip()
+
+    def has_prefix(feature: str, prefixes: Sequence[str]) -> bool:
+        return any(feature.startswith(prefix) for prefix in prefixes)
 
     def consider(rule_specs: Sequence[RuleSpec]) -> None:
         if require_benefit_cost_combo:
-            has_benefit = any(any(spec[0].startswith(prefix) for prefix in benefit_prefixes) for spec in rule_specs)
-            has_cost = any(any(spec[0].startswith(prefix) for prefix in cost_prefixes) for spec in rule_specs)
+            has_benefit = False
+            has_cost = False
+            for feature, direction, _tau in rule_specs:
+                is_benefit = has_prefix(feature, benefit_prefixes)
+                is_cost = has_prefix(feature, cost_prefixes)
+                if is_benefit:
+                    if benefit_direction and direction != benefit_direction:
+                        return
+                    has_benefit = True
+                if is_cost:
+                    if cost_direction and direction != cost_direction:
+                        return
+                    has_cost = True
             if not (has_benefit and has_cost):
                 return
         mask = mask_for_rule(rows, rule_specs)
@@ -399,6 +417,8 @@ def main() -> None:
     parser.add_argument("--require_benefit_cost_combo", action="store_true")
     parser.add_argument("--benefit_prefix", default="sem_benefit_")
     parser.add_argument("--cost_prefix", default="sem_cost_")
+    parser.add_argument("--benefit_direction", default="")
+    parser.add_argument("--cost_direction", default="")
     parser.add_argument("--min_feature_valid_count", type=int, default=0)
     parser.add_argument("--min_feature_valid_frac", type=float, default=0.8)
     parser.add_argument("--min_selected", type=int, default=5)
@@ -440,6 +460,8 @@ def main() -> None:
         bool(args.require_benefit_cost_combo),
         str(args.benefit_prefix),
         str(args.cost_prefix),
+        str(args.benefit_direction),
+        str(args.cost_direction),
         int(min_feature_valid),
         constraints,
         int(args.top_k),
@@ -528,6 +550,8 @@ def main() -> None:
             "require_benefit_cost_combo": bool(args.require_benefit_cost_combo),
             "benefit_prefix": str(args.benefit_prefix),
             "cost_prefix": str(args.cost_prefix),
+            "benefit_direction": str(args.benefit_direction),
+            "cost_direction": str(args.cost_direction),
             "min_feature_valid_count": int(min_feature_valid),
             "min_feature_valid_frac": float(args.min_feature_valid_frac),
         },

@@ -25,6 +25,8 @@ MAX_COMBO_SIZE="${MAX_COMBO_SIZE:-2}"
 MAX_RULE_SPECS="${MAX_RULE_SPECS:-500}"
 MIN_FEATURE_VALID_COUNT="${MIN_FEATURE_VALID_COUNT:-0}"
 MIN_FEATURE_VALID_FRAC="${MIN_FEATURE_VALID_FRAC:-0.8}"
+BENEFIT_DIRECTION="${BENEFIT_DIRECTION:-high}"
+COST_DIRECTION="${COST_DIRECTION:-low}"
 
 FEATURE_ARGS=(
   --feature sem_benefit_delta_unique_content_units
@@ -121,6 +123,8 @@ PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/search_generative_semantic_pairwise_rul
   --require_benefit_cost_combo \
   --benefit_prefix sem_benefit_ \
   --cost_prefix sem_cost_,sem_visual_ \
+  --benefit_direction "$BENEFIT_DIRECTION" \
+  --cost_direction "$COST_DIRECTION" \
   --max_combo_size "$MAX_COMBO_SIZE" \
   --max_rule_specs "$MAX_RULE_SPECS" \
   --min_feature_valid_count "$MIN_FEATURE_VALID_COUNT" \
