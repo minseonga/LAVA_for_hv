@@ -201,12 +201,13 @@ def make_rule_specs(
     rows: Sequence[Dict[str, str]],
     features: Sequence[str],
     quantiles: Sequence[float],
+    min_valid: int,
 ) -> List[RuleSpec]:
     specs: List[RuleSpec] = []
     seen = set()
     for feature in features:
         values = sorted(v for row in rows if (v := safe_float(row.get(feature))) is not None)
-        if len(values) < max(10, int(0.8 * len(rows))) or len(set(round(v, 12) for v in values)) < 3:
+        if len(values) < max(1, int(min_valid)) or len(set(round(v, 12) for v in values)) < 3:
             continue
         for direction in ("low", "high"):
             for q in quantiles:
@@ -306,10 +307,11 @@ def search_rules(
     require_benefit_cost_combo: bool,
     benefit_prefix: str,
     cost_prefix: str,
+    min_feature_valid: int,
     constraints: Dict[str, float],
     top_k: int,
 ) -> List[Dict[str, Any]]:
-    specs = make_rule_specs(rows, features, quantiles)
+    specs = make_rule_specs(rows, features, quantiles, int(min_feature_valid))
     scored_specs: List[Tuple[float, RuleSpec]] = []
     for spec in specs:
         res = eval_mask(rows, threshold_mask(rows, spec), target_col, safe_col)
@@ -395,6 +397,8 @@ def main() -> None:
     parser.add_argument("--require_benefit_cost_combo", action="store_true")
     parser.add_argument("--benefit_prefix", default="sem_benefit_")
     parser.add_argument("--cost_prefix", default="sem_cost_")
+    parser.add_argument("--min_feature_valid_count", type=int, default=0)
+    parser.add_argument("--min_feature_valid_frac", type=float, default=0.8)
     parser.add_argument("--min_selected", type=int, default=5)
     parser.add_argument("--max_selected", type=int, default=80)
     parser.add_argument("--min_delta_recall", type=float, default=0.0)
@@ -419,6 +423,9 @@ def main() -> None:
         "max_delta_chair_s": float(args.max_delta_chair_s),
         "min_target_precision": float(args.min_target_precision),
     }
+    min_feature_valid = int(args.min_feature_valid_count)
+    if min_feature_valid <= 0:
+        min_feature_valid = max(10, int(float(args.min_feature_valid_frac) * len(rows)))
     metrics = feature_metrics(rows, features, str(args.target_col))
     candidates = search_rules(
         rows,
@@ -431,6 +438,7 @@ def main() -> None:
         bool(args.require_benefit_cost_combo),
         str(args.benefit_prefix),
         str(args.cost_prefix),
+        int(min_feature_valid),
         constraints,
         int(args.top_k),
     )
@@ -518,6 +526,8 @@ def main() -> None:
             "require_benefit_cost_combo": bool(args.require_benefit_cost_combo),
             "benefit_prefix": str(args.benefit_prefix),
             "cost_prefix": str(args.cost_prefix),
+            "min_feature_valid_count": int(min_feature_valid),
+            "min_feature_valid_frac": float(args.min_feature_valid_frac),
         },
         "counts": {
             "n_rows": len(rows),

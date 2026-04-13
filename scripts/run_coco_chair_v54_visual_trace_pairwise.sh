@@ -39,6 +39,14 @@ MAX_DELTA_CHAIR_I="${MAX_DELTA_CHAIR_I:-0.005}"
 MAX_DELTA_CHAIR_S="${MAX_DELTA_CHAIR_S:-0.02}"
 MAX_COMBO_SIZE="${MAX_COMBO_SIZE:-2}"
 MAX_RULE_SPECS="${MAX_RULE_SPECS:-200}"
+if [[ -z "${MIN_FEATURE_VALID_COUNT:-}" ]]; then
+  if [[ "$LIMIT" -gt 0 ]]; then
+    MIN_FEATURE_VALID_COUNT="$LIMIT"
+  else
+    MIN_FEATURE_VALID_COUNT="0"
+  fi
+fi
+MIN_FEATURE_VALID_FRAC="${MIN_FEATURE_VALID_FRAC:-0.8}"
 
 FEATURE_ARGS=(
   --feature sem_benefit_delta_unique_content_units
@@ -67,6 +75,7 @@ echo "[config] OUT=$OUT"
 echo "[config] GPU=$GPU"
 echo "[config] PY_BIN=$PY_BIN"
 echo "[config] LIMIT=$LIMIT visual_layers=$VISUAL_LATE_START:$VISUAL_LATE_END topk_heads=$VISUAL_TOPK_HEADS"
+echo "[config] MIN_FEATURE_VALID_COUNT=$MIN_FEATURE_VALID_COUNT MIN_FEATURE_VALID_FRAC=$MIN_FEATURE_VALID_FRAC"
 
 for path in "$PY_BIN" "$SRC/splits/val_caption_q.jsonl" "$SRC/splits/test_caption_q.jsonl"; do
   if [[ ! -e "$path" ]]; then
@@ -169,6 +178,8 @@ PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/search_generative_semantic_pairwise_rul
   --cost_prefix sem_visual_ \
   --max_combo_size "$MAX_COMBO_SIZE" \
   --max_rule_specs "$MAX_RULE_SPECS" \
+  --min_feature_valid_count "$MIN_FEATURE_VALID_COUNT" \
+  --min_feature_valid_frac "$MIN_FEATURE_VALID_FRAC" \
   --min_selected "$MIN_SELECTED" \
   --max_selected "$MAX_SELECTED" \
   --min_delta_recall "$MIN_DELTA_RECALL" \
