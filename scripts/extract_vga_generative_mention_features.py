@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -408,6 +409,39 @@ def compute_text_novelty_features(text: str) -> Dict[str, float]:
         "probe_content_bigram_repeat_rate": ngram_repeat_rate(words, 2),
         "probe_content_trigram_repeat_rate": ngram_repeat_rate(words, 3),
     }
+
+
+def content_word_trace_json(
+    text: str,
+    token_spans: Sequence[Tuple[int, int]],
+    content_indices: Sequence[int],
+    values: Dict[str, List[float]],
+) -> str:
+    content_set = {int(idx) for idx in content_indices}
+    rows: List[Dict[str, Any]] = []
+    word_pos = 0
+    for start, end, word in extract_word_spans(text):
+        norm = normalize_word(word)
+        if not norm or norm in STOPWORDS:
+            continue
+        idxs: List[int] = []
+        for idx, (tok_start, tok_end) in enumerate(token_spans):
+            if idx not in content_set or tok_end <= tok_start:
+                continue
+            if max(tok_start, start) < min(tok_end, end):
+                idxs.append(int(idx))
+        if idxs:
+            rows.append(
+                {
+                    "word": norm,
+                    "pos": int(word_pos),
+                    "lp_min": float(min_or_zero(pick(values["lp"], idxs))),
+                    "gap_min": float(min_or_zero(pick(values["gap"], idxs))),
+                    "ent_max": float(max_or_zero(pick(values["ent"], idxs))),
+                }
+            )
+        word_pos += 1
+    return json.dumps(rows, ensure_ascii=False, separators=(",", ":"))
 
 
 def common_prefix_len(a: str, b: str) -> int:
@@ -887,6 +921,7 @@ def build_feature_payload(
         "probe_weakest_entropy_mention": str(weakest_ent["text"]),
         "probe_weakest_tail_mention": str(weakest_tail["text"]),
         "probe_mention_texts": " || ".join(str(row["text"]) for row in mention_rows[:8]),
+        "probe_content_word_trace_json": content_word_trace_json(decoded_text, token_spans, content_indices, values),
     }
     feature_row.update(novelty_features)
     return {
