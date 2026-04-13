@@ -446,6 +446,45 @@ def add_v53_aliases(out: Dict[str, Any], baseline_trace: Dict[str, str], token_b
         out["sem_cost_base_new_content_high_entropy_count_ge_350"] = 0
 
 
+def add_v54_visual_aliases(out: Dict[str, Any]) -> None:
+    """Pairwise visual-token trace aliases for post-hoc VGA/PAI-style routing."""
+
+    def get(name: str) -> Optional[float]:
+        return safe_float(out.get(name))
+
+    pairs = {
+        "content_mean": "probe_vis_attn_content_mean_real",
+        "content_min": "probe_vis_attn_content_min_real",
+        "tail_mean": "probe_vis_attn_tail_mean_real",
+        "last4_mean": "probe_vis_attn_last4_mean_real",
+        "tail_minus_head": "probe_vis_attn_tail_minus_head_real",
+        "topk_content_mean": "probe_vis_attn_topk_content_mean_real",
+        "topk_tail_minus_head": "probe_vis_attn_topk_tail_minus_head_real",
+        "entropy_content_mean": "probe_vis_entropy_content_mean_real",
+        "entropy_content_max": "probe_vis_entropy_content_max_real",
+        "entropy_tail_minus_head": "probe_vis_entropy_tail_minus_head_real",
+        "top1_mass_content_mean": "probe_vis_top1_mass_content_mean_real",
+        "ess_content_mean": "probe_vis_ess_content_mean_real",
+    }
+    for alias, col in pairs.items():
+        b = get(f"sem_trace_base_{col}")
+        i = get(f"sem_trace_int_{col}")
+        if b is None or i is None:
+            continue
+        out[f"sem_visual_base_{alias}"] = b
+        out[f"sem_visual_int_{alias}"] = i
+        # Positive value means the intervention caption is less visually grounded
+        # than the baseline replay at the same generic caption-token slice.
+        out[f"sem_visual_suppression_{alias}"] = b - i
+        out[f"sem_visual_uplift_{alias}"] = i - b
+
+    benefit = safe_float(out.get("sem_benefit_base_only_sem_unit_count")) or 0.0
+    for alias in ("content_mean", "tail_mean", "last4_mean", "tail_minus_head"):
+        suppression = safe_float(out.get(f"sem_visual_suppression_{alias}"))
+        if suppression is not None:
+            out[f"sem_visual_suppression_x_base_only_{alias}"] = max(0.0, suppression) * benefit
+
+
 def build_row(
     sid: str,
     base: Dict[str, Any],
@@ -529,6 +568,7 @@ def build_row(
         if b_val is not None and i_val is not None:
             row[f"sem_trace_delta_{col}_base_minus_int"] = b_val - i_val
     add_v53_aliases(row, baseline_trace, token_base_only)
+    add_v54_visual_aliases(row)
     return row
 
 
@@ -564,6 +604,18 @@ def main() -> None:
         "probe_tail_after_last_object_lp_min_real",
         "probe_lp_tail_minus_head_real",
         "probe_gap_tail_minus_head_real",
+        "probe_vis_attn_content_mean_real",
+        "probe_vis_attn_content_min_real",
+        "probe_vis_attn_tail_mean_real",
+        "probe_vis_attn_last4_mean_real",
+        "probe_vis_attn_tail_minus_head_real",
+        "probe_vis_attn_topk_content_mean_real",
+        "probe_vis_attn_topk_tail_minus_head_real",
+        "probe_vis_entropy_content_mean_real",
+        "probe_vis_entropy_content_max_real",
+        "probe_vis_entropy_tail_minus_head_real",
+        "probe_vis_top1_mass_content_mean_real",
+        "probe_vis_ess_content_mean_real",
     ]
 
     ids = sorted(set(baseline) & set(intervention), key=lambda x: int(x) if x.isdigit() else x)

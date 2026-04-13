@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -694,6 +695,92 @@ def compute_eos_values(pack: Any, tokenizer: Any) -> Dict[str, List[float]]:
     }
 
 
+def compute_visual_attention_values(
+    pack: Any,
+    *,
+    late_start: int,
+    late_end: int,
+    topk_heads: int,
+    eps: float = 1e-8,
+) -> Dict[str, List[float]]:
+    n_tokens = int(pack.cont_ids.numel())
+    zeros = [0.0 for _ in range(n_tokens)]
+    if pack.attentions is None:
+        return {
+            "vis_ratio_mean": list(zeros),
+            "vis_ratio_topkmean": list(zeros),
+            "vis_entropy_mean": list(zeros),
+            "vis_top1_mass_mean": list(zeros),
+            "vis_ess_mean": list(zeros),
+        }
+
+    vision_positions = pack.vision_positions.long()
+    text_positions = pack.text_positions.long()
+    decision_positions = pack.decision_positions.long()
+    if int(vision_positions.numel()) <= 0 or int(decision_positions.numel()) <= 0:
+        return {
+            "vis_ratio_mean": list(zeros),
+            "vis_ratio_topkmean": list(zeros),
+            "vis_entropy_mean": list(zeros),
+            "vis_top1_mass_mean": list(zeros),
+            "vis_ess_mean": list(zeros),
+        }
+
+    layer_start = max(0, int(late_start))
+    layer_end = min(int(len(pack.attentions)) - 1, int(late_end))
+    if layer_end < layer_start:
+        layer_start = 0
+        layer_end = int(len(pack.attentions)) - 1
+    k_heads = max(1, int(topk_heads))
+
+    ratio_by_token: List[List[float]] = [[] for _ in range(n_tokens)]
+    topk_ratio_by_token: List[List[float]] = [[] for _ in range(n_tokens)]
+    entropy_by_token: List[List[float]] = [[] for _ in range(n_tokens)]
+    top1_by_token: List[List[float]] = [[] for _ in range(n_tokens)]
+    ess_by_token: List[List[float]] = [[] for _ in range(n_tokens)]
+
+    for layer_idx, attn in enumerate(pack.attentions):
+        if layer_idx < layer_start or layer_idx > layer_end or attn is None:
+            continue
+        if attn.dim() != 4 or int(attn.size(0)) != 1:
+            continue
+        att = attn[0].to(torch.float32)
+        n_heads = int(att.size(0))
+        k = min(k_heads, max(1, n_heads))
+        for rel_idx, decision_pos_t in enumerate(decision_positions):
+            decision_pos = int(decision_pos_t.item())
+            if decision_pos < 0 or decision_pos >= int(att.size(1)):
+                continue
+            row = att[:, decision_pos, :]
+            vis = row[:, vision_positions]
+            vis_sum = vis.sum(dim=-1)
+            if int(text_positions.numel()) > 0:
+                txt_sum = row[:, text_positions].sum(dim=-1)
+            else:
+                txt_sum = torch.zeros_like(vis_sum)
+            ratio = vis_sum / torch.clamp(vis_sum + txt_sum, min=float(eps))
+            ratio_by_token[rel_idx].append(float(ratio.mean().item()))
+            topk_ratio_by_token[rel_idx].append(float(torch.topk(ratio, k=k).values.mean().item()))
+
+            vis_prob = vis / torch.clamp(vis_sum[:, None], min=float(eps))
+            entropy = -(vis_prob * torch.log(vis_prob.clamp(min=float(eps)))).sum(dim=-1)
+            denom = math.log(max(2, int(vis_prob.size(-1))))
+            entropy_norm = entropy / float(denom)
+            top1_mass = vis_prob.max(dim=-1).values
+            ess = 1.0 / torch.clamp((vis_prob * vis_prob).sum(dim=-1), min=float(eps))
+            entropy_by_token[rel_idx].append(float(entropy_norm.mean().item()))
+            top1_by_token[rel_idx].append(float(top1_mass.mean().item()))
+            ess_by_token[rel_idx].append(float(ess.mean().item()))
+
+    return {
+        "vis_ratio_mean": [mean_or_zero(vals) for vals in ratio_by_token],
+        "vis_ratio_topkmean": [mean_or_zero(vals) for vals in topk_ratio_by_token],
+        "vis_entropy_mean": [mean_or_zero(vals) for vals in entropy_by_token],
+        "vis_top1_mass_mean": [mean_or_zero(vals) for vals in top1_by_token],
+        "vis_ess_mean": [mean_or_zero(vals) for vals in ess_by_token],
+    }
+
+
 def pick(values: Sequence[float], idxs: Sequence[int]) -> List[float]:
     return [float(values[int(i)]) for i in idxs if 0 <= int(i) < len(values)]
 
@@ -708,13 +795,17 @@ def build_feature_payload(
     *,
     image: Any = None,
     max_mentions: int,
+    visual_trace: bool = False,
+    visual_late_start: int = 2,
+    visual_late_end: int = 15,
+    visual_topk_heads: int = 4,
 ) -> Dict[str, Any]:
     image_obj = image if image is not None else runtime.load_image(image_path)
     pack = runtime.teacher_force_candidate(
         image=image_obj,
         question=question,
         candidate_text=candidate_text,
-        output_attentions=False,
+        output_attentions=bool(visual_trace),
     )
     content_indices = select_content_indices(runtime.tokenizer, pack.cont_ids)
     decoded_text, token_spans = decode_token_spans(runtime.tokenizer, pack.cont_ids)
@@ -723,6 +814,12 @@ def build_feature_payload(
     values = compute_pack_values(pack)
     stop_values = compute_stop_values(pack, runtime.tokenizer)
     eos_values = compute_eos_values(pack, runtime.tokenizer)
+    visual_values = compute_visual_attention_values(
+        pack,
+        late_start=int(visual_late_start),
+        late_end=int(visual_late_end),
+        topk_heads=int(visual_topk_heads),
+    ) if bool(visual_trace) else {}
 
     mention_rows: List[Dict[str, Any]] = []
     for mention in mentions:
@@ -780,6 +877,11 @@ def build_feature_payload(
     ent_content = pick(values["ent"], ordered_content)
     eos_margin_content = pick(eos_values["margin"], ordered_content)
     eos_logprob_content = pick(eos_values["logprob"], ordered_content)
+    vis_ratio_content = pick(visual_values.get("vis_ratio_mean", []), ordered_content)
+    vis_ratio_topk_content = pick(visual_values.get("vis_ratio_topkmean", []), ordered_content)
+    vis_entropy_content = pick(visual_values.get("vis_entropy_mean", []), ordered_content)
+    vis_top1_content = pick(visual_values.get("vis_top1_mass_mean", []), ordered_content)
+    vis_ess_content = pick(visual_values.get("vis_ess_mean", []), ordered_content)
     head_n = max(1, n_content // 3) if n_content > 0 else 0
     tail_n = head_n
     head_slice = ordered_content[:head_n]
@@ -797,6 +899,13 @@ def build_feature_payload(
     ent_last4 = pick(values["ent"], last4_slice)
     eos_margin_last4 = pick(eos_values["margin"], last4_slice)
     eos_logprob_last4 = pick(eos_values["logprob"], last4_slice)
+    vis_ratio_head = pick(visual_values.get("vis_ratio_mean", []), head_slice)
+    vis_ratio_tail = pick(visual_values.get("vis_ratio_mean", []), tail_slice)
+    vis_ratio_last4 = pick(visual_values.get("vis_ratio_mean", []), last4_slice)
+    vis_topk_head = pick(visual_values.get("vis_ratio_topkmean", []), head_slice)
+    vis_topk_tail = pick(visual_values.get("vis_ratio_topkmean", []), tail_slice)
+    vis_entropy_head = pick(visual_values.get("vis_entropy_mean", []), head_slice)
+    vis_entropy_tail = pick(visual_values.get("vis_entropy_mean", []), tail_slice)
 
     lp_object = pick(values["lp"], object_token_indices)
     gap_object = pick(values["gap"], object_token_indices)
@@ -875,6 +984,19 @@ def build_feature_payload(
         "probe_eos_margin_content_max_real": float(max_or_zero(eos_margin_content)),
         "probe_eos_logprob_content_mean_real": float(mean_or_zero(eos_logprob_content)),
         "probe_eos_logprob_content_max_real": float(max_or_zero(eos_logprob_content)),
+        "probe_visual_trace_enabled": int(bool(visual_trace)),
+        "probe_visual_late_start": int(visual_late_start),
+        "probe_visual_late_end": int(visual_late_end),
+        "probe_visual_topk_heads": int(visual_topk_heads),
+        "probe_vis_attn_content_mean_real": float(mean_or_zero(vis_ratio_content)),
+        "probe_vis_attn_content_std_real": float(std_or_zero(vis_ratio_content)),
+        "probe_vis_attn_content_min_real": float(min_or_zero(vis_ratio_content)),
+        "probe_vis_attn_content_max_real": float(max_or_zero(vis_ratio_content)),
+        "probe_vis_attn_topk_content_mean_real": float(mean_or_zero(vis_ratio_topk_content)),
+        "probe_vis_entropy_content_mean_real": float(mean_or_zero(vis_entropy_content)),
+        "probe_vis_entropy_content_max_real": float(max_or_zero(vis_entropy_content)),
+        "probe_vis_top1_mass_content_mean_real": float(mean_or_zero(vis_top1_content)),
+        "probe_vis_ess_content_mean_real": float(mean_or_zero(vis_ess_content)),
         "probe_lp_head_mean_real": float(mean_or_zero(lp_head)),
         "probe_lp_tail_mean_real": float(mean_or_zero(lp_tail)),
         "probe_lp_tail_minus_head_real": float(mean_or_zero(lp_tail) - mean_or_zero(lp_head)),
@@ -889,6 +1011,16 @@ def build_feature_payload(
         "probe_last4_entropy_mean_real": float(mean_or_zero(ent_last4)),
         "probe_last4_eos_margin_mean_real": float(mean_or_zero(eos_margin_last4)),
         "probe_last4_eos_logprob_mean_real": float(mean_or_zero(eos_logprob_last4)),
+        "probe_vis_attn_head_mean_real": float(mean_or_zero(vis_ratio_head)),
+        "probe_vis_attn_tail_mean_real": float(mean_or_zero(vis_ratio_tail)),
+        "probe_vis_attn_tail_minus_head_real": float(mean_or_zero(vis_ratio_tail) - mean_or_zero(vis_ratio_head)),
+        "probe_vis_attn_last4_mean_real": float(mean_or_zero(vis_ratio_last4)),
+        "probe_vis_attn_topk_head_mean_real": float(mean_or_zero(vis_topk_head)),
+        "probe_vis_attn_topk_tail_mean_real": float(mean_or_zero(vis_topk_tail)),
+        "probe_vis_attn_topk_tail_minus_head_real": float(mean_or_zero(vis_topk_tail) - mean_or_zero(vis_topk_head)),
+        "probe_vis_entropy_head_mean_real": float(mean_or_zero(vis_entropy_head)),
+        "probe_vis_entropy_tail_mean_real": float(mean_or_zero(vis_entropy_tail)),
+        "probe_vis_entropy_tail_minus_head_real": float(mean_or_zero(vis_entropy_tail) - mean_or_zero(vis_entropy_head)),
         "probe_stop_eos_logprob_real": float(stop_values["stop_eos_logprob"]),
         "probe_stop_eos_margin_real": float(stop_values["stop_eos_margin"]),
         "probe_stop_eos_rank_real": float(stop_values["stop_eos_rank"]),
@@ -944,6 +1076,10 @@ def build_feature_row(
     image_name: str,
     *,
     max_mentions: int,
+    visual_trace: bool = False,
+    visual_late_start: int = 2,
+    visual_late_end: int = 15,
+    visual_topk_heads: int = 4,
 ) -> Dict[str, Any]:
     payload = build_feature_payload(
         runtime=runtime,
@@ -953,6 +1089,10 @@ def build_feature_row(
         sample_id=sample_id,
         image_name=image_name,
         max_mentions=max_mentions,
+        visual_trace=bool(visual_trace),
+        visual_late_start=int(visual_late_start),
+        visual_late_end=int(visual_late_end),
+        visual_topk_heads=int(visual_topk_heads),
     )
     return dict(payload["row"])
 
@@ -973,6 +1113,10 @@ def main() -> None:
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=True)
     ap.add_argument("--log_every", type=int, default=25)
     ap.add_argument("--max_mentions", type=int, default=12)
+    ap.add_argument("--visual_trace", type=parse_bool, default=False)
+    ap.add_argument("--visual_late_start", type=int, default=2)
+    ap.add_argument("--visual_late_end", type=int, default=15)
+    ap.add_argument("--visual_topk_heads", type=int, default=4)
     args = ap.parse_args()
 
     if bool(args.reuse_if_exists) and os.path.isfile(args.out_csv):
@@ -1024,6 +1168,10 @@ def main() -> None:
                     sample_id=sample_id,
                     image_name=image_name,
                     max_mentions=int(args.max_mentions),
+                    visual_trace=bool(args.visual_trace),
+                    visual_late_start=int(args.visual_late_start),
+                    visual_late_end=int(args.visual_late_end),
+                    visual_topk_heads=int(args.visual_topk_heads),
                 )
             )
         except Exception as exc:
@@ -1049,6 +1197,10 @@ def main() -> None:
                     "conv_mode": args.conv_mode,
                     "device": args.device,
                     "max_mentions": int(args.max_mentions),
+                    "visual_trace": bool(args.visual_trace),
+                    "visual_late_start": int(args.visual_late_start),
+                    "visual_late_end": int(args.visual_late_end),
+                    "visual_topk_heads": int(args.visual_topk_heads),
                 },
                 "counts": {
                     "n_questions": int(len(question_rows)),
