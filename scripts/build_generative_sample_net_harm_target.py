@@ -49,6 +49,16 @@ def object_set(values: Iterable[Any]) -> Set[str]:
     return {x for x in out if x}
 
 
+def hallucination_set(values: Iterable[Any]) -> Set[str]:
+    out = set()
+    for value in values:
+        if isinstance(value, (list, tuple)) and value:
+            out.add(str(value[0]).strip())
+        else:
+            out.add(str(value).strip())
+    return {x for x in out if x}
+
+
 def image_id_from_row(row: Dict[str, Any]) -> str:
     raw = str(row.get("image_id", row.get("id", ""))).strip()
     try:
@@ -210,6 +220,22 @@ def build_metric_rows(
         delta_r_base_minus_int = -delta_recall
         delta_f_base_minus_int = -delta_f1
         delta_s_base_minus_int = float(len(b_supported) - len(i_supported))
+        b_hall_set = hallucination_set(b_row.get("mscoco_hallucinated_words", []))
+        i_hall_set = hallucination_set(i_row.get("mscoco_hallucinated_words", []))
+        intervention_only_hall_set = i_hall_set - b_hall_set
+        baseline_only_hall_set = b_hall_set - i_hall_set
+        both_hall_set = b_hall_set & i_hall_set
+        f1_nondecrease_no_more_hall_set = bool(
+            delta_f_base_minus_int >= 0.0
+            and len(b_hall_set) <= len(i_hall_set)
+        )
+        recall_gain_f1_nondecrease_no_more_hall_set = bool(
+            delta_r_base_minus_int > 0.0
+            and delta_f_base_minus_int >= 0.0
+            and len(b_hall_set) <= len(i_hall_set)
+        )
+        any_intervention_only_hall = bool(intervention_only_hall_set)
+        pure_regression_base_clean_to_int_hall = bool(not b_hall_set and i_hall_set)
         harm_score = (
             max(0.0, -delta_recall)
             + max(0.0, -delta_f1)
@@ -306,6 +332,14 @@ def build_metric_rows(
                 "dropped_supported": "|".join(sorted(dropped_supported)),
                 "gained_supported": "|".join(sorted(gained_supported)),
                 "baseline_nonartifact_hall_count": base_nonartifact_h,
+                "baseline_hall_set_count": len(b_hall_set),
+                "intervention_hall_set_count": len(i_hall_set),
+                "intervention_only_hall_set_count": len(intervention_only_hall_set),
+                "baseline_only_hall_set_count": len(baseline_only_hall_set),
+                "both_hall_set_count": len(both_hall_set),
+                "intervention_only_hall_set": "|".join(sorted(intervention_only_hall_set)),
+                "baseline_only_hall_set": "|".join(sorted(baseline_only_hall_set)),
+                "both_hall_set": "|".join(sorted(both_hall_set)),
                 "baseline_clean": baseline_clean,
                 "n_nonartifact_intervention_only_hall": n_nonartifact_hall,
                 "n_parser_artifact_suspect": n_parser_artifact,
@@ -327,6 +361,10 @@ def build_metric_rows(
                 "net_harm_soft_raw": int(soft),
                 "net_harm_strict_train": int(strict and not parser_artifact_only),
                 "net_harm_soft_train": int(soft and not parser_artifact_only),
+                "oracle_f1_nondecrease_no_more_hall_set": int(f1_nondecrease_no_more_hall_set),
+                "oracle_recall_gain_f1_nondecrease_no_more_hall_set": int(recall_gain_f1_nondecrease_no_more_hall_set),
+                "fallback_any_intervention_only_hall": int(any_intervention_only_hall),
+                "fallback_pure_regression_base_clean_to_int_hall": int(pure_regression_base_clean_to_int_hall),
             }
         )
     return rows
@@ -473,6 +511,10 @@ def main() -> None:
         "net_harm_strict_train",
         "net_harm_soft_raw",
         "net_harm_soft_train",
+        "oracle_f1_nondecrease_no_more_hall_set",
+        "oracle_recall_gain_f1_nondecrease_no_more_hall_set",
+        "fallback_any_intervention_only_hall",
+        "fallback_pure_regression_base_clean_to_int_hall",
     ):
         metrics = evaluate_feature_auc(
             target_rows,
@@ -500,6 +542,10 @@ def main() -> None:
         "net_safe_strict_v2": sum(int(row["net_safe_strict_v2"]) for row in target_rows),
         "net_ignore_v2": sum(int(row["net_ignore_v2"]) for row in target_rows),
         "baseline_clean": sum(int(row["baseline_clean"]) for row in target_rows),
+        "oracle_f1_nondecrease_no_more_hall_set": sum(int(row["oracle_f1_nondecrease_no_more_hall_set"]) for row in target_rows),
+        "oracle_recall_gain_f1_nondecrease_no_more_hall_set": sum(int(row["oracle_recall_gain_f1_nondecrease_no_more_hall_set"]) for row in target_rows),
+        "fallback_any_intervention_only_hall": sum(int(row["fallback_any_intervention_only_hall"]) for row in target_rows),
+        "fallback_pure_regression_base_clean_to_int_hall": sum(int(row["fallback_pure_regression_base_clean_to_int_hall"]) for row in target_rows),
     }
     summary = {
         "inputs": {

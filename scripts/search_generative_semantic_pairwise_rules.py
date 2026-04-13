@@ -319,11 +319,13 @@ def search_rules(
     if max_rule_specs > 0 and len(scored_specs) > max_rule_specs:
         specs = [spec for _, spec in sorted(scored_specs, reverse=True)[:max_rule_specs]]
     candidates: List[Dict[str, Any]] = []
+    benefit_prefixes = [x for x in str(benefit_prefix).split(",") if x]
+    cost_prefixes = [x for x in str(cost_prefix).split(",") if x]
 
     def consider(rule_specs: Sequence[RuleSpec]) -> None:
         if require_benefit_cost_combo:
-            has_benefit = any(spec[0].startswith(benefit_prefix) for spec in rule_specs)
-            has_cost = any(spec[0].startswith(cost_prefix) for spec in rule_specs)
+            has_benefit = any(any(spec[0].startswith(prefix) for prefix in benefit_prefixes) for spec in rule_specs)
+            has_cost = any(any(spec[0].startswith(prefix) for prefix in cost_prefixes) for spec in rule_specs)
             if not (has_benefit and has_cost):
                 return
         mask = mask_for_rule(rows, rule_specs)
