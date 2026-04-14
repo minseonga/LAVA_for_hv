@@ -414,6 +414,7 @@ def main() -> None:
     ap.add_argument("--end-layer", type=int, default=15)
     ap.add_argument("--head-balancing", default="simg", choices=["simg", "none"])
     ap.add_argument("--attn-norm", type=parse_bool, default=False)
+    ap.add_argument("--log-vanilla-contrast", type=parse_bool, default=True)
     ap.add_argument("--seed", type=int, default=17)
     ap.add_argument("--topk-patches", type=int, default=10)
     ap.add_argument("--out-csv", required=True)
@@ -516,10 +517,35 @@ def main() -> None:
                     vl_guidance, int(args.topk_patches)
                 )
                 past_key_values = prompt_outputs.past_key_values
+                vanilla_past_key_values = prompt_outputs.past_key_values
                 current_input = input_ids[:, -1:]
 
                 for step, target_id_t in enumerate(target_ids):
                     target_id = int(target_id_t.item())
+                    vanilla_logp = None
+                    vanilla_probs = None
+                    vanilla_top_vals = None
+                    vanilla_top_ids = None
+                    vanilla_rank = None
+                    vanilla_entropy = None
+                    if bool(args.log_vanilla_contrast):
+                        vanilla_outputs = model(
+                            current_input,
+                            attention_mask=step_attention_mask,
+                            images=image_batch,
+                            past_key_values=vanilla_past_key_values,
+                            use_cache=True,
+                            return_dict=True,
+                            use_add=False,
+                        )
+                        vanilla_logits = vanilla_outputs.logits[:, -1, :].float()
+                        vanilla_logp = torch.log_softmax(vanilla_logits, dim=-1)[0]
+                        vanilla_probs = torch.softmax(vanilla_logits, dim=-1)[0]
+                        vanilla_top_vals, vanilla_top_ids = torch.topk(vanilla_logp, 5)
+                        vanilla_rank = int((vanilla_logp > vanilla_logp[target_id]).sum().item() + 1)
+                        vanilla_entropy = float((-(vanilla_probs.clamp_min(1e-12)) * torch.log(vanilla_probs.clamp_min(1e-12))).sum().item())
+                        vanilla_past_key_values = vanilla_outputs.past_key_values
+
                     outputs = model(
                         current_input,
                         attention_mask=step_attention_mask,
@@ -578,6 +604,26 @@ def main() -> None:
                             "prompt_guidance_top_idx": prompt_guidance_top_idx,
                             "prompt_guidance_top_val": prompt_guidance_top_val,
                         }
+                        if vanilla_logp is not None:
+                            row.update(
+                                {
+                                    "vanilla_target_logprob": float(vanilla_logp[target_id].item()),
+                                    "vanilla_target_prob": float(vanilla_probs[target_id].item()),
+                                    "vanilla_target_rank": int(vanilla_rank),
+                                    "vanilla_target_margin_vs_top1": float(vanilla_logp[target_id].item() - vanilla_top_vals[0].item()),
+                                    "vanilla_top1_logprob": float(vanilla_top_vals[0].item()),
+                                    "vanilla_top1_token_id": int(vanilla_top_ids[0].item()),
+                                    "vanilla_top1_token_text": tokenizer.convert_ids_to_tokens([int(vanilla_top_ids[0].item())])[0],
+                                    "vanilla_top1_gap": float((vanilla_top_vals[0] - vanilla_top_vals[1]).item()) if vanilla_top_vals.numel() > 1 else 0.0,
+                                    "vanilla_entropy": vanilla_entropy,
+                                    "pvg_minus_vanilla_target_logprob": float(logp[target_id].item() - vanilla_logp[target_id].item()),
+                                    "vanilla_minus_pvg_target_logprob": float(vanilla_logp[target_id].item() - logp[target_id].item()),
+                                    "pvg_minus_vanilla_target_rank": int(rank - int(vanilla_rank)),
+                                    "vanilla_top1_equals_pvg_top1": int(int(vanilla_top_ids[0].item()) == int(top_ids[0].item())),
+                                    "vanilla_top1_is_target": int(int(vanilla_top_ids[0].item()) == int(target_id)),
+                                    "pvg_top1_is_target": int(int(top_ids[0].item()) == int(target_id)),
+                                }
+                            )
                         row.update(
                             compute_token_visual_row(
                                 vl_guidance=vl_guidance,
