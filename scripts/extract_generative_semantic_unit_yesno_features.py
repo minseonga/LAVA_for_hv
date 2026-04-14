@@ -6,11 +6,13 @@ import csv
 import json
 import math
 import os
+import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from extract_generative_claim_support_delta_features import replay_claim_metrics, zero_replay_metrics
 from extract_generative_semantic_pairwise_features import (
     GENERIC_FILLERS,
+    STOPWORDS,
     content_tokens,
     normalize_token,
     read_prediction_map,
@@ -34,7 +36,27 @@ BAD_SINGLE_UNITS = {
     "possible",
     "possibly",
     "likely",
+    "item",
+    "items",
+    "object",
+    "objects",
+    "thing",
+    "things",
+    "view",
+    "way",
+    "group",
+    "groups",
+    "number",
+    "numbers",
+    "lot",
+    "lots",
+    "pair",
+    "pairs",
+    "set",
+    "sets",
 }
+
+SPACY_NLP: Any = None
 
 
 def write_csv(path: str, rows: Sequence[Dict[str, Any]]) -> None:
@@ -123,6 +145,100 @@ def keep_unit(unit: str) -> bool:
     return any(part not in BAD_SINGLE_UNITS and part not in GENERIC_FILLERS and len(part) >= 3 for part in parts)
 
 
+def get_spacy_nlp(model_name: str) -> Any:
+    global SPACY_NLP
+    if SPACY_NLP is None:
+        import spacy
+
+        SPACY_NLP = spacy.load(str(model_name))
+    return SPACY_NLP
+
+
+def spacy_token_unit(token: Any) -> str:
+    raw = str(getattr(token, "lemma_", "") or getattr(token, "text", "") or "").strip().lower()
+    if raw == "-pron-":
+        raw = str(getattr(token, "text", "") or "").strip().lower()
+    raw = re.sub(r"[^a-z0-9']+", "", raw)
+    return normalize_token(raw) if raw else ""
+
+
+def keep_spacy_content_token(token: Any) -> bool:
+    unit = spacy_token_unit(token)
+    if not keep_unit(unit):
+        return False
+    if unit in STOPWORDS or unit in BAD_SINGLE_UNITS or unit in GENERIC_FILLERS:
+        return False
+    if bool(getattr(token, "is_stop", False)) or bool(getattr(token, "is_punct", False)):
+        return False
+    pos = str(getattr(token, "pos_", ""))
+    dep = str(getattr(token, "dep_", ""))
+    return pos in {"NOUN", "PROPN", "ADJ"} or dep in {"compound", "amod"}
+
+
+def spacy_caption_units(text: str, *, spacy_model: str) -> List[Tuple[int, int, str]]:
+    """Return object-like noun phrase/head candidates as (position, priority, unit)."""
+    nlp = get_spacy_nlp(spacy_model)
+    doc = nlp(str(text or ""))
+    candidates: List[Tuple[int, int, str]] = []
+    covered_token_idxs: set[int] = set()
+
+    for chunk in doc.noun_chunks:
+        content = [tok for tok in chunk if keep_spacy_content_token(tok)]
+        covered_token_idxs.update(int(tok.i) for tok in chunk)
+        words = [spacy_token_unit(tok) for tok in content]
+        words = [word for word in words if keep_unit(word)]
+        if len(words) >= 2:
+            phrase = "_".join(words)
+            if keep_unit(phrase):
+                candidates.append((int(chunk.start), 0, phrase))
+
+        root = getattr(chunk, "root", None)
+        if root is not None and str(getattr(root, "pos_", "")) in {"NOUN", "PROPN"}:
+            head = spacy_token_unit(root)
+            if keep_unit(head):
+                candidates.append((int(root.i), 1, head))
+
+        for tok in content:
+            if str(getattr(tok, "pos_", "")) in {"NOUN", "PROPN"}:
+                unit = spacy_token_unit(tok)
+                if keep_unit(unit):
+                    candidates.append((int(tok.i), 2, unit))
+
+    for tok in doc:
+        if int(tok.i) in covered_token_idxs:
+            continue
+        if str(getattr(tok, "pos_", "")) in {"NOUN", "PROPN"}:
+            unit = spacy_token_unit(tok)
+            if keep_unit(unit):
+                candidates.append((int(tok.i), 3, unit))
+
+    return candidates
+
+
+def intervention_unit_blocklist(units: Sequence[Tuple[int, int, str]]) -> set[str]:
+    out: set[str] = set()
+    for _, _, unit in units:
+        parts = [part for part in str(unit).split("_") if part]
+        out.add(str(unit))
+        if parts:
+            out.add(parts[-1])
+        for part in parts:
+            if keep_unit(part):
+                out.add(part)
+    return out
+
+
+def candidate_is_base_only(unit: str, intervention_blocklist: set[str]) -> bool:
+    parts = [part for part in str(unit).split("_") if part]
+    if str(unit) in intervention_blocklist:
+        return False
+    if len(parts) > 1 and parts[-1] in intervention_blocklist:
+        return False
+    if len(parts) == 1 and parts[0] in intervention_blocklist:
+        return False
+    return True
+
+
 def ordered_base_only_units(
     baseline_text: str,
     intervention_text: str,
@@ -155,6 +271,27 @@ def ordered_base_only_units(
     seen = set()
     for _, _, unit in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):
         if unit in seen:
+            continue
+        seen.add(unit)
+        out.append(unit)
+        if len(out) >= int(max_units):
+            break
+    return out
+
+
+def ordered_base_only_spacy_units(
+    baseline_text: str,
+    intervention_text: str,
+    *,
+    max_units: int,
+    spacy_model: str,
+) -> List[str]:
+    int_block = intervention_unit_blocklist(spacy_caption_units(intervention_text, spacy_model=spacy_model))
+    candidates = spacy_caption_units(baseline_text, spacy_model=spacy_model)
+    out: List[str] = []
+    seen = set()
+    for _, _, unit in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):
+        if unit in seen or not candidate_is_base_only(unit, int_block):
             continue
         seen.add(unit)
         out.append(unit)
@@ -278,6 +415,8 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--max_units", type=int, default=6)
+    ap.add_argument("--candidate_mode", choices=["semantic_units", "spacy_noun_chunks"], default="semantic_units")
+    ap.add_argument("--spacy_model", default="en_core_web_sm")
     ap.add_argument("--include_phrases", type=parse_bool, default=True)
     ap.add_argument("--include_tokens", type=parse_bool, default=True)
     ap.add_argument("--baseline_pred_text_key", default="auto")
@@ -324,13 +463,21 @@ def main() -> None:
                 raise FileNotFoundError(f"Image file not found: {image_path}")
             b_text = str(baseline[sid].get("text", ""))
             i_text = str(intervention[sid].get("text", ""))
-            units = ordered_base_only_units(
-                b_text,
-                i_text,
-                max_units=int(args.max_units),
-                include_phrases=bool(args.include_phrases),
-                include_tokens=bool(args.include_tokens),
-            )
+            if str(args.candidate_mode) == "spacy_noun_chunks":
+                units = ordered_base_only_spacy_units(
+                    b_text,
+                    i_text,
+                    max_units=int(args.max_units),
+                    spacy_model=str(args.spacy_model),
+                )
+            else:
+                units = ordered_base_only_units(
+                    b_text,
+                    i_text,
+                    max_units=int(args.max_units),
+                    include_phrases=bool(args.include_phrases),
+                    include_tokens=bool(args.include_tokens),
+                )
             image = runtime.load_image(image_path)
             cache: Dict[str, Dict[str, float]] = {}
             scored: List[Dict[str, Any]] = []
@@ -375,6 +522,8 @@ def main() -> None:
                     "device": str(args.device),
                     "limit": int(args.limit),
                     "max_units": int(args.max_units),
+                    "candidate_mode": str(args.candidate_mode),
+                    "spacy_model": str(args.spacy_model),
                     "question_template": str(args.question_template),
                     "score_mode": str(args.score_mode),
                 },

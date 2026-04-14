@@ -35,6 +35,8 @@ REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
 RUN_CHAIR_OBJECT="${RUN_CHAIR_OBJECT:-true}"
 RUN_SEMANTIC_UNIT="${RUN_SEMANTIC_UNIT:-true}"
 MAX_UNITS="${MAX_UNITS:-4}"
+CANDIDATE_MODE="${CANDIDATE_MODE:-semantic_units}"
+SPACY_MODEL="${SPACY_MODEL:-en_core_web_sm}"
 
 Q_FILE="$SOURCE_OUT/splits/${SPLIT}_caption_q_limited500.jsonl"
 BASE_PRED="${BASE_PRED:-$SOURCE_OUT/$SPLIT/pred_baseline_caption.jsonl}"
@@ -48,6 +50,7 @@ mkdir -p "$OUT_ROOT/features"
 
 echo "[settings] out=$OUT_ROOT source=$SOURCE_OUT split=$SPLIT limit=$LIMIT gpu=$GPU"
 echo "[settings] target=$TARGET_COL score_mode=$SCORE_MODE run_chair_object=$RUN_CHAIR_OBJECT run_semantic_unit=$RUN_SEMANTIC_UNIT"
+echo "[settings] candidate_mode=$CANDIDATE_MODE max_units=$MAX_UNITS spacy_model=$SPACY_MODEL"
 
 if [[ ! -f "$ORACLE_ROWS" ]]; then
   echo "[prep] build missing unique-safe oracle rows: $ORACLE_ROWS"
@@ -97,11 +100,11 @@ fi
 
 if [[ "$RUN_SEMANTIC_UNIT" == "true" ]]; then
   echo "[2/2][semantic_unit] extract caption-pair candidate yes/no features"
-  SEM_FEATURES="$OUT_ROOT/features/${SPLIT}_semantic_unit_yesno_features_limit${LIMIT}_max${MAX_UNITS}.csv"
-  SEM_FEATURES_SUMMARY="$OUT_ROOT/features/${SPLIT}_semantic_unit_yesno_features_limit${LIMIT}_max${MAX_UNITS}.summary.json"
-  SEM_JOINED="$OUT_ROOT/features/${SPLIT}_semantic_unit_yesno_joined_limit${LIMIT}_max${MAX_UNITS}.csv"
-  SEM_METRICS="$OUT_ROOT/features/${SPLIT}_semantic_unit_yesno_feature_metrics_limit${LIMIT}_max${MAX_UNITS}.csv"
-  SEM_SUMMARY="$OUT_ROOT/features/${SPLIT}_semantic_unit_yesno_summary_limit${LIMIT}_max${MAX_UNITS}.json"
+  SEM_FEATURES="$OUT_ROOT/features/${SPLIT}_${CANDIDATE_MODE}_yesno_features_limit${LIMIT}_max${MAX_UNITS}.csv"
+  SEM_FEATURES_SUMMARY="$OUT_ROOT/features/${SPLIT}_${CANDIDATE_MODE}_yesno_features_limit${LIMIT}_max${MAX_UNITS}.summary.json"
+  SEM_JOINED="$OUT_ROOT/features/${SPLIT}_${CANDIDATE_MODE}_yesno_joined_limit${LIMIT}_max${MAX_UNITS}.csv"
+  SEM_METRICS="$OUT_ROOT/features/${SPLIT}_${CANDIDATE_MODE}_yesno_feature_metrics_limit${LIMIT}_max${MAX_UNITS}.csv"
+  SEM_SUMMARY="$OUT_ROOT/features/${SPLIT}_${CANDIDATE_MODE}_yesno_summary_limit${LIMIT}_max${MAX_UNITS}.json"
   (
     cd "$CAL_ROOT"
     PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/extract_generative_semantic_unit_yesno_features.py \
@@ -117,6 +120,8 @@ if [[ "$RUN_SEMANTIC_UNIT" == "true" ]]; then
       --device "$DEVICE" \
       --limit "$LIMIT" \
       --max_units "$MAX_UNITS" \
+      --candidate_mode "$CANDIDATE_MODE" \
+      --spacy_model "$SPACY_MODEL" \
       --question_template "Is there a {unit} in the image? Answer yes or no." \
       --score_mode "$SCORE_MODE" \
       --reuse_if_exists "$REUSE_IF_EXISTS"
