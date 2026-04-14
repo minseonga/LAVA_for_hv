@@ -109,6 +109,16 @@ def read_guidance_selected_samples(path: str, *, limit_samples: int) -> List[str
     return [str(x["id"]) for x in ordered[: int(limit_samples)]]
 
 
+def read_sample_manifest(path: str) -> List[Dict[str, str]]:
+    rows = read_csv_rows(path)
+    out: List[Dict[str, str]] = []
+    for row in rows:
+        sid = safe_id(row)
+        if sid:
+            out.append({"id": sid, "group": row.get("group", ""), "manifest_mode": row.get("mode", "")})
+    return out
+
+
 def candidate_token_ids(tokenizer: Any, lost_objects: Sequence[str]) -> Dict[int, str]:
     out: Dict[int, str] = {}
     for obj in lost_objects:
@@ -189,6 +199,7 @@ def main() -> None:
     ap.add_argument("--question-file", required=True)
     ap.add_argument("--oracle-rows-csv", required=True)
     ap.add_argument("--guidance-rows-csv", default="")
+    ap.add_argument("--sample-manifest-csv", default="")
     ap.add_argument("--target-col", default="oracle_recall_gain_f1_nondecrease_ci_unique_noworse")
     ap.add_argument("--sample-id", action="append", default=[])
     ap.add_argument("--limit-samples", type=int, default=10)
@@ -232,8 +243,13 @@ def main() -> None:
     disable_torch_init()
 
     oracle_rows = read_csv_rows(args.oracle_rows_csv)
+    manifest_by_id: Dict[str, Dict[str, str]] = {}
     if args.sample_id:
         sample_ids = [str(x) for x in args.sample_id]
+    elif args.sample_manifest_csv:
+        manifest = read_sample_manifest(args.sample_manifest_csv)
+        sample_ids = [row["id"] for row in manifest[: int(args.limit_samples)] if row.get("id")]
+        manifest_by_id = {row["id"]: row for row in manifest}
     elif args.guidance_rows_csv:
         sample_ids = read_guidance_selected_samples(args.guidance_rows_csv, limit_samples=int(args.limit_samples))
     else:
@@ -270,6 +286,7 @@ def main() -> None:
 
         lost_objects = split_bar_items(oracle.get("base_only_supported_unique", ""))
         mode = mode_for_oracle_row(oracle)
+        sample_group = manifest_by_id.get(sid, {}).get("group", "target_recoverable" if int(safe_float(oracle.get(args.target_col))) == 1 else "unlabeled")
         lost_words = set()
         for obj in lost_objects:
             lost_words.update(object_tokens(obj))
@@ -327,6 +344,7 @@ def main() -> None:
                         "id": sid,
                         "image": image_file,
                         "mode": mode,
+                        "sample_group": sample_group,
                         "step": int(step),
                         "prefix_equal_before_step": int(prefix_equal_before),
                         "lost_objects": "|".join(lost_objects),
@@ -463,6 +481,7 @@ def main() -> None:
                     "id": sid,
                     "image": image_file,
                     "mode": mode,
+                    "sample_group": sample_group,
                     "lost_objects": lost_objects,
                     "lost_words": sorted(lost_words),
                     "first_divergence_step": first_divergence_step,

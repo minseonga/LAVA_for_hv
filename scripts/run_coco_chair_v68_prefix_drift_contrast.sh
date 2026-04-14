@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SOURCE_OUT="${SOURCE_OUT:-/home/kms/LLaVA_calibration/experiments/coco_chair_v59_repro_vss_ablation_full500}"
+GUIDANCE_OUT="${GUIDANCE_OUT:-/home/kms/LLaVA_calibration/experiments/coco_chair_v66_lost_object_guidance_debug_all75_v3_contrast}"
+OUT_ROOT="${OUT_ROOT:-/home/kms/LLaVA_calibration/experiments/coco_chair_v68_prefix_drift_contrast}"
+IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
+MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
+TARGET_COL="${TARGET_COL:-oracle_recall_gain_f1_nondecrease_ci_unique_noworse}"
+N_TARGET="${N_TARGET:-10}"
+N_SAFE_CONTROL="${N_SAFE_CONTROL:-10}"
+N_LOSS_CONTROL="${N_LOSS_CONTROL:-10}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-180}"
+VSS_MODE="${VSS_MODE:-entropy}"
+VSS_TOPK="${VSS_TOPK:-10}"
+CD_ALPHA="${CD_ALPHA:-0.02}"
+ATTN_COEF="${ATTN_COEF:-0.2}"
+START_LAYER="${START_LAYER:-2}"
+END_LAYER="${END_LAYER:-15}"
+HEAD_BALANCING="${HEAD_BALANCING:-simg}"
+TOPK="${TOPK:-10}"
+
+mkdir -p "$OUT_ROOT"
+export PYTHONDONTWRITEBYTECODE=1
+
+echo "[settings] source=$SOURCE_OUT"
+echo "[settings] guidance=$GUIDANCE_OUT"
+echo "[settings] out=$OUT_ROOT"
+echo "[settings] n_target=$N_TARGET n_safe_control=$N_SAFE_CONTROL n_loss_control=$N_LOSS_CONTROL"
+
+python scripts/build_vga_prefix_drift_manifest.py \
+  --oracle-rows-csv "$SOURCE_OUT/unique_safe_oracle_test_origin_entropy_simg/unique_safe_oracle_rows.csv" \
+  --guidance-rows-csv "$GUIDANCE_OUT/lost_object_guidance.csv" \
+  --target-col "$TARGET_COL" \
+  --n-target "$N_TARGET" \
+  --n-safe-control "$N_SAFE_CONTROL" \
+  --n-loss-control "$N_LOSS_CONTROL" \
+  --out-csv "$OUT_ROOT/prefix_drift_manifest.csv" \
+  --out-json "$OUT_ROOT/prefix_drift_manifest.json"
+
+LIMIT_SAMPLES=$((N_TARGET + N_SAFE_CONTROL + N_LOSS_CONTROL))
+
+python scripts/diagnose_vga_free_run_trajectory_drift.py \
+  --model-path "$MODEL_PATH" \
+  --image-folder "$IMAGE_FOLDER" \
+  --question-file "$SOURCE_OUT/splits/test_caption_q_limited500.jsonl" \
+  --oracle-rows-csv "$SOURCE_OUT/unique_safe_oracle_test_origin_entropy_simg/unique_safe_oracle_rows.csv" \
+  --sample-manifest-csv "$OUT_ROOT/prefix_drift_manifest.csv" \
+  --target-col "$TARGET_COL" \
+  --limit-samples "$LIMIT_SAMPLES" \
+  --max-new-tokens "$MAX_NEW_TOKENS" \
+  --vss-mode "$VSS_MODE" \
+  --vss-topk "$VSS_TOPK" \
+  --use-add true \
+  --cd-alpha "$CD_ALPHA" \
+  --attn-coef "$ATTN_COEF" \
+  --start-layer "$START_LAYER" \
+  --end-layer "$END_LAYER" \
+  --head-balancing "$HEAD_BALANCING" \
+  --topk "$TOPK" \
+  --out-steps-csv "$OUT_ROOT/free_run_steps.csv" \
+  --out-samples-json "$OUT_ROOT/free_run_samples.json"
+
+python scripts/summarize_vga_prefix_drift.py \
+  --steps-csv "$OUT_ROOT/free_run_steps.csv" \
+  --samples-json "$OUT_ROOT/free_run_samples.json" \
+  --out-json "$OUT_ROOT/prefix_drift_summary.json"
+
+echo "[done] $OUT_ROOT"
