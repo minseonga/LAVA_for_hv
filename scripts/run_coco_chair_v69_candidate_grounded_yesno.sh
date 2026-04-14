@@ -37,7 +37,7 @@ RUN_SEMANTIC_UNIT="${RUN_SEMANTIC_UNIT:-true}"
 MAX_UNITS="${MAX_UNITS:-4}"
 
 Q_FILE="$SOURCE_OUT/splits/${SPLIT}_caption_q_limited500.jsonl"
-BASE_PRED="$SOURCE_OUT/$SPLIT/pred_vanilla_caption.jsonl"
+BASE_PRED="${BASE_PRED:-$SOURCE_OUT/$SPLIT/pred_baseline_caption.jsonl}"
 INT_PRED="$SOURCE_OUT/$SPLIT/pred_origin_entropy_simg_caption.jsonl"
 BASE_CHAIR="$SOURCE_OUT/$SPLIT/chair_baseline.json"
 INT_CHAIR="$SOURCE_OUT/$SPLIT/chair_origin_entropy_simg.json"
