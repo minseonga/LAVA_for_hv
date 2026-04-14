@@ -407,6 +407,8 @@ def main() -> None:
         image = Image.open(os.path.join(args.image_folder, image_file)).convert("RGB")
         image_tensor = image_processor.preprocess(image, return_tensors="pt")["pixel_values"][0]
         input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+        prompt_attention_mask = torch.ones_like(input_ids[:, :-1], dtype=torch.long, device=input_ids.device)
+        step_attention_mask = torch.ones((1, 1), dtype=torch.long, device=input_ids.device)
         target_ids = tokenizer(str(oracle.get("base_caption", "")), add_special_tokens=False, return_tensors="pt").input_ids[0]
         target_ids = target_ids[: int(args.max_caption_tokens)].cuda()
 
@@ -416,6 +418,7 @@ def main() -> None:
                 image_batch = image_tensor.unsqueeze(0).half().cuda()
                 prompt_outputs = model(
                     input_ids[:, :-1],
+                    attention_mask=prompt_attention_mask,
                     images=image_batch,
                     use_cache=True,
                     return_dict=True,
@@ -435,6 +438,7 @@ def main() -> None:
                     target_id = int(target_id_t.item())
                     outputs = model(
                         current_input,
+                        attention_mask=step_attention_mask,
                         images=image_batch,
                         past_key_values=past_key_values,
                         use_cache=True,
