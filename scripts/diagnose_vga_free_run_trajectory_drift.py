@@ -126,8 +126,12 @@ def candidate_token_ids(tokenizer: Any, lost_objects: Sequence[str]) -> Dict[int
             surfaces = [word, " " + word, word.capitalize(), " " + word.capitalize()]
             for surface in surfaces:
                 ids = tokenizer(surface, add_special_tokens=False, return_tensors="pt").input_ids[0].tolist()
-                if ids:
-                    out.setdefault(int(ids[0]), word)
+                for token_id in ids:
+                    # LLaMA tokenization can emit a standalone whitespace marker before
+                    # the semantic piece for " word"; that token is not an object cue.
+                    if token_piece_word(tokenizer, int(token_id)):
+                        out.setdefault(int(token_id), word)
+                        break
     return out
 
 
