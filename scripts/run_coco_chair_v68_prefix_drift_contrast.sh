@@ -66,4 +66,12 @@ python scripts/summarize_vga_prefix_drift.py \
   --samples-json "$OUT_ROOT/free_run_samples.json" \
   --out-json "$OUT_ROOT/prefix_drift_summary.json"
 
+python scripts/analyze_vga_prefix_drift_features.py \
+  --steps-csv "$OUT_ROOT/free_run_steps.csv" \
+  --samples-json "$OUT_ROOT/free_run_samples.json" \
+  --manifest-csv "$OUT_ROOT/prefix_drift_manifest.csv" \
+  --out-features-csv "$OUT_ROOT/prefix_drift_features.csv" \
+  --out-metrics-csv "$OUT_ROOT/prefix_drift_feature_metrics.csv" \
+  --out-summary-json "$OUT_ROOT/prefix_drift_feature_summary.json"
+
 echo "[done] $OUT_ROOT"
