@@ -59,7 +59,7 @@ if [[ ! -f "$ORACLE_ROWS" ]]; then
 fi
 
 if ! reuse_file "$BASE_TRACE"; then
-  echo "[1/2] teacher-force baseline captions"
+  echo "[1/3] teacher-force baseline captions"
   (
     cd "$CAL_ROOT"
     "$CAL_PYTHON_BIN" scripts/extract_vga_generative_mention_features.py \
@@ -82,7 +82,7 @@ else
   echo "[reuse] $BASE_TRACE"
 fi
 
-echo "[2/2] analyze baseline-only confidence features"
+echo "[2/3] analyze baseline-only confidence features"
 (
   cd "$CAL_ROOT"
   "$CAL_PYTHON_BIN" scripts/analyze_generative_base_only_confidence_proxy.py \
@@ -94,6 +94,17 @@ echo "[2/2] analyze baseline-only confidence features"
     --out_csv "$OUT_ROOT/features/${SPLIT}_base_only_confidence_features.csv" \
     --out_feature_metrics_csv "$OUT_ROOT/features/${SPLIT}_base_only_confidence_feature_metrics.csv" \
     --out_summary_json "$OUT_ROOT/features/${SPLIT}_base_only_confidence_summary.json"
+)
+
+echo "[3/3] search conservative confidence fallback rules"
+(
+  cd "$CAL_ROOT"
+  "$CAL_PYTHON_BIN" scripts/search_generative_base_only_confidence_rules.py \
+    --feature_csv "$OUT_ROOT/features/${SPLIT}_base_only_confidence_features.csv" \
+    --feature_metrics_csv "$OUT_ROOT/features/${SPLIT}_base_only_confidence_feature_metrics.csv" \
+    --oracle_rows_csv "$ORACLE_ROWS" \
+    --target_col "$TARGET_COL" \
+    --out_dir "$OUT_ROOT/rule_search_${SPLIT}_diag"
 )
 
 echo "[done] $OUT_ROOT"
