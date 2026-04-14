@@ -85,9 +85,23 @@ INT_PRED="$SOURCE_OUT/$SPLIT/pred_origin_entropy_simg_caption.jsonl"
 ORACLE_ROWS="$SOURCE_OUT/unique_safe_oracle_test_origin_entropy_simg/unique_safe_oracle_rows.csv"
 BASE_INV="$OUT_ROOT/$SPLIT/pred_baseline_object_list.jsonl"
 INT_INV="$OUT_ROOT/$SPLIT/pred_origin_entropy_simg_object_list.jsonl"
+BASE_CHAIR="$SOURCE_OUT/$SPLIT/chair_baseline.json"
+INT_CHAIR="$SOURCE_OUT/$SPLIT/chair_origin_entropy_simg.json"
 
 echo "[settings] out=$OUT_ROOT source=$SOURCE_OUT split=$SPLIT limit=$LIMIT gpu=$GPU"
 echo "[settings] run_intervention_list=$RUN_INTERVENTION_LIST target=$TARGET_COL"
+
+if [[ ! -f "$ORACLE_ROWS" ]]; then
+  echo "[prep] build missing unique-safe oracle rows: $ORACLE_ROWS"
+  (
+    cd "$CAL_ROOT"
+    "$CAL_PYTHON_BIN" scripts/analyze_chair_unique_safe_oracle.py \
+      --baseline_chair_json "$BASE_CHAIR" \
+      --intervention_chair_json "$INT_CHAIR" \
+      --out_dir "$(dirname "$ORACLE_ROWS")" \
+      --main_oracle_col "$TARGET_COL"
+  )
+fi
 
 if ! reuse_file "$Q_OBJ"; then
   "$CAL_PYTHON_BIN" "$CAL_ROOT/scripts/build_coco_chair_object_list_questions.py" \
