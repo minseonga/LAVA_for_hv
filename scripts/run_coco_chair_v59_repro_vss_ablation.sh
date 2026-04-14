@@ -116,8 +116,9 @@ run_origin_variant() {
   echo "[origin][$name] vss=entropy head=$head"
   if ! reuse_file "$pred"; then
     (
-      cd "$VGA_ROOT"
-      CUDA_VISIBLE_DEVICES="$GPU" "$VGA_PYTHON_BIN" "$VGA_ROOT/eval/object_hallucination_vqa_llava.py" \
+      cd "$CAL_ROOT"
+      CUDA_VISIBLE_DEVICES="$GPU" "$VGA_PYTHON_BIN" scripts/run_vga_origin_llava_caption_compat.py \
+        --vga-root "$VGA_ROOT" \
         --model-path "$MODEL_PATH" \
         --image-folder "$IMAGE_FOLDER" \
         --question-file "$q_file" \
