@@ -56,6 +56,103 @@ BAD_SINGLE_UNITS = {
     "sets",
 }
 
+ABSTRACT_OR_EVAL_IRRELEVANT_UNITS = {
+    "action",
+    "activity",
+    "addition",
+    "appearance",
+    "area",
+    "atmosphere",
+    "background",
+    "body",
+    "break",
+    "color",
+    "comfort",
+    "company",
+    "direction",
+    "edge",
+    "environment",
+    "expertise",
+    "fixture",
+    "focus",
+    "foreground",
+    "game",
+    "journey",
+    "landscape",
+    "location",
+    "moment",
+    "other",
+    "part",
+    "piece",
+    "portion",
+    "position",
+    "process",
+    "progress",
+    "project",
+    "scene",
+    "setting",
+    "size",
+    "skill",
+    "space",
+    "standing",
+    "style",
+    "talent",
+    "task",
+    "time",
+    "total",
+    "touch",
+    "unity",
+    "use",
+    "variety",
+    "warmth",
+}
+
+OBJECT_CONTEXT_TERMS = {
+    "also",
+    "addition",
+    "behind",
+    "beside",
+    "background",
+    "foreground",
+    "front",
+    "located",
+    "near",
+    "nearby",
+    "next",
+    "present",
+    "right",
+    "left",
+    "seen",
+    "side",
+    "visible",
+    "with",
+}
+
+PERSON_ALIASES = {
+    "adult",
+    "bicyclist",
+    "boy",
+    "child",
+    "chef",
+    "girl",
+    "kid",
+    "man",
+    "men",
+    "passenger",
+    "pedestrian",
+    "people",
+    "person",
+    "player",
+    "rider",
+    "skier",
+    "snowboarder",
+    "surfer",
+    "teammate",
+    "woman",
+    "women",
+    "worker",
+}
+
 SPACY_NLP: Any = None
 
 
@@ -145,6 +242,40 @@ def keep_unit(unit: str) -> bool:
     return any(part not in BAD_SINGLE_UNITS and part not in GENERIC_FILLERS and len(part) >= 3 for part in parts)
 
 
+def candidate_head(unit: str) -> str:
+    parts = [part for part in str(unit).split("_") if part]
+    return parts[-1] if parts else ""
+
+
+def normalize_candidate_alias(unit: str) -> str:
+    parts = [part for part in str(unit).split("_") if part]
+    if not parts:
+        return ""
+    if parts[-1] in PERSON_ALIASES:
+        return "person"
+    if str(unit) in {"sport_ball", "sports_ball", "tenni_ball"}:
+        return "sports_ball"
+    if str(unit) in {"cell_phone", "phone"}:
+        return "cell_phone"
+    if str(unit) in {"remote_controller", "controller"}:
+        return "remote"
+    return str(unit)
+
+
+def keep_object_priority_unit(unit: str) -> bool:
+    if not keep_unit(unit):
+        return False
+    parts = [part for part in str(unit).split("_") if part]
+    if not parts:
+        return False
+    head = parts[-1]
+    if head in ABSTRACT_OR_EVAL_IRRELEVANT_UNITS:
+        return False
+    if all(part in ABSTRACT_OR_EVAL_IRRELEVANT_UNITS or part in GENERIC_FILLERS for part in parts):
+        return False
+    return True
+
+
 def get_spacy_nlp(model_name: str) -> Any:
     global SPACY_NLP
     if SPACY_NLP is None:
@@ -215,6 +346,72 @@ def spacy_caption_units(text: str, *, spacy_model: str) -> List[Tuple[int, int, 
     return candidates
 
 
+def object_priority_window_score(doc: Any, token_index: int) -> float:
+    start = max(0, int(token_index) - 10)
+    end = min(len(doc), int(token_index) + 4)
+    words = {spacy_token_unit(tok) for tok in doc[start:end]}
+    score = 0.0
+    if words & OBJECT_CONTEXT_TERMS:
+        score += 2.0
+    if {"there", "are"} <= words or {"there", "is"} <= words:
+        score += 2.0
+    if {"in", "addition"} <= words:
+        score += 2.0
+    return score
+
+
+def spacy_object_priority_candidates(text: str, *, spacy_model: str) -> List[Tuple[float, int, int, str]]:
+    nlp = get_spacy_nlp(spacy_model)
+    doc = nlp(str(text or ""))
+    candidates: List[Tuple[float, int, int, str]] = []
+    covered_token_idxs: set[int] = set()
+    denom = max(1, len(doc) - 1)
+
+    def add_candidate(unit: str, pos: int, priority: int, root: Any) -> None:
+        unit = normalize_candidate_alias(unit)
+        if not keep_object_priority_unit(unit):
+            return
+        head = candidate_head(unit)
+        score = 0.0
+        score += object_priority_window_score(doc, pos)
+        score += 1.5 * float(pos) / float(denom)
+        score += 0.6 if "_" in unit else 0.0
+        score += 0.5 if head and head not in ABSTRACT_OR_EVAL_IRRELEVANT_UNITS else 0.0
+        dep = str(getattr(root, "dep_", ""))
+        if dep in {"pobj", "dobj", "nsubj", "conj", "attr", "appos"}:
+            score += 0.4
+        candidates.append((score, int(pos), int(priority), unit))
+
+    for chunk in doc.noun_chunks:
+        content = [tok for tok in chunk if keep_spacy_content_token(tok)]
+        covered_token_idxs.update(int(tok.i) for tok in chunk)
+        root = getattr(chunk, "root", None)
+        if root is None:
+            continue
+
+        root_unit = normalize_candidate_alias(spacy_token_unit(root))
+        words = [spacy_token_unit(tok) for tok in content]
+        words = [word for word in words if keep_object_priority_unit(normalize_candidate_alias(word))]
+        if len(words) >= 2:
+            phrase = normalize_candidate_alias("_".join(words))
+            add_candidate(phrase, int(chunk.start), 0, root)
+
+        if str(getattr(root, "pos_", "")) in {"NOUN", "PROPN"}:
+            add_candidate(root_unit, int(root.i), 1, root)
+
+        for tok in content:
+            if str(getattr(tok, "pos_", "")) in {"NOUN", "PROPN"}:
+                add_candidate(spacy_token_unit(tok), int(tok.i), 2, tok)
+
+    for tok in doc:
+        if int(tok.i) in covered_token_idxs:
+            continue
+        if str(getattr(tok, "pos_", "")) in {"NOUN", "PROPN"}:
+            add_candidate(spacy_token_unit(tok), int(tok.i), 3, tok)
+
+    return candidates
+
+
 def intervention_unit_blocklist(units: Sequence[Tuple[int, int, str]]) -> set[str]:
     out: set[str] = set()
     for _, _, unit in units:
@@ -235,6 +432,15 @@ def candidate_is_base_only(unit: str, intervention_blocklist: set[str]) -> bool:
     if len(parts) > 1 and parts[-1] in intervention_blocklist:
         return False
     if len(parts) == 1 and parts[0] in intervention_blocklist:
+        return False
+    return True
+
+
+def candidate_is_base_only_object_priority(unit: str, intervention_blocklist: set[str]) -> bool:
+    if not candidate_is_base_only(unit, intervention_blocklist):
+        return False
+    head = candidate_head(unit)
+    if head and head in intervention_blocklist:
         return False
     return True
 
@@ -292,6 +498,28 @@ def ordered_base_only_spacy_units(
     seen = set()
     for _, _, unit in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):
         if unit in seen or not candidate_is_base_only(unit, int_block):
+            continue
+        seen.add(unit)
+        out.append(unit)
+        if len(out) >= int(max_units):
+            break
+    return out
+
+
+def ordered_base_only_spacy_object_priority_units(
+    baseline_text: str,
+    intervention_text: str,
+    *,
+    max_units: int,
+    spacy_model: str,
+) -> List[str]:
+    int_units = [(pos, priority, unit) for _, pos, priority, unit in spacy_object_priority_candidates(intervention_text, spacy_model=spacy_model)]
+    int_block = intervention_unit_blocklist(int_units)
+    candidates = spacy_object_priority_candidates(baseline_text, spacy_model=spacy_model)
+    out: List[str] = []
+    seen = set()
+    for score, pos, priority, unit in sorted(candidates, key=lambda item: (-item[0], -item[1], item[2], item[3])):
+        if unit in seen or not candidate_is_base_only_object_priority(unit, int_block):
             continue
         seen.add(unit)
         out.append(unit)
@@ -415,7 +643,11 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--max_units", type=int, default=6)
-    ap.add_argument("--candidate_mode", choices=["semantic_units", "spacy_noun_chunks"], default="semantic_units")
+    ap.add_argument(
+        "--candidate_mode",
+        choices=["semantic_units", "spacy_noun_chunks", "spacy_object_priority"],
+        default="semantic_units",
+    )
     ap.add_argument("--spacy_model", default="en_core_web_sm")
     ap.add_argument("--include_phrases", type=parse_bool, default=True)
     ap.add_argument("--include_tokens", type=parse_bool, default=True)
@@ -463,7 +695,14 @@ def main() -> None:
                 raise FileNotFoundError(f"Image file not found: {image_path}")
             b_text = str(baseline[sid].get("text", ""))
             i_text = str(intervention[sid].get("text", ""))
-            if str(args.candidate_mode) == "spacy_noun_chunks":
+            if str(args.candidate_mode) == "spacy_object_priority":
+                units = ordered_base_only_spacy_object_priority_units(
+                    b_text,
+                    i_text,
+                    max_units=int(args.max_units),
+                    spacy_model=str(args.spacy_model),
+                )
+            elif str(args.candidate_mode) == "spacy_noun_chunks":
                 units = ordered_base_only_spacy_units(
                     b_text,
                     i_text,
