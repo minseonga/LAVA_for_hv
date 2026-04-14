@@ -13,6 +13,80 @@ import torch
 import torch.nn.functional as F
 
 
+def patch_legacy_transformers_bloom_masks() -> None:
+    """Unblock VGA/LLaVA imports on newer Transformers versions.
+
+    VGA's vendored LLaVA imports MPT support at package import time. That MPT
+    shim imports private BLOOM helpers removed from newer Transformers, even
+    when the actual diagnostic target is LLaVA-1.5 and never uses BLOOM/MPT.
+    """
+    try:
+        import transformers.models.bloom.modeling_bloom as bloom
+    except Exception:
+        return
+
+    if not hasattr(bloom, "_expand_mask"):
+
+        def _expand_mask(mask: torch.Tensor, tgt_length: Optional[int] = None) -> torch.BoolTensor:
+            batch_size, src_length = mask.shape
+            tgt_length = int(tgt_length) if tgt_length is not None else int(src_length)
+            expanded_mask = ~mask[:, None, None, :].to(torch.bool)
+            return expanded_mask.expand(batch_size, 1, tgt_length, src_length)
+
+        bloom._expand_mask = _expand_mask  # type: ignore[attr-defined]
+
+    if not hasattr(bloom, "_make_causal_mask"):
+
+        def _make_causal_mask(
+            input_ids_shape: Any,
+            device: torch.device,
+            past_key_values_length: int = 0,
+        ) -> torch.BoolTensor:
+            batch_size, tgt_length = int(input_ids_shape[0]), int(input_ids_shape[1])
+            src_length = tgt_length + int(past_key_values_length)
+            mask = torch.zeros((tgt_length, src_length), dtype=torch.bool, device=device)
+            mask[:, int(past_key_values_length) :] = torch.triu(
+                torch.ones((tgt_length, tgt_length), dtype=torch.bool, device=device),
+                diagonal=1,
+            )
+            return mask[None, None, :, :].expand(batch_size, 1, tgt_length, src_length)
+
+        bloom._make_causal_mask = _make_causal_mask  # type: ignore[attr-defined]
+
+
+def import_vga_greedy_sample() -> Any:
+    """Import VGA greedy sampler despite its placeholder tokenizer path.
+
+    The module initializes a tokenizer from the literal path
+    ``path/to/llava-v1.5-7b`` at import time. We only need to import the module
+    first, then replace its tokenizer with the real model tokenizer after model
+    loading.
+    """
+    import transformers
+
+    original_from_pretrained = transformers.AutoTokenizer.from_pretrained
+
+    class _PlaceholderTokenizer:
+        def convert_ids_to_tokens(self, token_ids: Any) -> List[str]:
+            if isinstance(token_ids, torch.Tensor):
+                token_ids = token_ids.detach().cpu().reshape(-1).tolist()
+            elif isinstance(token_ids, int):
+                token_ids = [token_ids]
+            return ["" for _ in token_ids]
+
+    def patched_from_pretrained(pretrained_model_name_or_path: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(pretrained_model_name_or_path) == "path/to/llava-v1.5-7b":
+            return _PlaceholderTokenizer()
+        return original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+    transformers.AutoTokenizer.from_pretrained = patched_from_pretrained
+    try:
+        import vcd_utils.greedy_sample as greedy_sample
+    finally:
+        transformers.AutoTokenizer.from_pretrained = original_from_pretrained
+    return greedy_sample
+
+
 def parse_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -272,13 +346,15 @@ def main() -> None:
     from PIL import Image
     from transformers import set_seed
 
+    patch_legacy_transformers_bloom_masks()
     from llava.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN, IMAGE_TOKEN_INDEX
     from llava.conversation import conv_templates
     from llava.mm_utils import get_model_name_from_path, tokenizer_image_token
     from llava.model.builder import load_pretrained_model
     from llava.model.language_model import modeling_llama
     from llava.utils import disable_torch_init
-    from vcd_utils.greedy_sample import evolve_greedy_sampling
+    greedy_sample = import_vga_greedy_sample()
+    evolve_greedy_sampling = greedy_sample.evolve_greedy_sampling
 
     evolve_greedy_sampling()
     set_seed(int(args.seed))
@@ -288,6 +364,7 @@ def main() -> None:
     tokenizer, model, image_processor, _ = load_pretrained_model(
         os.path.expanduser(args.model_path), args.model_base, model_name
     )
+    greedy_sample.tokenizer = tokenizer
     tokenizer.padding_side = "right"
     model.model.lm_head = model.lm_head
 
