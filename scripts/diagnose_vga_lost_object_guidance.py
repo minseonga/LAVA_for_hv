@@ -22,9 +22,27 @@ STOP = {"a", "an", "and", "of", "or", "the"}
 LIGHT_ALIASES = {
     "people": "person",
     "persons": "person",
-    "men": "man",
-    "women": "woman",
-    "children": "child",
+    "man": "person",
+    "men": "person",
+    "woman": "person",
+    "women": "person",
+    "boy": "person",
+    "boys": "person",
+    "girl": "person",
+    "girls": "person",
+    "child": "person",
+    "children": "person",
+    "player": "person",
+    "players": "person",
+    "fridge": "refrigerator",
+    "luggage": "suitcase",
+    "bag": "handbag",
+    "bags": "handbag",
+    "bike": "bicycle",
+    "bikes": "bicycle",
+    "doughnut": "donut",
+    "doughnuts": "donut",
+    "cellphone": "phone",
 }
 
 
@@ -101,11 +119,11 @@ def normalize_token(token: str) -> str:
         tok = tok[:-3] + "y"
     elif len(tok) > 5 and tok.endswith("ves"):
         tok = tok[:-3] + "f"
-    elif len(tok) > 4 and tok.endswith("es") and not tok.endswith(("ses", "xes")):
+    elif len(tok) > 4 and tok.endswith(("ches", "shes", "xes", "zes")):
         tok = tok[:-2]
     elif len(tok) > 3 and tok.endswith("s") and not tok.endswith(("ss", "us")):
         tok = tok[:-1]
-    return tok
+    return LIGHT_ALIASES.get(tok, tok)
 
 
 def object_tokens(text: str) -> List[str]:
@@ -274,6 +292,67 @@ def token_norm_from_id(tokenizer: Any, token_id: int) -> str:
     return toks[-1] if toks else normalize_token(raw)
 
 
+def token_piece_word(tokenizer: Any, token_id: int) -> str:
+    raw = tokenizer.convert_ids_to_tokens([int(token_id)])[0]
+    cleaned = raw.replace("▁", "").replace("Ġ", "")
+    parts = TOKEN_RE.findall(cleaned.lower())
+    if parts:
+        return "".join(parts)
+    decoded = tokenizer.decode([int(token_id)], skip_special_tokens=True, clean_up_tokenization_spaces=False)
+    parts = TOKEN_RE.findall(decoded.lower())
+    return "".join(parts)
+
+
+def build_lost_step_matches(
+    tokenizer: Any,
+    token_ids: Sequence[int],
+    lost_token_by_object: Dict[str, set],
+) -> Dict[int, Dict[str, str]]:
+    """Map replay token steps to lost objects, allowing subword-split words."""
+    lost_by_token: Dict[str, set] = defaultdict(set)
+    for obj, toks in lost_token_by_object.items():
+        for tok in toks:
+            lost_by_token[normalize_token(tok)].add(obj)
+
+    out: Dict[int, Dict[str, str]] = {}
+    word_parts: List[str] = []
+    word_steps: List[int] = []
+
+    def flush() -> None:
+        if not word_steps:
+            return
+        norm_word = normalize_token("".join(word_parts))
+        objects = lost_by_token.get(norm_word, set())
+        if objects:
+            for st in word_steps:
+                out.setdefault(st, {"objects": set(), "words": set()})
+                out[st]["objects"].update(objects)
+                out[st]["words"].add(norm_word)
+        word_parts.clear()
+        word_steps.clear()
+
+    for step, token_id in enumerate(token_ids):
+        raw = tokenizer.convert_ids_to_tokens([int(token_id)])[0]
+        piece = token_piece_word(tokenizer, int(token_id))
+        starts_word = raw.startswith("▁") or raw.startswith("Ġ")
+        if starts_word and word_steps:
+            flush()
+        if not piece:
+            flush()
+            continue
+        word_parts.append(piece)
+        word_steps.append(int(step))
+    flush()
+
+    return {
+        step: {
+            "objects": "|".join(sorted(value["objects"])),
+            "words": "|".join(sorted(value["words"])),
+        }
+        for step, value in out.items()
+    }
+
+
 def compute_token_visual_row(
     *,
     vl_guidance: torch.Tensor,
@@ -411,6 +490,11 @@ def main() -> None:
         step_attention_mask = torch.ones((1, 1), dtype=torch.long, device=input_ids.device)
         target_ids = tokenizer(str(oracle.get("base_caption", "")), add_special_tokens=False, return_tensors="pt").input_ids[0]
         target_ids = target_ids[: int(args.max_caption_tokens)].cuda()
+        lost_step_matches = build_lost_step_matches(
+            tokenizer,
+            [int(x) for x in target_ids.detach().cpu().tolist()],
+            lost_token_by_object,
+        )
 
         sample_match_count = 0
         try:
@@ -459,12 +543,10 @@ def main() -> None:
                     token_text = tokenizer.convert_ids_to_tokens([target_id])[0]
                     token_decoded = tokenizer.decode([target_id], skip_special_tokens=True)
                     token_norm = token_norm_from_id(tokenizer, target_id)
-                    is_lost_token = token_norm in lost_tokens
+                    is_lost_token = step in lost_step_matches
 
                     if is_lost_token:
-                        matched_objects = sorted(
-                            obj for obj, toks in lost_token_by_object.items() if token_norm in toks
-                        )
+                        matched_objects = split_bar_items(lost_step_matches[step]["objects"])
                         row: Dict[str, Any] = {
                             "id": sid,
                             "image": image_file,
@@ -474,6 +556,7 @@ def main() -> None:
                             "target_token_text": token_text,
                             "target_token_decoded": token_decoded,
                             "target_token_norm": token_norm,
+                            "matched_word_norm": lost_step_matches[step]["words"],
                             "matched_lost_objects": "|".join(matched_objects),
                             "all_lost_objects": "|".join(lost_objects),
                             "base_only_supported_unique": oracle.get("base_only_supported_unique", ""),
