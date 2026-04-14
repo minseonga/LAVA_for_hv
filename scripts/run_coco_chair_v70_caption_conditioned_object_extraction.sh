@@ -22,6 +22,7 @@ SOURCE_OUT="${SOURCE_OUT:-$CAL_ROOT/experiments/coco_chair_v59_repro_vss_ablatio
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/coco_chair_v70_caption_conditioned_object_extraction}"
 SPLIT="${SPLIT:-test}"
 LIMIT="${LIMIT:-500}"
+SOURCE_LIMIT="${SOURCE_LIMIT:-500}"
 
 IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
@@ -31,7 +32,7 @@ SEED="${SEED:-17}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
 TARGET_COL="${TARGET_COL:-oracle_recall_gain_f1_nondecrease_ci_unique_noworse}"
 
-Q_SRC="$SOURCE_OUT/splits/${SPLIT}_caption_q_limited${LIMIT}.jsonl"
+Q_SRC="$SOURCE_OUT/splits/${SPLIT}_caption_q_limited${SOURCE_LIMIT}.jsonl"
 BASE_PRED="$SOURCE_OUT/$SPLIT/pred_baseline_caption.jsonl"
 INT_PRED="$SOURCE_OUT/$SPLIT/pred_origin_entropy_simg_caption.jsonl"
 ORACLE_ROWS="$SOURCE_OUT/unique_safe_oracle_test_origin_entropy_simg/unique_safe_oracle_rows.csv"
@@ -80,7 +81,7 @@ run_extractor() {
   echo "[saved][$name] $pred_file"
 }
 
-echo "[settings] out=$OUT_ROOT source=$SOURCE_OUT split=$SPLIT limit=$LIMIT gpu=$GPU"
+echo "[settings] out=$OUT_ROOT source=$SOURCE_OUT split=$SPLIT limit=$LIMIT source_limit=$SOURCE_LIMIT gpu=$GPU"
 echo "[settings] target=$TARGET_COL max_gen_len=$MAX_GEN_LEN"
 
 if ! reuse_file "$Q_BASE"; then
