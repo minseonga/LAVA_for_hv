@@ -25,6 +25,7 @@ CONV_MODE="${CONV_MODE:-llava_v1}"
 MAX_GEN_LEN="${MAX_GEN_LEN:-160}"
 SEED="${SEED:-17}"
 MAX_OBJECTS="${MAX_OBJECTS:-4}"
+OBJECT_COL="${OBJECT_COL:-int_only_hallucinated_unique}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
 PROMPT_MODE="${PROMPT_MODE:-coverage_preserve}"
 RECAP_USE_ADD="${RECAP_USE_ADD:-false}"
@@ -112,7 +113,7 @@ fi
 
 echo "[settings] source=$SOURCE_OUT"
 echo "[settings] out=$OUT_ROOT split=$SPLIT limit=$LIMIT gpu=$GPU"
-echo "[settings] max_objects=$MAX_OBJECTS max_gen_len=$MAX_GEN_LEN prompt_mode=$PROMPT_MODE recap_use_add=$RECAP_USE_ADD"
+echo "[settings] object_col=$OBJECT_COL max_objects=$MAX_OBJECTS max_gen_len=$MAX_GEN_LEN prompt_mode=$PROMPT_MODE recap_use_add=$RECAP_USE_ADD"
 
 make_limited_jsonl "$Q_SRC" "$Q_LIMITED"
 make_limited_jsonl "$INT_SRC" "$INT_LIMITED"
@@ -173,7 +174,7 @@ Do not make the caption overly short; preserve visible scene details.'
     --out_jsonl "$NEG_Q" \
     --out_selected_ids_json "$NEG_IDS" \
     --out_summary_json "$OUT_ROOT/splits/${SPLIT}_negative_object_recaption_questions_summary.json" \
-    --object_col int_only_hallucinated_unique \
+    --object_col "$OBJECT_COL" \
     --template "$PROMPT_TEMPLATE" \
     --limit 0 \
     --max_objects "$MAX_OBJECTS" \
