@@ -151,6 +151,17 @@ Avoid mentioning these uncertain objects unless they are clearly visible: {objec
 Include all salient visible objects you are confident about.
 Do not make the caption overly short.'
       ;;
+    balanced)
+      PROMPT_TEMPLATE='Write a detailed but accurate caption for the image.
+
+The following objects are uncertain and may be hallucinated:
+{objects}
+
+Avoid mentioning those uncertain objects unless they are clearly visible.
+You may mention other concrete objects if they are clearly visible in the image.
+Do not replace uncertain objects with guessed related objects.
+Do not make the caption overly short; preserve visible scene details.'
+      ;;
     *)
       echo "[error] unknown PROMPT_MODE=$PROMPT_MODE" >&2
       exit 2
