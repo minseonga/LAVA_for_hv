@@ -26,6 +26,13 @@ MAX_GEN_LEN="${MAX_GEN_LEN:-160}"
 SEED="${SEED:-17}"
 MAX_OBJECTS="${MAX_OBJECTS:-4}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
+PROMPT_MODE="${PROMPT_MODE:-coverage_preserve}"
+RECAP_USE_ADD="${RECAP_USE_ADD:-false}"
+RECAP_ATTN_COEF="${RECAP_ATTN_COEF:-0.2}"
+RECAP_CD_ALPHA="${RECAP_CD_ALPHA:-0.02}"
+RECAP_START_LAYER="${RECAP_START_LAYER:-2}"
+RECAP_END_LAYER="${RECAP_END_LAYER:-15}"
+RECAP_HEAD_BALANCING="${RECAP_HEAD_BALANCING:-simg}"
 
 mkdir -p "$OUT_ROOT/splits" "$OUT_ROOT/$SPLIT" "$OUT_ROOT/summary"
 export PYTHONDONTWRITEBYTECODE=1
@@ -105,7 +112,7 @@ fi
 
 echo "[settings] source=$SOURCE_OUT"
 echo "[settings] out=$OUT_ROOT split=$SPLIT limit=$LIMIT gpu=$GPU"
-echo "[settings] max_objects=$MAX_OBJECTS max_gen_len=$MAX_GEN_LEN"
+echo "[settings] max_objects=$MAX_OBJECTS max_gen_len=$MAX_GEN_LEN prompt_mode=$PROMPT_MODE recap_use_add=$RECAP_USE_ADD"
 
 make_limited_jsonl "$Q_SRC" "$Q_LIMITED"
 make_limited_jsonl "$INT_SRC" "$INT_LIMITED"
@@ -113,6 +120,42 @@ make_limited_jsonl "$INT_SRC" "$INT_LIMITED"
 NEG_Q="$OUT_ROOT/splits/${SPLIT}_negative_object_recaption_q_limited${LIMIT}.jsonl"
 NEG_IDS="$OUT_ROOT/splits/${SPLIT}_negative_object_selected_ids_limited${LIMIT}.json"
 if ! reuse_file "$NEG_Q"; then
+  case "$PROMPT_MODE" in
+    conservative)
+      PROMPT_TEMPLATE='Describe the image in one accurate, concise caption.
+
+The previous caption may have mentioned uncertain objects: {objects}.
+Do not mention those objects unless they are clearly visible in the image.
+Focus only on concrete physical objects that are visually grounded.'
+      ;;
+    coverage_preserve)
+      PROMPT_TEMPLATE='Write a detailed but accurate caption for the image.
+
+The previous caption may have mentioned uncertain objects: {objects}.
+Avoid those uncertain objects unless they are clearly visible.
+Do not omit other clearly visible objects.
+Mention the main visible people, animals, vehicles, furniture, and objects you are confident about.'
+      ;;
+    revise)
+      PROMPT_TEMPLATE='Revise the image caption to be accurate and visually grounded.
+
+The previous caption may have included uncertain objects: {objects}.
+Remove or avoid only those uncertain objects unless they are clearly visible.
+Keep other clearly visible objects and scene details.
+Write one fluent caption, not a list.'
+      ;;
+    detailed)
+      PROMPT_TEMPLATE='Describe the image in a detailed, accurate caption.
+
+Avoid mentioning these uncertain objects unless they are clearly visible: {objects}.
+Include all salient visible objects you are confident about.
+Do not make the caption overly short.'
+      ;;
+    *)
+      echo "[error] unknown PROMPT_MODE=$PROMPT_MODE" >&2
+      exit 2
+      ;;
+  esac
   "$CAL_PYTHON_BIN" scripts/build_negative_object_recaption_questions.py \
     --question_file "$Q_LIMITED" \
     --oracle_rows_csv "$ORACLE_ROWS" \
@@ -120,6 +163,7 @@ if ! reuse_file "$NEG_Q"; then
     --out_selected_ids_json "$NEG_IDS" \
     --out_summary_json "$OUT_ROOT/splits/${SPLIT}_negative_object_recaption_questions_summary.json" \
     --object_col int_only_hallucinated_unique \
+    --template "$PROMPT_TEMPLATE" \
     --limit 0 \
     --max_objects "$MAX_OBJECTS" \
     --selected_only
@@ -139,12 +183,12 @@ if ! reuse_file "$RECAP_PRED"; then
       --answers-file "$RECAP_PRED" \
       --conv-mode "$CONV_MODE" \
       --max_gen_len "$MAX_GEN_LEN" \
-      --use_add false \
-      --attn_coef 0 \
-      --cd_alpha 0 \
-      --start_layer 99 \
-      --end_layer 0 \
-      --head_balancing none \
+      --use_add "$RECAP_USE_ADD" \
+      --attn_coef "$RECAP_ATTN_COEF" \
+      --cd_alpha "$RECAP_CD_ALPHA" \
+      --start_layer "$RECAP_START_LAYER" \
+      --end_layer "$RECAP_END_LAYER" \
+      --head_balancing "$RECAP_HEAD_BALANCING" \
       --sampling false \
       --seed "$SEED"
   )
