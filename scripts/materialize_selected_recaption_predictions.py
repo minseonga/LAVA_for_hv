@@ -55,6 +55,7 @@ def main() -> None:
     ap.add_argument("--out_summary_json", default="")
     ap.add_argument("--base_text_key", default="auto")
     ap.add_argument("--repair_text_key", default="auto")
+    ap.add_argument("--repair_source_label", default="negative_object_recaption")
     args = ap.parse_args()
 
     repairs = {safe_id(row): row for row in read_jsonl(args.repair_pred_jsonl) if safe_id(row)}
@@ -69,7 +70,7 @@ def main() -> None:
             out["text"] = text
             out["output"] = text
             out["caption"] = text
-            out["repair_source"] = "negative_object_recaption"
+            out["repair_source"] = str(args.repair_source_label)
             out["negative_objects"] = repair.get("negative_objects", "")
             n_repaired += 1
         else:
