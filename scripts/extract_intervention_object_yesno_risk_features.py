@@ -15,6 +15,7 @@ from analyze_caption_conditioned_object_extraction_proxy import (
 )
 from extract_chair_object_delta_yesno_features import add_prefix_stats, score_objects
 from extract_generative_semantic_pairwise_features import read_prediction_map, write_csv, write_json
+from extract_intervention_object_inventory_yesno_features import extract_mentioned_objects, parse_object_vocab
 from frgavr_cleanroom.runtime import CleanroomLlavaRuntime, load_question_rows, parse_bool, safe_id
 
 
@@ -51,6 +52,20 @@ def ordered_unique(values: Sequence[str], *, max_items: int) -> List[str]:
         if int(max_items) > 0 and len(out) >= int(max_items):
             break
     return out
+
+
+def normalize_objects_to_vocab(objects: Sequence[str], vocab: Sequence[str], *, max_items: int) -> List[str]:
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for obj in objects:
+        for item in extract_mentioned_objects(str(obj), vocab):
+            if item in seen:
+                continue
+            seen.add(item)
+            normalized.append(item)
+            if int(max_items) > 0 and len(normalized) >= int(max_items):
+                return normalized
+    return normalized
 
 
 def oracle_topk_hit(candidates: Sequence[str], gold: Sequence[str], k: int) -> int:
@@ -120,6 +135,8 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--max_objects", type=int, default=8)
+    ap.add_argument("--object_vocab", default="coco80")
+    ap.add_argument("--filter_to_vocab", type=parse_bool, default=False)
     ap.add_argument("--question_template", default="Is there a {object} in the image? Answer yes or no.")
     ap.add_argument("--yes_text", default="Yes")
     ap.add_argument("--no_text", default="No")
@@ -134,6 +151,7 @@ def main() -> None:
 
     questions = load_question_rows(os.path.abspath(args.question_file), limit=int(args.limit))
     int_objects_pred = read_prediction_map(os.path.abspath(args.intervention_object_pred_jsonl))
+    object_vocab = parse_object_vocab(str(args.object_vocab))
     oracle_by_id: Dict[str, Dict[str, str]] = {}
     if str(args.oracle_rows_csv or "").strip() and os.path.isfile(os.path.abspath(args.oracle_rows_csv)):
         oracle_by_id = {norm_id(row.get("id") or row.get("image_id") or row.get("question_id")): row for row in read_csv_rows(args.oracle_rows_csv)}
@@ -164,9 +182,14 @@ def main() -> None:
             if not os.path.isfile(image_path):
                 raise FileNotFoundError(f"Image file not found: {image_path}")
 
-            objects = ordered_unique(
+            raw_objects = ordered_unique(
                 split_object_list(str(int_objects_pred[sid].get("text", ""))),
                 max_items=int(args.max_objects),
+            )
+            objects = (
+                normalize_objects_to_vocab(raw_objects, object_vocab, max_items=int(args.max_objects))
+                if bool(args.filter_to_vocab)
+                else list(raw_objects)
             )
             image = runtime.load_image(image_path)
             scored = score_objects(
@@ -182,8 +205,11 @@ def main() -> None:
             n_object_probes += len(objects)
             row.update(
                 {
+                    "int_raw_object_names": " | ".join(raw_objects),
+                    "int_raw_object_count": int(len(raw_objects)),
                     "int_object_names": " | ".join(objects),
                     "int_object_count": int(len(objects)),
+                    "risk_filter_to_vocab": int(bool(args.filter_to_vocab)),
                 }
             )
             add_prefix_stats(row, "risk_all", scored)
@@ -240,6 +266,8 @@ def main() -> None:
                     "score_mode": str(args.score_mode),
                     "limit": int(args.limit),
                     "max_objects": int(args.max_objects),
+                    "object_vocab": str(args.object_vocab),
+                    "filter_to_vocab": bool(args.filter_to_vocab),
                 },
                 "counts": {
                     "n_rows": int(len(rows)),
