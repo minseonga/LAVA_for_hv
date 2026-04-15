@@ -68,6 +68,22 @@ reuse_file() {
   [[ "$REUSE_IF_EXISTS" == "true" && -f "$path" ]]
 }
 
+remove_if_overwrite() {
+  local path="$1"
+  if [[ "$REUSE_IF_EXISTS" != "true" && -f "$path" ]]; then
+    rm -f "$path"
+  fi
+}
+
+require_nonempty_file() {
+  local path="$1"
+  local label="$2"
+  if [[ ! -s "$path" ]]; then
+    echo "[error] empty or missing $label: $path" >&2
+    exit 3
+  fi
+}
+
 make_limited_jsonl() {
   local in_file="$1"
   local out_file="$2"
@@ -75,6 +91,7 @@ make_limited_jsonl() {
     echo "[reuse] $out_file"
     return
   fi
+  remove_if_overwrite "$out_file"
   "$CAL_PYTHON_BIN" - "$in_file" "$out_file" "$LIMIT" <<'PY'
 import json
 import os
@@ -162,6 +179,7 @@ make_limited_jsonl "$Q_SRC" "$Q_LIMITED"
 make_limited_jsonl "$INT_SRC" "$INT_LIMITED"
 
 if ! reuse_file "$OBJ_Q"; then
+  remove_if_overwrite "$OBJ_Q"
   "$CAL_PYTHON_BIN" "$CAL_ROOT/scripts/build_caption_conditioned_object_extraction_questions.py" \
     --question_file "$Q_LIMITED" \
     --pred_jsonl "$INT_LIMITED" \
@@ -174,6 +192,7 @@ else
 fi
 
 if ! reuse_file "$OBJ_PRED"; then
+  remove_if_overwrite "$OBJ_PRED"
   (
     cd "$CAL_ROOT"
     CUDA_VISIBLE_DEVICES="$GPU" "$VGA_PYTHON_BIN" scripts/run_vga_origin_llava_caption_compat.py \
@@ -196,8 +215,11 @@ if ! reuse_file "$OBJ_PRED"; then
 else
   echo "[reuse] $OBJ_PRED"
 fi
+require_nonempty_file "$OBJ_PRED" "intervention object prediction"
 
 if ! reuse_file "$RISK_CSV"; then
+  remove_if_overwrite "$RISK_CSV"
+  remove_if_overwrite "$RISK_SUMMARY"
   (
     cd "$CAL_ROOT"
     PYTHONPATH="$CAL_ROOT" "$CAL_PYTHON_BIN" scripts/extract_intervention_object_yesno_risk_features.py \
@@ -223,6 +245,7 @@ if ! reuse_file "$RISK_CSV"; then
 else
   echo "[reuse] $RISK_CSV"
 fi
+require_nonempty_file "$RISK_CSV" "risk csv"
 
 if [[ "$STOP_AFTER_RISK" == "true" ]]; then
   echo "[done-risk] $RISK_CSV"
@@ -230,6 +253,8 @@ if [[ "$STOP_AFTER_RISK" == "true" ]]; then
 fi
 
 if ! reuse_file "$RECAP_Q"; then
+  remove_if_overwrite "$RECAP_Q"
+  remove_if_overwrite "$RECAP_IDS"
   "$CAL_PYTHON_BIN" "$CAL_ROOT/scripts/build_risk_object_recaption_questions.py" \
     --question_file "$Q_LIMITED" \
     --risk_features_csv "$RISK_CSV" \
@@ -248,6 +273,7 @@ else
 fi
 
 if ! reuse_file "$RECAP_PRED"; then
+  remove_if_overwrite "$RECAP_PRED"
   (
     cd "$CAL_ROOT"
     CUDA_VISIBLE_DEVICES="$GPU" "$VGA_PYTHON_BIN" scripts/run_vga_origin_llava_caption_compat.py \
@@ -270,8 +296,10 @@ if ! reuse_file "$RECAP_PRED"; then
 else
   echo "[reuse] $RECAP_PRED"
 fi
+require_nonempty_file "$RECAP_PRED" "recaption prediction"
 
 if ! reuse_file "$MERGED_PRED"; then
+  remove_if_overwrite "$MERGED_PRED"
   "$CAL_PYTHON_BIN" "$CAL_ROOT/scripts/materialize_selected_recaption_predictions.py" \
     --base_pred_jsonl "$INT_LIMITED" \
     --repair_pred_jsonl "$RECAP_PRED" \
