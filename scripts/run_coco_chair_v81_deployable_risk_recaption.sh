@@ -49,6 +49,7 @@ RISK_MIN_SECOND_GAP="${RISK_MIN_SECOND_GAP:-0.0}"
 RISK_MIN_OBJECT_COUNT="${RISK_MIN_OBJECT_COUNT:-1}"
 
 RECAP_MAX_GEN_LEN="${RECAP_MAX_GEN_LEN:-220}"
+RECAP_PROMPT_MODE="${RECAP_PROMPT_MODE:-default}"
 RECAP_USE_ADD="${RECAP_USE_ADD:-false}"
 RECAP_ATTN_COEF="${RECAP_ATTN_COEF:-0.2}"
 RECAP_CD_ALPHA="${RECAP_CD_ALPHA:-0.02}"
@@ -141,15 +142,16 @@ if [[ "$RISK_FILTER_TO_VOCAB" == "true" ]]; then
 fi
 RISK_CSV="$OUT_ROOT/features/${SPLIT}_intervention_object_yesno_risk_limit${LIMIT}_${RISK_TAG}.csv"
 RISK_SUMMARY="$OUT_ROOT/features/${SPLIT}_intervention_object_yesno_risk_limit${LIMIT}_${RISK_TAG}.summary.json"
-RECAP_Q="$OUT_ROOT/splits/${SPLIT}_risk_object_recaption_q_limited${LIMIT}_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
-RECAP_IDS="$OUT_ROOT/splits/${SPLIT}_risk_object_recaption_selected_ids_limited${LIMIT}_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.json"
-RECAP_PRED="$OUT_ROOT/$SPLIT/pred_risk_object_recaption_selected_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
-MERGED_PRED="$OUT_ROOT/$SPLIT/pred_risk_object_recaption_merged_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
+RECAP_TAG="${RISK_TAG}_${RECAP_PROMPT_MODE}"
+RECAP_Q="$OUT_ROOT/splits/${SPLIT}_risk_object_recaption_q_limited${LIMIT}_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
+RECAP_IDS="$OUT_ROOT/splits/${SPLIT}_risk_object_recaption_selected_ids_limited${LIMIT}_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.json"
+RECAP_PRED="$OUT_ROOT/$SPLIT/pred_risk_object_recaption_selected_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
+MERGED_PRED="$OUT_ROOT/$SPLIT/pred_risk_object_recaption_merged_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
 
 echo "[settings] source=$SOURCE_OUT"
 echo "[settings] out=$OUT_ROOT split=$SPLIT limit=$LIMIT gpu=$GPU"
 echo "[settings] risk_max_yes_prob=$RISK_MAX_YES_PROB risk_max_lp_margin=$RISK_MAX_LP_MARGIN risk_min_second_gap=$RISK_MIN_SECOND_GAP risk_max_objects=$RISK_MAX_OBJECTS filter_to_vocab=$RISK_FILTER_TO_VOCAB"
-echo "[settings] recap_use_add=$RECAP_USE_ADD recap_max_gen_len=$RECAP_MAX_GEN_LEN"
+echo "[settings] recap_mode=$RECAP_PROMPT_MODE recap_use_add=$RECAP_USE_ADD recap_max_gen_len=$RECAP_MAX_GEN_LEN"
 
 make_limited_jsonl "$Q_SRC" "$Q_LIMITED"
 make_limited_jsonl "$INT_SRC" "$INT_LIMITED"
@@ -220,9 +222,12 @@ if ! reuse_file "$RECAP_Q"; then
   "$CAL_PYTHON_BIN" "$CAL_ROOT/scripts/build_risk_object_recaption_questions.py" \
     --question_file "$Q_LIMITED" \
     --risk_features_csv "$RISK_CSV" \
+    --base_pred_jsonl "$INT_LIMITED" \
+    --base_text_key auto \
     --out_jsonl "$RECAP_Q" \
     --out_selected_ids_json "$RECAP_IDS" \
-    --out_summary_json "$OUT_ROOT/splits/${SPLIT}_risk_object_recaption_questions_summary_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.json" \
+    --out_summary_json "$OUT_ROOT/splits/${SPLIT}_risk_object_recaption_questions_summary_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.json" \
+    --template_mode "$RECAP_PROMPT_MODE" \
     --max_yes_prob "$RISK_MAX_YES_PROB" \
     --max_lp_margin "$RISK_MAX_LP_MARGIN" \
     --min_second_gap "$RISK_MIN_SECOND_GAP" \
@@ -260,18 +265,18 @@ if ! reuse_file "$MERGED_PRED"; then
     --base_pred_jsonl "$INT_LIMITED" \
     --repair_pred_jsonl "$RECAP_PRED" \
     --out_jsonl "$MERGED_PRED" \
-    --out_summary_json "$OUT_ROOT/$SPLIT/pred_risk_object_recaption_merged_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.summary.json"
+    --out_summary_json "$OUT_ROOT/$SPLIT/pred_risk_object_recaption_merged_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.summary.json"
 else
   echo "[reuse] $MERGED_PRED"
 fi
 
 run_chair_eval "$INT_LIMITED" output "$OUT_ROOT/$SPLIT/chair_intervention_limited${LIMIT}.json" "$OUT_ROOT/$SPLIT/chair_input_intervention_limited${LIMIT}.jsonl"
-run_chair_eval "$MERGED_PRED" output "$OUT_ROOT/$SPLIT/chair_risk_object_recaption_merged_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.json" "$OUT_ROOT/$SPLIT/chair_input_risk_object_recaption_merged_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
+run_chair_eval "$MERGED_PRED" output "$OUT_ROOT/$SPLIT/chair_risk_object_recaption_merged_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.json" "$OUT_ROOT/$SPLIT/chair_input_risk_object_recaption_merged_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.jsonl"
 
 "$CAL_PYTHON_BIN" scripts/summarize_chair_main_table.py \
   --entry "intervention::$SPLIT::$OUT_ROOT/$SPLIT/chair_intervention_limited${LIMIT}.json" \
-  --entry "risk_object_recaption::$SPLIT::$OUT_ROOT/$SPLIT/chair_risk_object_recaption_merged_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.json" \
-  --out_csv "$OUT_ROOT/summary/chair_v81_deployable_risk_recaption_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.csv" \
-  --out_json "$OUT_ROOT/summary/chair_v81_deployable_risk_recaption_${RISK_TAG}_yp${RISK_MAX_YES_PROB}.json"
+  --entry "risk_object_recaption::$SPLIT::$OUT_ROOT/$SPLIT/chair_risk_object_recaption_merged_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.json" \
+  --out_csv "$OUT_ROOT/summary/chair_v81_deployable_risk_recaption_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.csv" \
+  --out_json "$OUT_ROOT/summary/chair_v81_deployable_risk_recaption_${RECAP_TAG}_yp${RISK_MAX_YES_PROB}.json"
 
 echo "[done] $OUT_ROOT"

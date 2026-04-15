@@ -15,6 +15,18 @@ Avoid mentioning this uncertain object unless it is clearly visible: {objects}.
 Include all salient visible objects you are confident about.
 Do not make the caption overly short."""
 
+MINIMAL_REVISION_TEMPLATE = """Original caption:
+{caption}
+
+The following object may be unsupported:
+{objects}
+
+Revise the caption minimally.
+Remove or rephrase only the unsupported object if it is not clearly visible.
+Preserve all other concrete object mentions and scene details.
+Do not introduce new object nouns that are not already in the original caption.
+Write one fluent caption."""
+
 
 def read_jsonl(path: str, limit: int = 0) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
@@ -62,6 +74,16 @@ def safe_float(value: Any, default: float = 0.0) -> float:
     return out if math.isfinite(out) else float(default)
 
 
+def pick_text(row: Dict[str, Any], key: str) -> str:
+    if key != "auto":
+        return str(row.get(key, "")).strip()
+    for cand in ("output", "text", "caption", "answer", "prediction"):
+        text = str(row.get(cand, "")).strip()
+        if text:
+            return text
+    return ""
+
+
 def pass_thresholds(row: Dict[str, str], args: argparse.Namespace) -> bool:
     if safe_float(row.get("risk_object_count"), 0.0) < float(args.min_object_count):
         return False
@@ -81,9 +103,12 @@ def main() -> None:
     ap.add_argument("--question_file", required=True)
     ap.add_argument("--risk_features_csv", required=True)
     ap.add_argument("--out_jsonl", required=True)
+    ap.add_argument("--base_pred_jsonl", default="")
+    ap.add_argument("--base_text_key", default="auto")
     ap.add_argument("--out_selected_ids_json", default="")
     ap.add_argument("--out_summary_json", default="")
     ap.add_argument("--template", default=DEFAULT_TEMPLATE)
+    ap.add_argument("--template_mode", choices=["custom", "default", "minimal_revision"], default="custom")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--max_yes_prob", type=float, default=0.40)
     ap.add_argument("--max_lp_margin", type=float, default=999.0)
@@ -93,6 +118,13 @@ def main() -> None:
 
     questions = read_jsonl(args.question_file, limit=int(args.limit))
     risk_by_id = {safe_id(row): row for row in read_csv_rows(args.risk_features_csv)}
+    base_by_id = {safe_id(row): row for row in read_jsonl(args.base_pred_jsonl)} if str(args.base_pred_jsonl or "").strip() else {}
+    if str(args.template_mode) == "default":
+        template = DEFAULT_TEMPLATE
+    elif str(args.template_mode) == "minimal_revision":
+        template = MINIMAL_REVISION_TEMPLATE
+    else:
+        template = str(args.template)
 
     out_rows: List[Dict[str, Any]] = []
     selected_ids: List[str] = []
@@ -109,7 +141,8 @@ def main() -> None:
             continue
 
         obj = str(risk.get("risk_top_object", "")).strip()
-        prompt = str(args.template).replace("{objects}", obj)
+        caption = pick_text(base_by_id.get(sid, {}), str(args.base_text_key))
+        prompt = str(template).replace("{objects}", obj).replace("{caption}", caption)
         selected_ids.append(sid)
         out_rows.append(
             {
@@ -141,6 +174,8 @@ def main() -> None:
                 "inputs": {
                     "question_file": os.path.abspath(args.question_file),
                     "risk_features_csv": os.path.abspath(args.risk_features_csv),
+                    "base_pred_jsonl": os.path.abspath(args.base_pred_jsonl) if args.base_pred_jsonl else "",
+                    "template_mode": str(args.template_mode),
                     "limit": int(args.limit),
                     "max_yes_prob": float(args.max_yes_prob),
                     "max_lp_margin": float(args.max_lp_margin),
