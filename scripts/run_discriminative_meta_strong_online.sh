@@ -19,9 +19,11 @@ HEADSET_JSON="${HEADSET_JSON:-$CAL_ROOT/experiments/pope_discovery/discovery_hea
 POLICY_BUNDLE_JSON="${POLICY_BUNDLE_JSON:-$CAL_ROOT/experiments/paper_main_meta_vga_full_strong/discovery/meta_calibration/selected_meta_bundle.json}"
 
 INTERVENTION_PRED_JSONL="${INTERVENTION_PRED_JSONL:-$CAL_ROOT/experiments/paper_main_b_c_v1_full/test_stageb/pred_vga.jsonl}"
-INTERVENTION_PRED_KEY="${INTERVENTION_PRED_KEY:-auto}"
+# Keep defaults aligned with scripts/run_method_posthoc_b_c_meta_full.sh so
+# online parity uses the same teacher-forced candidate text as cached eval.
+INTERVENTION_PRED_KEY="${INTERVENTION_PRED_KEY:-output}"
 BASELINE_PRED_JSONL="${BASELINE_PRED_JSONL:-$CAL_ROOT/experiments/paper_main_b_c_v1_full/test_stageb/pred_baseline.jsonl}"
-BASELINE_PRED_KEY="${BASELINE_PRED_KEY:-auto}"
+BASELINE_PRED_KEY="${BASELINE_PRED_KEY:-text}"
 
 OUT_DIR="${OUT_DIR:-$CAL_ROOT/experiments/discriminative_meta_strong_online}"
 LIMIT="${LIMIT:-0}"
@@ -79,4 +81,3 @@ PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_discriminative_m
   --log_every "$LOG_EVERY"
 
 echo "[done] $OUT_DIR"
-

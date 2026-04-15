@@ -435,7 +435,9 @@ def main() -> None:
                 "question_file": os.path.abspath(args.question_file),
                 "image_folder": os.path.abspath(args.image_folder),
                 "intervention_pred_jsonl": os.path.abspath(args.intervention_pred_jsonl),
+                "intervention_pred_key": str(args.intervention_pred_key),
                 "baseline_pred_jsonl": os.path.abspath(args.baseline_pred_jsonl) if str(args.baseline_pred_jsonl or "").strip() else "",
+                "baseline_pred_key": str(args.baseline_pred_key),
                 "gt_csv": os.path.abspath(args.gt_csv) if str(args.gt_csv or "").strip() else "",
                 "policy_bundle_json": os.path.abspath(args.policy_bundle_json),
                 "headset_json": os.path.abspath(args.headset_json),
@@ -493,4 +495,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
