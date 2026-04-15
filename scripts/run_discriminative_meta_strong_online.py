@@ -183,7 +183,9 @@ def main() -> None:
         description=(
             "Sample-wise online feature extraction and routing for the discriminative meta_strong controller. "
             "The script consumes an intervention answer, computes stage_a + cheap C features in one model load, "
-            "and routes to baseline or method with the calibrated meta_strong policy."
+            "and routes to baseline or method with the calibrated meta_strong policy. "
+            "For cached parity, Stage-A and cheap-C use the same prompt/forward conventions "
+            "as run_frgavr_cleanroom.py and extract_c_stage_cheap_online_features.py."
         )
     )
     ap.add_argument("--question_file", type=str, required=True)
@@ -260,14 +262,19 @@ def main() -> None:
     for idx, sample in enumerate(questions):
         sid = safe_id(sample.get("question_id", sample.get("id")))
         image_name = str(sample.get("image", "")).strip()
-        question = str(sample.get("text", sample.get("question", ""))).strip()
+        # Cached meta eval used two existing extractors with slightly different
+        # question-field precedence. Keep both conventions for exact parity.
+        stage_question = str(sample.get("question", sample.get("text", ""))).strip()
+        cheap_question = str(sample.get("text", sample.get("question", ""))).strip()
         intervention_text = str(intervention_map.get(sid, "")).strip()
         baseline_text = str(baseline_map.get(sid, "")).strip()
         gt_label = str(gt_map.get(sid, "")).strip().lower()
         row: Dict[str, Any] = {
             "id": sid,
             "image": image_name,
-            "question": question,
+            "question": stage_question,
+            "stage_question": stage_question,
+            "cheap_question": cheap_question,
             "intervention_text": intervention_text,
             "baseline_text": baseline_text,
             "gt_label": gt_label,
@@ -278,8 +285,10 @@ def main() -> None:
                 raise ValueError("Missing sample id.")
             if not image_name:
                 raise ValueError("Missing image filename.")
-            if not question:
+            if not stage_question:
                 raise ValueError("Missing question.")
+            if not cheap_question:
+                raise ValueError("Missing cheap question.")
             if not intervention_text:
                 n_missing_intervention += 1
                 raise ValueError("Missing intervention prediction.")
@@ -289,27 +298,34 @@ def main() -> None:
 
             t0 = time.perf_counter()
             image = runtime.load_image(image_path)
-            pack = runtime.teacher_force_candidate(
+            stage_pack = runtime.teacher_force_candidate(
                 image=image,
-                question=question,
+                question=stage_question,
                 candidate_text=intervention_text,
                 output_attentions=True,
             )
-            content_indices = select_content_indices(runtime.tokenizer, pack.cont_ids)
+            stage_content_indices = select_content_indices(runtime.tokenizer, stage_pack.cont_ids)
             stage_a = stage_a_score_from_pack(
-                pack=pack,
+                pack=stage_pack,
                 headset=headset,
                 beta=float(args.beta),
                 lambda_a=float(args.lambda_a),
-                content_indices=content_indices,
+                content_indices=stage_content_indices,
             )
+            cheap_pack = runtime.teacher_force_candidate(
+                image=image,
+                question=cheap_question,
+                candidate_text=intervention_text,
+                output_attentions=False,
+            )
+            cheap_content_indices = select_content_indices(runtime.tokenizer, cheap_pack.cont_ids)
             cheap = cheap_features_from_pack(
                 runtime=runtime,
-                pack=pack,
+                pack=cheap_pack,
                 sample_id=sid,
                 image_name=image_name,
-                question=question,
-                content_indices=content_indices,
+                question=cheap_question,
+                content_indices=cheap_content_indices,
                 lp_tail_quantile=float(args.lp_tail_quantile),
                 lp_tail_eps=float(args.lp_tail_eps),
                 lp_len_corr_alpha=float(args.lp_len_corr_alpha),
@@ -318,6 +334,8 @@ def main() -> None:
             feature_secs.append(float(feature_dt))
 
             row.update(cheap)
+            row["stage_question"] = stage_question
+            row["cheap_question"] = cheap_question
             row.update(stage_a)
             row["feature_ms"] = float(feature_dt * 1000.0)
         except Exception as exc:
