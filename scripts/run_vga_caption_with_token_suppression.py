@@ -153,11 +153,30 @@ def token_variants(obj: str) -> List[str]:
     return out
 
 
+def content_token_ids(tokenizer: Any, text: str) -> List[int]:
+    toks = tokenizer(text, add_special_tokens=False, return_tensors="pt").input_ids[0].tolist()
+    special = set(getattr(tokenizer, "all_special_ids", []) or [])
+    out: List[int] = []
+    for tok in toks:
+        tid = int(tok)
+        if tid < 0 or tid in special:
+            continue
+        try:
+            decoded = tokenizer.decode([tid], skip_special_tokens=True)
+        except Exception:
+            decoded = ""
+        # Some LLaMA tokenizers emit an explicit leading-space token for strings
+        # like " car". Suppressing that token changes the whole decoding path.
+        if not str(decoded).strip():
+            continue
+        out.append(tid)
+    return out
+
+
 def suppression_token_ids(tokenizer: Any, obj: str, mode: str) -> List[int]:
     ids: Set[int] = set()
     for variant in token_variants(obj):
-        toks = tokenizer(variant, add_special_tokens=False, return_tensors="pt").input_ids[0].tolist()
-        toks = [int(t) for t in toks if int(t) >= 0]
+        toks = content_token_ids(tokenizer, variant)
         if not toks:
             continue
         if mode == "single_token":
@@ -344,6 +363,7 @@ def main() -> None:
                 "negative_objects": risk_obj,
                 "suppressed_object": risk_obj,
                 "suppressed_token_ids": "|".join(str(x) for x in suppress_ids),
+                "suppressed_token_texts": "|".join(tokenizer.decode([x], skip_special_tokens=True) for x in suppress_ids),
                 "suppress_mode": str(args.suppress_mode),
                 "suppress_bias": float(args.suppress_bias),
                 "risk_top_yes_prob": risk.get("risk_top_yes_prob", ""),
@@ -352,7 +372,18 @@ def main() -> None:
             ans_file.write(json.dumps(row, ensure_ascii=False) + "\n")
             ans_file.flush()
             n_written += 1
-            selected_meta.append({k: row[k] for k in ("question_id", "suppressed_object", "suppressed_token_ids", "risk_top_yes_prob")})
+            selected_meta.append(
+                {
+                    k: row[k]
+                    for k in (
+                        "question_id",
+                        "suppressed_object",
+                        "suppressed_token_ids",
+                        "suppressed_token_texts",
+                        "risk_top_yes_prob",
+                    )
+                }
+            )
 
     if str(args.out_summary_json or "").strip():
         write_json(
