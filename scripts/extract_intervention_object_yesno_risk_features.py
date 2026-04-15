@@ -6,7 +6,10 @@ import csv
 import json
 import math
 import os
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import torch
+import torch.nn.functional as F
 
 from analyze_caption_conditioned_object_extraction_proxy import (
     object_matches,
@@ -71,6 +74,155 @@ def normalize_objects_to_vocab(objects: Sequence[str], vocab: Sequence[str], *, 
 def oracle_topk_hit(candidates: Sequence[str], gold: Sequence[str], k: int) -> int:
     top = list(candidates)[: max(0, int(k))]
     return int(any(object_matches(g, c) for g in gold for c in top))
+
+
+def first_content_token_id(tokenizer: Any, text: str) -> int:
+    ids = tokenizer(str(text), add_special_tokens=False, return_tensors="pt").input_ids[0].tolist()
+    special = set(getattr(tokenizer, "all_special_ids", []) or [])
+    for token_id in ids:
+        tid = int(token_id)
+        if tid < 0 or tid in special:
+            continue
+        try:
+            decoded = tokenizer.decode([tid], skip_special_tokens=True)
+        except Exception:
+            decoded = ""
+        if str(decoded).strip():
+            return tid
+    raise ValueError(f"No content token found for {text!r}")
+
+
+def metrics_from_next_token_logits(logits: torch.Tensor, *, yes_id: int, no_id: int) -> Dict[str, float]:
+    vec = logits.to(dtype=torch.float32)
+    log_probs = F.log_softmax(vec, dim=-1)
+    yes_lp = float(log_probs[int(yes_id)].item())
+    no_lp = float(log_probs[int(no_id)].item())
+    yes_logit = float(vec[int(yes_id)].item())
+    no_logit = float(vec[int(no_id)].item())
+    top2_vals, top2_idx = torch.topk(vec, k=2, dim=-1)
+
+    def gap_for(token_id: int, token_logit: float) -> float:
+        top1_id = int(top2_idx[0].item())
+        best_other = float(top2_vals[1].item() if top1_id == int(token_id) else top2_vals[0].item())
+        return float(token_logit - best_other)
+
+    margin = float(yes_lp - no_lp)
+    prob = float(1.0 / (1.0 + math.exp(-max(-50.0, min(50.0, margin)))))
+    yes_gap = gap_for(int(yes_id), yes_logit)
+    no_gap = gap_for(int(no_id), no_logit)
+    top1_id = int(top2_idx[0].item())
+    return {
+        "yesno_yes_lp": yes_lp,
+        "yesno_no_lp": no_lp,
+        "yesno_lp_margin": margin,
+        "yesno_yes_gap": yes_gap,
+        "yesno_no_gap": no_gap,
+        "yesno_gap_margin": float(yes_gap - no_gap),
+        "yesno_yes_argmax": float(top1_id == int(yes_id)),
+        "yesno_no_argmax": float(top1_id == int(no_id)),
+        "yesno_argmax_margin": float((top1_id == int(yes_id)) - (top1_id == int(no_id))),
+        "yesno_prob": prob,
+        "yesno_risk": float(1.0 - prob),
+        "yesno_error": 0.0,
+    }
+
+
+def score_objects_next_token_batch(
+    objects: Sequence[str],
+    *,
+    runtime: CleanroomLlavaRuntime,
+    image: Any,
+    question_template: str,
+    yes_text: str,
+    no_text: str,
+    batch_size: int,
+) -> Tuple[List[Dict[str, Any]], int]:
+    if not objects:
+        return [], 0
+    from llava.constants import IMAGE_TOKEN_INDEX
+    from llava.mm_utils import tokenizer_image_token
+
+    yes_id = first_content_token_id(runtime.tokenizer, str(yes_text))
+    no_id = first_content_token_id(runtime.tokenizer, str(no_text))
+    pad_id = runtime.tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = runtime.tokenizer.eos_token_id
+    if pad_id is None:
+        pad_id = 0
+
+    image_tensor, image_sizes = runtime._process_image(image)
+    rows: List[Dict[str, Any]] = []
+    n_forwards = 0
+    bs = max(1, int(batch_size))
+    for start in range(0, len(objects), bs):
+        chunk = list(objects[start : start + bs])
+        prompts = [
+            runtime.prompt_text(str(question_template).replace("{object}", str(obj)))
+            for obj in chunk
+        ]
+        ids_list = [
+            tokenizer_image_token(prompt, runtime.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").to(runtime.device)
+            for prompt in prompts
+        ]
+        lengths = [int(ids.numel()) for ids in ids_list]
+        max_len = max(lengths)
+        input_ids = torch.full((len(chunk), max_len), int(pad_id), dtype=torch.long, device=runtime.device)
+        attention_mask = torch.zeros((len(chunk), max_len), dtype=torch.long, device=runtime.device)
+        for row_idx, ids in enumerate(ids_list):
+            input_ids[row_idx, : lengths[row_idx]] = ids
+            attention_mask[row_idx, : lengths[row_idx]] = 1
+        images = image_tensor.unsqueeze(0).repeat(len(chunk), 1, 1, 1)
+        image_sizes_batch = [image.size for _ in chunk]
+
+        try:
+            with torch.inference_mode():
+                try:
+                    outputs = runtime.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        images=images,
+                        image_sizes=image_sizes_batch,
+                        use_cache=False,
+                        return_dict=True,
+                    )
+                except TypeError as exc:
+                    if "image_sizes" not in str(exc):
+                        raise
+                    outputs = runtime.model(
+                        input_ids=input_ids,
+                        attention_mask=attention_mask,
+                        images=images,
+                        use_cache=False,
+                        return_dict=True,
+                    )
+            n_forwards += 1
+            logits = outputs.logits
+            # LLaVA expands the single image token into visual patch embeddings,
+            # so logits are longer than the textual prompt ids. For the longest
+            # row, expanded_len = max_text_len - 1 + n_visual_tokens.
+            visual_token_count = max(1, int(logits.shape[1]) - int(max_len) + 1)
+            for row_idx, obj in enumerate(chunk):
+                next_pos = int(lengths[row_idx]) + int(visual_token_count) - 2
+                next_pos = max(0, min(next_pos, int(logits.shape[1]) - 1))
+                next_logits = logits[row_idx, next_pos, :]
+                rows.append({"object": str(obj), **metrics_from_next_token_logits(next_logits, yes_id=yes_id, no_id=no_id)})
+        except Exception:
+            # Some LLaVA forks are brittle with batched multimodal forwards.
+            # Fall back to one-object batches while preserving output semantics.
+            if len(chunk) == 1:
+                raise
+            fallback_rows, fallback_forwards = score_objects_next_token_batch(
+                chunk,
+                runtime=runtime,
+                image=image,
+                question_template=question_template,
+                yes_text=yes_text,
+                no_text=no_text,
+                batch_size=1,
+            )
+            rows.extend(fallback_rows)
+            n_forwards += fallback_forwards
+    return rows, n_forwards
 
 
 def add_risk_features(row: Dict[str, Any], scored: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -140,7 +292,8 @@ def main() -> None:
     ap.add_argument("--question_template", default="Is there a {object} in the image? Answer yes or no.")
     ap.add_argument("--yes_text", default="Yes")
     ap.add_argument("--no_text", default="No")
-    ap.add_argument("--score_mode", choices=["yesno", "yes_only"], default="yesno")
+    ap.add_argument("--score_mode", choices=["yesno", "yes_only", "next_token_yesno"], default="yesno")
+    ap.add_argument("--probe_batch_size", type=int, default=8)
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=True)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -166,6 +319,7 @@ def main() -> None:
     rows: List[Dict[str, Any]] = []
     n_errors = 0
     n_object_probes = 0
+    n_probe_forwards = 0
     for idx, sample in enumerate(questions):
         sid = norm_id(sample.get("question_id", sample.get("id", sample.get("image_id"))))
         image_name = str(sample.get("image", "")).strip()
@@ -192,17 +346,30 @@ def main() -> None:
                 else list(raw_objects)
             )
             image = runtime.load_image(image_path)
-            scored = score_objects(
-                objects,
-                runtime=runtime,
-                image=image,
-                question_template=str(args.question_template),
-                yes_text=str(args.yes_text),
-                no_text=str(args.no_text),
-                score_mode=str(args.score_mode),
-                cache={},
-            )
+            if str(args.score_mode) == "next_token_yesno":
+                scored, sample_forwards = score_objects_next_token_batch(
+                    objects,
+                    runtime=runtime,
+                    image=image,
+                    question_template=str(args.question_template),
+                    yes_text=str(args.yes_text),
+                    no_text=str(args.no_text),
+                    batch_size=int(args.probe_batch_size),
+                )
+            else:
+                scored = score_objects(
+                    objects,
+                    runtime=runtime,
+                    image=image,
+                    question_template=str(args.question_template),
+                    yes_text=str(args.yes_text),
+                    no_text=str(args.no_text),
+                    score_mode=str(args.score_mode),
+                    cache={},
+                )
+                sample_forwards = len(objects) * (1 if str(args.score_mode) == "yes_only" else 2)
             n_object_probes += len(objects)
+            n_probe_forwards += int(sample_forwards)
             row.update(
                 {
                     "int_raw_object_names": " | ".join(raw_objects),
@@ -243,7 +410,10 @@ def main() -> None:
             row["risk_details_json"] = "[]"
         rows.append(row)
         if (idx + 1) % max(1, int(args.log_every)) == 0:
-            print(f"[intervention-object-risk] {idx + 1}/{len(questions)} object_probes={n_object_probes}")
+            print(
+                f"[intervention-object-risk] {idx + 1}/{len(questions)} "
+                f"object_probes={n_object_probes} probe_forwards={n_probe_forwards}"
+            )
 
     write_csv(args.out_csv, rows)
     print(f"[saved] {args.out_csv}")
@@ -264,6 +434,7 @@ def main() -> None:
                     "conv_mode": str(args.conv_mode),
                     "question_template": str(args.question_template),
                     "score_mode": str(args.score_mode),
+                    "probe_batch_size": int(args.probe_batch_size),
                     "limit": int(args.limit),
                     "max_objects": int(args.max_objects),
                     "object_vocab": str(args.object_vocab),
@@ -273,7 +444,8 @@ def main() -> None:
                     "n_rows": int(len(rows)),
                     "n_errors": int(n_errors),
                     "n_object_probes": int(n_object_probes),
-                    "n_forward_passes_est": int(n_object_probes * (1 if str(args.score_mode) == "yes_only" else 2)),
+                    "n_probe_forwards": int(n_probe_forwards),
+                    "n_forward_passes_est": int(n_probe_forwards),
                     "n_oracle_any_hallucinated_object": int(any_gold),
                     "oracle_top1_hit_rate_over_all": float(top1_hits / max(1, len(rows))),
                     "oracle_top1_hit_rate_over_gold": float(top1_hits / max(1, any_gold)),

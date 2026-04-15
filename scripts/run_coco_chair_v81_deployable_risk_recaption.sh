@@ -36,6 +36,7 @@ SEED="${SEED:-17}"
 OBJECT_MAX_GEN_LEN="${OBJECT_MAX_GEN_LEN:-96}"
 RISK_MAX_OBJECTS="${RISK_MAX_OBJECTS:-8}"
 RISK_SCORE_MODE="${RISK_SCORE_MODE:-yesno}"
+RISK_PROBE_BATCH_SIZE="${RISK_PROBE_BATCH_SIZE:-8}"
 RISK_OBJECT_VOCAB="${RISK_OBJECT_VOCAB:-coco80}"
 RISK_FILTER_TO_VOCAB="${RISK_FILTER_TO_VOCAB:-false}"
 RISK_QUESTION_TEMPLATE="${RISK_QUESTION_TEMPLATE:-}"
@@ -58,6 +59,7 @@ RECAP_END_LAYER="${RECAP_END_LAYER:-15}"
 RECAP_HEAD_BALANCING="${RECAP_HEAD_BALANCING:-simg}"
 
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
+STOP_AFTER_RISK="${STOP_AFTER_RISK:-false}"
 
 mkdir -p "$OUT_ROOT/splits" "$OUT_ROOT/$SPLIT" "$OUT_ROOT/features" "$OUT_ROOT/summary"
 
@@ -140,6 +142,9 @@ RISK_TAG="max${RISK_MAX_OBJECTS}"
 if [[ "$RISK_FILTER_TO_VOCAB" == "true" ]]; then
   RISK_TAG="${RISK_TAG}_vocab"
 fi
+if [[ "$RISK_SCORE_MODE" != "yesno" ]]; then
+  RISK_TAG="${RISK_TAG}_${RISK_SCORE_MODE}"
+fi
 RISK_CSV="$OUT_ROOT/features/${SPLIT}_intervention_object_yesno_risk_limit${LIMIT}_${RISK_TAG}.csv"
 RISK_SUMMARY="$OUT_ROOT/features/${SPLIT}_intervention_object_yesno_risk_limit${LIMIT}_${RISK_TAG}.summary.json"
 RECAP_TAG="${RISK_TAG}_${RECAP_PROMPT_MODE}"
@@ -150,7 +155,7 @@ MERGED_PRED="$OUT_ROOT/$SPLIT/pred_risk_object_recaption_merged_${RECAP_TAG}_yp$
 
 echo "[settings] source=$SOURCE_OUT"
 echo "[settings] out=$OUT_ROOT split=$SPLIT limit=$LIMIT gpu=$GPU"
-echo "[settings] risk_max_yes_prob=$RISK_MAX_YES_PROB risk_max_lp_margin=$RISK_MAX_LP_MARGIN risk_min_second_gap=$RISK_MIN_SECOND_GAP risk_max_objects=$RISK_MAX_OBJECTS filter_to_vocab=$RISK_FILTER_TO_VOCAB"
+echo "[settings] risk_max_yes_prob=$RISK_MAX_YES_PROB risk_max_lp_margin=$RISK_MAX_LP_MARGIN risk_min_second_gap=$RISK_MIN_SECOND_GAP risk_max_objects=$RISK_MAX_OBJECTS filter_to_vocab=$RISK_FILTER_TO_VOCAB score_mode=$RISK_SCORE_MODE probe_batch_size=$RISK_PROBE_BATCH_SIZE"
 echo "[settings] recap_mode=$RECAP_PROMPT_MODE recap_use_add=$RECAP_USE_ADD recap_max_gen_len=$RECAP_MAX_GEN_LEN"
 
 make_limited_jsonl "$Q_SRC" "$Q_LIMITED"
@@ -212,10 +217,16 @@ if ! reuse_file "$RISK_CSV"; then
       --filter_to_vocab "$RISK_FILTER_TO_VOCAB" \
       --question_template "$RISK_QUESTION_TEMPLATE" \
       --score_mode "$RISK_SCORE_MODE" \
+      --probe_batch_size "$RISK_PROBE_BATCH_SIZE" \
       --reuse_if_exists "$REUSE_IF_EXISTS"
   )
 else
   echo "[reuse] $RISK_CSV"
+fi
+
+if [[ "$STOP_AFTER_RISK" == "true" ]]; then
+  echo "[done-risk] $RISK_CSV"
+  exit 0
 fi
 
 if ! reuse_file "$RECAP_Q"; then
