@@ -29,6 +29,7 @@ VAL_LIMIT="${VAL_LIMIT:-500}"
 TEST_LIMIT="${TEST_LIMIT:-500}"
 SOURCE_LIMIT="${SOURCE_LIMIT:-500}"
 RUN_TEST="${RUN_TEST:-true}"
+INTERVENTION_PRED_BASENAME="${INTERVENTION_PRED_BASENAME:-pred_origin_entropy_simg_caption.jsonl}"
 
 THRESHOLDS="${THRESHOLDS:-0.35 0.40 0.45 0.50 0.60}"
 RISK_SCORE_MODE="${RISK_SCORE_MODE:-next_token_yesno}"
@@ -65,16 +66,21 @@ fi
 echo "[settings] out=$OUT_ROOT"
 echo "[settings] val_source=$VAL_SOURCE_OUT split=$VAL_SPLIT limit=$VAL_LIMIT"
 echo "[settings] test_source=$TEST_SOURCE_OUT split=$TEST_SPLIT limit=$TEST_LIMIT run_test=$RUN_TEST"
+echo "[settings] intervention_pred_basename=$INTERVENTION_PRED_BASENAME"
 echo "[settings] detector=$RISK_SCORE_MODE risk_tag=$risk_tag thresholds=$THRESHOLDS"
 echo "[settings] suppression mode=$SUPPRESS_MODE bias=$SUPPRESS_BIAS"
 
 if [[ ! -f "$VAL_SOURCE_OUT/splits/${VAL_SPLIT}_caption_q_limited${SOURCE_LIMIT}.jsonl" && ! -f "$VAL_SOURCE_OUT/splits/${VAL_SPLIT}_caption_q.jsonl" ]]; then
-  echo "[error] validation split not found under VAL_SOURCE_OUT=$VAL_SOURCE_OUT split=$VAL_SPLIT" >&2
-  echo "        Set VAL_SOURCE_OUT to an experiment directory that contains splits/${VAL_SPLIT}_caption_q*.jsonl and $VAL_SPLIT/pred_origin_entropy_simg_caption.jsonl." >&2
+  echo "[error] validation question split not found under VAL_SOURCE_OUT=$VAL_SOURCE_OUT split=$VAL_SPLIT" >&2
+  echo "        Expected one of:" >&2
+  echo "          $VAL_SOURCE_OUT/splits/${VAL_SPLIT}_caption_q_limited${SOURCE_LIMIT}.jsonl" >&2
+  echo "          $VAL_SOURCE_OUT/splits/${VAL_SPLIT}_caption_q.jsonl" >&2
   exit 2
 fi
-if [[ ! -f "$VAL_SOURCE_OUT/$VAL_SPLIT/pred_origin_entropy_simg_caption.jsonl" ]]; then
-  echo "[error] missing validation intervention predictions: $VAL_SOURCE_OUT/$VAL_SPLIT/pred_origin_entropy_simg_caption.jsonl" >&2
+if [[ ! -f "$VAL_SOURCE_OUT/$VAL_SPLIT/$INTERVENTION_PRED_BASENAME" ]]; then
+  echo "[error] missing validation intervention predictions: $VAL_SOURCE_OUT/$VAL_SPLIT/$INTERVENTION_PRED_BASENAME" >&2
+  echo "        If this source uses a different filename, set INTERVENTION_PRED_BASENAME, e.g." >&2
+  echo "        INTERVENTION_PRED_BASENAME=pred_vga_full_pvg_caption.jsonl" >&2
   exit 2
 fi
 
@@ -85,6 +91,7 @@ OUT_ROOT="$VAL_RISK_OUT" \
 SPLIT="$VAL_SPLIT" \
 LIMIT="$VAL_LIMIT" \
 SOURCE_LIMIT="$SOURCE_LIMIT" \
+INTERVENTION_PRED_BASENAME="$INTERVENTION_PRED_BASENAME" \
 RISK_SCORE_MODE="$RISK_SCORE_MODE" \
 RISK_FILTER_TO_VOCAB="$RISK_FILTER_TO_VOCAB" \
 RISK_MAX_OBJECTS="$RISK_MAX_OBJECTS" \
@@ -110,6 +117,7 @@ for th in $THRESHOLDS; do
   SPLIT="$VAL_SPLIT" \
   LIMIT="$VAL_LIMIT" \
   SOURCE_LIMIT="$SOURCE_LIMIT" \
+  INTERVENTION_PRED_BASENAME="$INTERVENTION_PRED_BASENAME" \
   RISK_MAX_OBJECTS="$RISK_MAX_OBJECTS" \
   RISK_FILTER_TO_VOCAB="$RISK_FILTER_TO_VOCAB" \
   RISK_MAX_YES_PROB="$th" \
@@ -152,6 +160,7 @@ OUT_ROOT="$TEST_RISK_OUT" \
 SPLIT="$TEST_SPLIT" \
 LIMIT="$TEST_LIMIT" \
 SOURCE_LIMIT="$SOURCE_LIMIT" \
+INTERVENTION_PRED_BASENAME="$INTERVENTION_PRED_BASENAME" \
 RISK_SCORE_MODE="$RISK_SCORE_MODE" \
 RISK_FILTER_TO_VOCAB="$RISK_FILTER_TO_VOCAB" \
 RISK_MAX_OBJECTS="$RISK_MAX_OBJECTS" \
@@ -175,6 +184,7 @@ OUT_ROOT="$TEST_APPLY_OUT" \
 SPLIT="$TEST_SPLIT" \
 LIMIT="$TEST_LIMIT" \
 SOURCE_LIMIT="$SOURCE_LIMIT" \
+INTERVENTION_PRED_BASENAME="$INTERVENTION_PRED_BASENAME" \
 RISK_MAX_OBJECTS="$RISK_MAX_OBJECTS" \
 RISK_FILTER_TO_VOCAB="$RISK_FILTER_TO_VOCAB" \
 RISK_MAX_YES_PROB="$SELECTED_TH" \
@@ -186,4 +196,3 @@ REUSE_IF_EXISTS="$REUSE_IF_EXISTS" \
 bash "$CAL_ROOT/scripts/run_coco_chair_v82_object_token_suppression.sh"
 
 echo "[done] selected=$SELECTED_TH val=$SELECT_JSON test=$TEST_APPLY_OUT"
-

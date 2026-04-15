@@ -28,6 +28,8 @@ OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/coco_chair_v82_object_token_suppress
 SPLIT="${SPLIT:-test}"
 LIMIT="${LIMIT:-100}"
 SOURCE_LIMIT="${SOURCE_LIMIT:-500}"
+INTERVENTION_PRED_BASENAME="${INTERVENTION_PRED_BASENAME:-pred_origin_entropy_simg_caption.jsonl}"
+INTERVENTION_PRED_JSONL="${INTERVENTION_PRED_JSONL:-}"
 
 IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
 COCO_ANN_ROOT="${COCO_ANN_ROOT:-/home/kms/data/images/mscoco/annotations}"
@@ -133,7 +135,7 @@ Q_SRC="$SOURCE_OUT/splits/${SPLIT}_caption_q_limited${SOURCE_LIMIT}.jsonl"
 if [[ ! -f "$Q_SRC" ]]; then
   Q_SRC="$SOURCE_OUT/splits/${SPLIT}_caption_q.jsonl"
 fi
-INT_SRC="$SOURCE_OUT/$SPLIT/pred_origin_entropy_simg_caption.jsonl"
+INT_SRC="${INTERVENTION_PRED_JSONL:-$SOURCE_OUT/$SPLIT/$INTERVENTION_PRED_BASENAME}"
 
 Q_LIMITED="$OUT_ROOT/splits/${SPLIT}_caption_q_limited${LIMIT}.jsonl"
 INT_LIMITED="$OUT_ROOT/$SPLIT/pred_origin_entropy_simg_caption_limited${LIMIT}.jsonl"
