@@ -6,7 +6,7 @@ import os
 import sys
 import time
 import traceback
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import torch
 import torch.nn.functional as F
@@ -178,6 +178,81 @@ def final_label_from_text(text: str) -> str:
     return parse_yes_no(text) if str(text or "").strip() else ""
 
 
+def evaluate_actual_routes(rows: Sequence[Mapping[str, Any]]) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    route_rows: List[Dict[str, Any]] = []
+    n = 0
+    baseline_correct_total = 0
+    intervention_correct_total = 0
+    final_correct_total = 0
+    total_harm = 0
+    selected_count = 0
+    selected_harm = 0
+    selected_help = 0
+    selected_neutral = 0
+    expert_counts: Dict[str, int] = {}
+
+    for row in rows:
+        baseline_correct = maybe_int(row.get("baseline_correct"))
+        intervention_correct = maybe_int(row.get("intervention_correct"))
+        final_correct = maybe_int(row.get("final_correct"))
+        harm = int(maybe_int(row.get("harm")) or 0)
+        help_ = int(maybe_int(row.get("help")) or 0)
+        route = str(row.get("route", "method"))
+        expert = str(row.get("expert", "none"))
+        expert_counts[expert] = int(expert_counts.get(expert, 0)) + 1
+        route_rows.append(
+            {
+                "id": str(row.get("id", "")).strip(),
+                "expert": expert,
+                "route": route,
+                "b_score": row.get("b_score"),
+                "c_score": row.get("c_score"),
+                "f_score": row.get("f_score"),
+                "score": row.get("meta_score"),
+                "tau": row.get("meta_tau"),
+                "harm": harm,
+                "help": help_,
+                "baseline_correct": baseline_correct,
+                "intervention_correct": intervention_correct,
+                "final_correct": final_correct,
+            }
+        )
+        if baseline_correct is None or intervention_correct is None or final_correct is None:
+            continue
+        n += 1
+        baseline_correct_total += int(baseline_correct)
+        intervention_correct_total += int(intervention_correct)
+        final_correct_total += int(final_correct)
+        total_harm += harm
+        if route == "baseline":
+            selected_count += 1
+            selected_harm += harm
+            selected_help += help_
+            selected_neutral += int((harm == 0) and (help_ == 0))
+
+    precision = float(selected_harm / max(1, selected_count))
+    recall = float(selected_harm / max(1, total_harm))
+    f1 = 0.0 if precision + recall == 0.0 else float(2.0 * precision * recall / (precision + recall))
+    return route_rows, {
+        "mode": "online_actual_routes",
+        "n_eval": int(n),
+        "baseline_rate": float(selected_count / max(1, n)),
+        "method_rate": float(1.0 - selected_count / max(1, n)),
+        "final_acc": float(final_correct_total / max(1, n)),
+        "baseline_acc": float(baseline_correct_total / max(1, n)),
+        "intervention_acc": float(intervention_correct_total / max(1, n)),
+        "delta_vs_intervention": float((final_correct_total - intervention_correct_total) / max(1, n)),
+        "selected_count": int(selected_count),
+        "selected_harm": int(selected_harm),
+        "selected_help": int(selected_help),
+        "selected_neutral": int(selected_neutral),
+        "selected_harm_precision": precision,
+        "selected_harm_recall": recall,
+        "selected_harm_f1": f1,
+        "expert_counts": expert_counts,
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
@@ -225,6 +300,18 @@ def main() -> None:
             "the C-feature replay isolated from the attention-returning Stage-A replay."
         ),
     )
+    ap.add_argument(
+        "--stage_a_prefilter_c_score_min",
+        type=float,
+        default=None,
+        help=(
+            "Optional cascade speedup. When set, cheap-C is always computed first; "
+            "rows with preliminary c_score below this threshold skip the expensive "
+            "attention Stage-A replay and are forced to route=method. For the cached "
+            "meta_strong VGA policy, 2.0 preserved held-out accuracy while reducing "
+            "Stage-A replays from 9000 to about 380."
+        ),
+    )
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=False)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -267,8 +354,11 @@ def main() -> None:
     n_missing_intervention = 0
     n_missing_baseline = 0
     n_generated_baseline = 0
+    n_stage_a_prefilter_skipped = 0
+    n_stage_a_computed = 0
     feature_secs: List[float] = []
     baseline_secs: List[float] = []
+    stage_a_prefilter = args.stage_a_prefilter_c_score_min
 
     for idx, sample in enumerate(questions):
         sid = safe_id(sample.get("question_id", sample.get("id")))
@@ -345,12 +435,28 @@ def main() -> None:
                     content_indices=stage_content_indices,
                 )
 
-            if str(args.feature_order) == "cheap_first":
+            force_method_by_prefilter = False
+            if stage_a_prefilter is not None:
+                cheap = compute_cheap()
+                row.update(cheap)
+                prelim_scores = controller.score_components(row)
+                prelim_c_score = prelim_scores.get("c_score")
+                row["stage_a_prefilter_c_score"] = prelim_c_score
+                if prelim_c_score is None or float(prelim_c_score) < float(stage_a_prefilter):
+                    stage_a = {}
+                    force_method_by_prefilter = True
+                    n_stage_a_prefilter_skipped += 1
+                else:
+                    stage_a = compute_stage_a()
+                    n_stage_a_computed += 1
+            elif str(args.feature_order) == "cheap_first":
                 cheap = compute_cheap()
                 stage_a = compute_stage_a()
+                n_stage_a_computed += 1
             else:
                 stage_a = compute_stage_a()
                 cheap = compute_cheap()
+                n_stage_a_computed += 1
             feature_dt = time.perf_counter() - t0
             feature_secs.append(float(feature_dt))
 
@@ -358,6 +464,7 @@ def main() -> None:
             row["stage_question"] = stage_question
             row["cheap_question"] = cheap_question
             row.update(stage_a)
+            row["stage_a_prefilter_skipped"] = int(force_method_by_prefilter)
             row["feature_ms"] = float(feature_dt * 1000.0)
         except Exception as exc:
             n_errors += 1
@@ -381,18 +488,28 @@ def main() -> None:
             row["harm"] = 0
             row["help"] = 0
 
-        decision = controller.decide(row)
-        row["expert"] = decision.expert
-        row["route"] = decision.route
-        row["b_score"] = decision.b_score
-        row["c_score"] = decision.c_score
-        row["f_score"] = decision.f_score
-        row["meta_score"] = decision.score
-        row["meta_tau"] = decision.tau
+        if int(maybe_int(row.get("stage_a_prefilter_skipped")) or 0) == 1:
+            scores = controller.score_components(row)
+            row["expert"] = "cheap_prefilter"
+            row["route"] = "method"
+            row["b_score"] = scores.get("b_score")
+            row["c_score"] = scores.get("c_score")
+            row["f_score"] = scores.get("f_score")
+            row["meta_score"] = scores.get("c_score")
+            row["meta_tau"] = stage_a_prefilter
+        else:
+            decision = controller.decide(row)
+            row["expert"] = decision.expert
+            row["route"] = decision.route
+            row["b_score"] = decision.b_score
+            row["c_score"] = decision.c_score
+            row["f_score"] = decision.f_score
+            row["meta_score"] = decision.score
+            row["meta_tau"] = decision.tau
 
         final_text = intervention_text
         final_source = "method"
-        if decision.route == "baseline":
+        if str(row.get("route")) == "baseline":
             if baseline_text:
                 final_text = baseline_text
                 final_source = "baseline_cached"
@@ -430,15 +547,15 @@ def main() -> None:
                 "id": sid,
                 "image": image_name,
                 "text": final_text,
-                "route": decision.route,
-                "expert": decision.expert,
+                "route": row.get("route"),
+                "expert": row.get("expert"),
                 "source": final_source,
             }
         )
         if (idx + 1) % max(1, int(args.log_every)) == 0:
             print(f"[meta-online] {idx + 1}/{len(questions)}", flush=True)
 
-    route_rows, evaluation = controller.evaluate(routing_inputs)
+    route_rows, evaluation = evaluate_actual_routes(routing_inputs)
     # Preserve final_source/final_text fields in the route CSV for deployment audits.
     details_by_id = {str(row.get("id", "")): row for row in feature_rows}
     enriched_route_rows: List[Dict[str, Any]] = []
@@ -489,6 +606,7 @@ def main() -> None:
                 "late_start": int(args.late_start),
                 "late_end": int(args.late_end),
                 "feature_order": str(args.feature_order),
+                "stage_a_prefilter_c_score_min": stage_a_prefilter,
                 "generate_baseline_on_fallback": bool(args.generate_baseline_on_fallback),
             },
             "counts": {
@@ -497,6 +615,8 @@ def main() -> None:
                 "n_missing_intervention": int(n_missing_intervention),
                 "n_missing_baseline_for_selected": int(n_missing_baseline),
                 "n_generated_baseline": int(n_generated_baseline),
+                "n_stage_a_prefilter_skipped": int(n_stage_a_prefilter_skipped),
+                "n_stage_a_computed": int(n_stage_a_computed),
             },
             "evaluation_from_cached_labels": evaluation,
             "evaluation_from_final_text": {

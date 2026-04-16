@@ -24,12 +24,18 @@ INTERVENTION_PRED_JSONL="${INTERVENTION_PRED_JSONL:-$CAL_ROOT/experiments/paper_
 INTERVENTION_PRED_KEY="${INTERVENTION_PRED_KEY:-output}"
 BASELINE_PRED_JSONL="${BASELINE_PRED_JSONL:-$CAL_ROOT/experiments/paper_main_b_c_v1_full/test_stageb/pred_baseline.jsonl}"
 BASELINE_PRED_KEY="${BASELINE_PRED_KEY:-text}"
+case "${BASELINE_PRED_JSONL,,}" in
+  none|null|live|lazy)
+    BASELINE_PRED_JSONL=""
+    ;;
+esac
 
 OUT_DIR="${OUT_DIR:-$CAL_ROOT/experiments/discriminative_meta_strong_online}"
 LIMIT="${LIMIT:-0}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-false}"
 LOG_EVERY="${LOG_EVERY:-25}"
 FEATURE_ORDER="${FEATURE_ORDER:-cheap_first}"
+STAGE_A_PREFILTER_C_SCORE_MIN="${STAGE_A_PREFILTER_C_SCORE_MIN:-}"
 
 BETA="${BETA:-1.0}"
 LAMBDA_A="${LAMBDA_A:-0.5}"
@@ -77,6 +83,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_discriminative_m
   --late_start "$LATE_START" \
   --late_end "$LATE_END" \
   --feature_order "$FEATURE_ORDER" \
+  ${STAGE_A_PREFILTER_C_SCORE_MIN:+--stage_a_prefilter_c_score_min "$STAGE_A_PREFILTER_C_SCORE_MIN"} \
   --generate_baseline_on_fallback "$GENERATE_BASELINE_ON_FALLBACK" \
   --baseline_max_new_tokens "$BASELINE_MAX_NEW_TOKENS" \
   --reuse_if_exists "$REUSE_IF_EXISTS" \
