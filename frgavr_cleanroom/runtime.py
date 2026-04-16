@@ -358,6 +358,8 @@ class CleanroomLlavaRuntime:
         self.image_processor = image_processor
         self.conv_mode = conv_mode
         self.device = torch.device(requested_device if fallback_used else model.device)
+        self.image_preprocess_mode = str(os.environ.get("CLEANROOM_IMAGE_PREPROCESS_MODE", "direct")).strip().lower()
+        self.teacher_force_forward_mode = str(os.environ.get("CLEANROOM_TF_FORWARD_MODE", "backbone")).strip().lower()
         self.model.eval()
         try:
             vision_tower = self.model.get_vision_tower()
@@ -374,13 +376,22 @@ class CleanroomLlavaRuntime:
         )
 
     def _process_image(self, image: Image.Image) -> Tuple[torch.Tensor, List[Tuple[int, int]]]:
-        # Match VGA_origin's image preprocessing path first. This keeps the
-        # cheap teacher-forced replay aligned with the canonical VGA run and
-        # avoids processor/list codepaths that are brittle across forks.
-        image_tensor = self.image_processor.preprocess(image, return_tensors="pt")["pixel_values"]
-        if image_tensor is None:
+        if self.image_preprocess_mode in {"process", "process_images", "legacy"}:
             from llava.mm_utils import process_images
+
             image_tensor = process_images([image], self.image_processor, self.model.config)
+            if image_tensor is None:
+                image_tensor = self.image_processor.preprocess(image, return_tensors="pt")["pixel_values"]
+        else:
+            # Match VGA_origin's caption/VQA eval path first. The legacy
+            # process_images path remains available through
+            # CLEANROOM_IMAGE_PREPROCESS_MODE=process_images for exact cached
+            # discriminative artifact parity checks.
+            image_tensor = self.image_processor.preprocess(image, return_tensors="pt")["pixel_values"]
+            if image_tensor is None:
+                from llava.mm_utils import process_images
+
+                image_tensor = process_images([image], self.image_processor, self.model.config)
         if isinstance(image_tensor, list):
             if not image_tensor:
                 raise RuntimeError("Image preprocessing returned an empty image tensor list.")
@@ -492,14 +503,24 @@ class CleanroomLlavaRuntime:
             }
             if pos_ids_e is not None:
                 forward_kwargs["position_ids"] = pos_ids_e
-            try:
-                outputs = backbone(**forward_kwargs)
-            except TypeError as exc:
-                if "position_ids" not in str(exc):
-                    raise
-                forward_kwargs.pop("position_ids", None)
-                outputs = backbone(**forward_kwargs)
-            logits = self.model.lm_head(outputs[0])
+            if self.teacher_force_forward_mode in {"model", "full", "legacy"}:
+                try:
+                    outputs = self.model(**forward_kwargs)
+                except TypeError as exc:
+                    if "position_ids" not in str(exc):
+                        raise
+                    forward_kwargs.pop("position_ids", None)
+                    outputs = self.model(**forward_kwargs)
+                logits = outputs.logits
+            else:
+                try:
+                    outputs = backbone(**forward_kwargs)
+                except TypeError as exc:
+                    if "position_ids" not in str(exc):
+                        raise
+                    forward_kwargs.pop("position_ids", None)
+                    outputs = backbone(**forward_kwargs)
+                logits = self.model.lm_head(outputs[0])
 
         labels_exp = labels_e[0]
         text_positions = torch.where(labels_exp != int(IGNORE_INDEX))[0]
