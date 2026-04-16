@@ -567,7 +567,7 @@ class CleanroomLlavaRuntime:
         image_tensor, image_sizes = self._process_image(image)
         with torch.inference_mode():
             gen_kwargs = dict(
-                images=image_tensor,
+                images=image_tensor.unsqueeze(0),
                 image_sizes=image_sizes,
                 do_sample=False,
                 temperature=0.0,
