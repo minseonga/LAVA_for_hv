@@ -316,6 +316,13 @@ class CleanroomLlavaRuntime:
 
             disable_torch_init()
             model_name = get_model_name_from_path(model_path)
+            # Avoid the expensive "auto -> fail -> cpu fallback -> to(cuda)"
+            # path. Some LLaVA/Vicuna stacks reject device_map="auto" only
+            # after checkpoint shards have already been loaded, which doubles
+            # startup time. A single-device map preserves the intended runtime
+            # placement and keeps the old fallback available for incompatible
+            # environments.
+            direct_device_map: object = {"": requested_device}
             try:
                 tokenizer, model, image_processor, _ = load_pretrained_model(
                     model_path,
@@ -323,6 +330,7 @@ class CleanroomLlavaRuntime:
                     model_name,
                     load_8bit=bool(load_8bit),
                     load_4bit=bool(load_4bit),
+                    device_map=direct_device_map,
                     device=requested_device,
                 )
             except ValueError as exc:
