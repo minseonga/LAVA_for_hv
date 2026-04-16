@@ -134,7 +134,7 @@ default_pai_model() {
 vga_runner() {
   case "$BACKBONE" in
     llava15) echo "$CAL_ROOT/scripts/run_vga_origin_llava_caption_compat.py" ;;
-    llava_next) echo "$VGA_ROOT/eval/object_hallucination_vqa_llava-next.py" ;;
+    llava_next) echo "$CAL_ROOT/scripts/run_vga_origin_llava_next_compat.py" ;;
     qwen25_vl) echo "$VGA_ROOT/eval/object_hallucination_vqa_qwen25-vl.py" ;;
     qwen35_vl)
       echo "[error] VGA for BACKBONE=qwen35_vl requires porting the VGA attention/generation hooks." >&2
@@ -214,6 +214,27 @@ run_vga_like() {
       --head_balancing "$VGA_HEAD_BALANCING" \
       --attn_norm "$VGA_ATTN_NORM" \
       --sampling "$VGA_SAMPLING" \
+      --seed "$SEED"
+  elif [[ "$BACKBONE" == "llava_next" ]]; then
+    "$VGA_PYTHON_BIN" "$runner" \
+      --vga-root "$VGA_ROOT" \
+      --model-path "$MODEL_PATH" \
+      --model-base "${MODEL_BASE:-}" \
+      --image-folder "$IMAGE_FOLDER" \
+      --question-file "$QUESTION_FILE" \
+      --answers-file "$PRED_JSONL" \
+      --conv-mode "$CONV_MODE" \
+      --max_gen_len "$MAX_NEW_TOKENS" \
+      --use_add "$use_add" \
+      --attn_coef "$VGA_ATTN_COEF" \
+      --cd_alpha "$VGA_CD_ALPHA" \
+      --start_layer "$start_layer" \
+      --end_layer "$end_layer" \
+      --head_balancing "$VGA_HEAD_BALANCING" \
+      --attn_norm "$VGA_ATTN_NORM" \
+      --sampling "$VGA_SAMPLING" \
+      --torch_type "$VGA_TORCH_TYPE" \
+      --attn_type "$VGA_ATTN_TYPE" \
       --seed "$SEED"
   else
     "$VGA_PYTHON_BIN" "$runner" \

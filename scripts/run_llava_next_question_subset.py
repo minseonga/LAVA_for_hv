@@ -39,6 +39,15 @@ def read_jsonl(path: str, limit: int = 0) -> List[Dict[str, Any]]:
     return rows
 
 
+def patch_transformers_compat() -> None:
+    import transformers.modeling_utils as modeling_utils
+
+    if not hasattr(modeling_utils, "apply_chunking_to_forward"):
+        from transformers.pytorch_utils import apply_chunking_to_forward
+
+        modeling_utils.apply_chunking_to_forward = apply_chunking_to_forward  # type: ignore[attr-defined]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run vanilla LLaVA-Next on an arbitrary image-question JSONL subset.")
     ap.add_argument("--vga-root", default="VGA_origin")
@@ -71,6 +80,8 @@ def main() -> None:
         if path in sys.path:
             sys.path.remove(path)
         sys.path.insert(0, path)
+
+    patch_transformers_compat()
 
     from llava_next.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN, IMAGE_TOKEN_INDEX
     from llava_next.conversation import SeparatorStyle, conv_templates
