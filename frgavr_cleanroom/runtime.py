@@ -358,6 +358,13 @@ class CleanroomLlavaRuntime:
         self.image_processor = image_processor
         self.conv_mode = conv_mode
         self.device = torch.device(requested_device if fallback_used else model.device)
+        self.model.eval()
+        try:
+            vision_tower = self.model.get_vision_tower()
+        except Exception:
+            vision_tower = None
+        if vision_tower is not None and hasattr(vision_tower, "eval"):
+            vision_tower.eval()
 
     def prompt_text(self, question: str) -> str:
         return build_prompt(
