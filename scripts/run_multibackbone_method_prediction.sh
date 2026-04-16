@@ -19,6 +19,8 @@ PAI_ROOT="${PAI_ROOT:-/home/kms/PAI}"
 
 CAL_PYTHON_BIN="${CAL_PYTHON_BIN:-python}"
 VGA_PYTHON_BIN="${VGA_PYTHON_BIN:-/home/kms/miniconda3/envs/vga_base/bin/python}"
+LLAVA_NEXT_PYTHON_BIN="${LLAVA_NEXT_PYTHON_BIN:-$VGA_PYTHON_BIN}"
+QWEN35_PYTHON_BIN="${QWEN35_PYTHON_BIN:-$CAL_PYTHON_BIN}"
 PAI_PYTHON_BIN="${PAI_PYTHON_BIN:-/home/kms/miniconda3/envs/pai_base/bin/python}"
 
 GPU="${GPU:-${CUDA_VISIBLE_DEVICES:-0}}"
@@ -270,7 +272,7 @@ if ! reuse_file "$PRED_JSONL"; then
   case "$METHOD" in
     baseline)
       if [[ "$BACKBONE" == "qwen35_vl" ]]; then
-        "$CAL_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen35_vl_question_subset.py" \
+        "$QWEN35_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen35_vl_question_subset.py" \
           --model-path "$MODEL_PATH" \
           --image-folder "$IMAGE_FOLDER" \
           --question-file "$QUESTION_FILE" \
@@ -278,7 +280,7 @@ if ! reuse_file "$PRED_JSONL"; then
           --max-new-tokens "$MAX_NEW_TOKENS" \
           --seed "$SEED"
       elif [[ "$BACKBONE" == "llava_next" ]]; then
-        "$VGA_PYTHON_BIN" "$CAL_ROOT/scripts/run_llava_next_question_subset.py" \
+        "$LLAVA_NEXT_PYTHON_BIN" "$CAL_ROOT/scripts/run_llava_next_question_subset.py" \
           --vga-root "$VGA_ROOT" \
           --model-path "$MODEL_PATH" \
           --model-base "${MODEL_BASE:-}" \
