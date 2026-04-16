@@ -17,11 +17,15 @@ def parse_bool(value: Any) -> bool:
 
 def patch_transformers_compat() -> None:
     import transformers.modeling_utils as modeling_utils
+    import transformers.pytorch_utils as pytorch_utils
 
-    if not hasattr(modeling_utils, "apply_chunking_to_forward"):
-        from transformers.pytorch_utils import apply_chunking_to_forward
-
-        modeling_utils.apply_chunking_to_forward = apply_chunking_to_forward  # type: ignore[attr-defined]
+    for name in (
+        "apply_chunking_to_forward",
+        "find_pruneable_heads_and_indices",
+        "prune_linear_layer",
+    ):
+        if not hasattr(modeling_utils, name) and hasattr(pytorch_utils, name):
+            setattr(modeling_utils, name, getattr(pytorch_utils, name))
 
 
 def main() -> None:
