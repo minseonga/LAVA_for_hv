@@ -277,6 +277,21 @@ if ! reuse_file "$PRED_JSONL"; then
           --answers-file "$PRED_JSONL" \
           --max-new-tokens "$MAX_NEW_TOKENS" \
           --seed "$SEED"
+      elif [[ "$BACKBONE" == "llava_next" ]]; then
+        "$VGA_PYTHON_BIN" "$CAL_ROOT/scripts/run_llava_next_question_subset.py" \
+          --vga-root "$VGA_ROOT" \
+          --model-path "$MODEL_PATH" \
+          --model-base "${MODEL_BASE:-}" \
+          --image-folder "$IMAGE_FOLDER" \
+          --question-file "$QUESTION_FILE" \
+          --answers-file "$PRED_JSONL" \
+          --conv-mode "$CONV_MODE" \
+          --max-new-tokens "$MAX_NEW_TOKENS" \
+          --torch-type "$VGA_TORCH_TYPE" \
+          --attn-type "$VGA_ATTN_TYPE" \
+          --do-sample false \
+          --num-beams 1 \
+          --seed "$SEED"
       elif [[ "$BACKBONE" == "llava15" ]]; then
         "$CAL_PYTHON_BIN" -m llava.eval.model_vqa_loader \
           --model-path "$MODEL_PATH" \

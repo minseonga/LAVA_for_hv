@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
+
+import torch
+from PIL import Image
+from tqdm import tqdm
+from transformers import set_seed
+
+
+TORCH_TYPE_MAP = {
+    "fp16": "float16",
+    "fp32": "float32",
+    "bf16": "bfloat16",
+}
+
+
+def parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def read_jsonl(path: str, limit: int = 0) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    with open(os.path.abspath(path), "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            rows.append(json.loads(line))
+            if int(limit) > 0 and len(rows) >= int(limit):
+                break
+    return rows
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Run vanilla LLaVA-Next on an arbitrary image-question JSONL subset.")
+    ap.add_argument("--vga-root", default="VGA_origin")
+    ap.add_argument("--model-path", required=True)
+    ap.add_argument("--model-base", default=None)
+    ap.add_argument("--image-folder", required=True)
+    ap.add_argument("--question-file", required=True)
+    ap.add_argument("--answers-file", required=True)
+    ap.add_argument("--conv-mode", default="llava_llama_3")
+    ap.add_argument("--max-new-tokens", type=int, default=8)
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--seed", type=int, default=17)
+    ap.add_argument("--torch-type", default="bf16", choices=["fp16", "fp32", "bf16"])
+    ap.add_argument("--attn-type", default="eager", choices=["eager", "sdpa"])
+    ap.add_argument("--do-sample", type=parse_bool, default=False)
+    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--top-p", type=float, default=1.0)
+    ap.add_argument("--num-beams", type=int, default=1)
+    args = ap.parse_args()
+
+    if os.path.exists(args.answers_file):
+        raise FileExistsError(f"answers file already exists: {args.answers_file}")
+    os.makedirs(os.path.dirname(os.path.abspath(args.answers_file)), exist_ok=True)
+
+    repo_root = Path(__file__).resolve().parents[1]
+    vga_root = Path(args.vga_root)
+    if not vga_root.is_absolute():
+        vga_root = (repo_root / vga_root).resolve()
+    for path in (str(vga_root), str(vga_root / "eval")):
+        if path in sys.path:
+            sys.path.remove(path)
+        sys.path.insert(0, path)
+
+    from llava_next.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN, IMAGE_TOKEN_INDEX
+    from llava_next.conversation import SeparatorStyle, conv_templates
+    from llava_next.mm_utils import KeywordsStoppingCriteria, get_model_name_from_path, process_images, tokenizer_image_token
+    from llava_next.model.builder import load_pretrained_model
+    from llava_next.utils import disable_torch_init
+
+    set_seed(int(args.seed))
+    disable_torch_init()
+
+    model_path = os.path.expanduser(args.model_path)
+    model_name = get_model_name_from_path(model_path)
+    tokenizer, model, image_processor, _ = load_pretrained_model(
+        model_path,
+        args.model_base,
+        model_name,
+        device_map="cuda",
+        attn_implementation=str(args.attn_type),
+        torch_dtype=TORCH_TYPE_MAP[str(args.torch_type)],
+    )
+    model.eval()
+
+    rows = read_jsonl(args.question_file, limit=int(args.limit))
+    with open(args.answers_file, "w", encoding="utf-8") as f:
+        for row in tqdm(rows, desc="llava-next", unit="sample"):
+            image_name = str(row.get("image", "")).strip()
+            question = str(row.get("question", row.get("text", ""))).strip()
+            qid = str(row.get("question_id", row.get("id", ""))).strip()
+            image_id = str(row.get("image_id", "")).strip()
+            if not image_name or not question or not qid:
+                continue
+
+            if bool(getattr(model.config, "mm_use_im_start_end", False)):
+                model_question = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + "\n" + question
+            else:
+                model_question = DEFAULT_IMAGE_TOKEN + "\n" + question
+
+            conv = conv_templates[args.conv_mode].copy()
+            conv.append_message(conv.roles[0], model_question)
+            conv.append_message(conv.roles[1], None)
+            prompt = conv.get_prompt()
+            input_ids = tokenizer_image_token(
+                prompt,
+                tokenizer,
+                IMAGE_TOKEN_INDEX,
+                return_tensors="pt",
+            ).unsqueeze(0).cuda()
+
+            image = Image.open(os.path.join(args.image_folder, image_name)).convert("RGB")
+            image_sizes = [image.size]
+            image_tensor = process_images([image], image_processor, model.config)[0]
+            stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+            stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
+
+            gen_kwargs: Dict[str, Any] = {
+                "images": image_tensor.unsqueeze(0).to(model.dtype).cuda(),
+                "image_sizes": image_sizes,
+                "do_sample": bool(args.do_sample),
+                "num_beams": int(args.num_beams),
+                "max_new_tokens": int(args.max_new_tokens),
+                "use_cache": True,
+                "stopping_criteria": [stopping_criteria],
+                "pad_token_id": tokenizer.eos_token_id,
+            }
+            if bool(args.do_sample):
+                gen_kwargs["temperature"] = float(args.temperature)
+                gen_kwargs["top_p"] = float(args.top_p)
+
+            with torch.inference_mode():
+                output_ids = model.generate(input_ids, **gen_kwargs)
+
+            if int(output_ids.shape[1]) > int(input_ids.shape[1]):
+                gen_ids = output_ids[:, input_ids.shape[1] :]
+            else:
+                gen_ids = output_ids
+            output_text = tokenizer.batch_decode(gen_ids, skip_special_tokens=True)[0].strip()
+            if output_text.endswith(stop_str):
+                output_text = output_text[: -len(stop_str)].strip()
+
+            f.write(
+                json.dumps(
+                    {
+                        "question_id": qid,
+                        "question": question,
+                        "output": output_text,
+                        "text": output_text,
+                        "caption": output_text,
+                        "label": row.get("label", ""),
+                        "prompt": prompt,
+                        "model_id": model_name,
+                        "image": image_name,
+                        "image_id": image_id,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            f.flush()
+
+
+if __name__ == "__main__":
+    main()
