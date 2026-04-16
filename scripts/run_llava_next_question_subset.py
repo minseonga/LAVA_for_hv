@@ -11,6 +11,10 @@ from typing import Any, Dict, List
 import torch
 from PIL import Image
 from tqdm import tqdm
+
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+
 from transformers import set_seed
 
 

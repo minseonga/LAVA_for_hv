@@ -26,6 +26,8 @@ PAI_PYTHON_BIN="${PAI_PYTHON_BIN:-/home/kms/miniconda3/envs/pai_base/bin/python}
 GPU="${GPU:-${CUDA_VISIBLE_DEVICES:-0}}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-$GPU}"
 export PYTHONDONTWRITEBYTECODE=1
+export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"
+export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
 
 TASK="${TASK:-pope}"                 # pope | chair
 BACKBONE="${BACKBONE:-llava15}"      # llava15 | llava_next | qwen25_vl | qwen35_vl

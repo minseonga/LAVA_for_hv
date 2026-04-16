@@ -8,6 +8,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+
 
 def parse_bool(value: Any) -> bool:
     if isinstance(value, bool):
