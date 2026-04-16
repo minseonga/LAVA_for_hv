@@ -29,6 +29,7 @@ OUT_DIR="${OUT_DIR:-$CAL_ROOT/experiments/discriminative_meta_strong_online}"
 LIMIT="${LIMIT:-0}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-false}"
 LOG_EVERY="${LOG_EVERY:-25}"
+FEATURE_ORDER="${FEATURE_ORDER:-cheap_first}"
 
 BETA="${BETA:-1.0}"
 LAMBDA_A="${LAMBDA_A:-0.5}"
@@ -75,6 +76,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_discriminative_m
   --lambda_a "$LAMBDA_A" \
   --late_start "$LATE_START" \
   --late_end "$LATE_END" \
+  --feature_order "$FEATURE_ORDER" \
   --generate_baseline_on_fallback "$GENERATE_BASELINE_ON_FALLBACK" \
   --baseline_max_new_tokens "$BASELINE_MAX_NEW_TOKENS" \
   --reuse_if_exists "$REUSE_IF_EXISTS" \

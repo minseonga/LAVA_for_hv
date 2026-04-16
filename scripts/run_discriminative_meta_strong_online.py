@@ -214,6 +214,17 @@ def main() -> None:
     ap.add_argument("--lp_tail_quantile", type=float, default=0.10)
     ap.add_argument("--lp_tail_eps", type=float, default=1e-6)
     ap.add_argument("--lp_len_corr_alpha", type=float, default=0.35)
+    ap.add_argument(
+        "--feature_order",
+        type=str,
+        default="cheap_first",
+        choices=["cheap_first", "stage_first"],
+        help=(
+            "Forward order for online feature extraction. The cached 87.82 meta_strong "
+            "artifact was built from a standalone cheap-C extractor, so cheap_first keeps "
+            "the C-feature replay isolated from the attention-returning Stage-A replay."
+        ),
+    )
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=False)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -298,38 +309,48 @@ def main() -> None:
 
             t0 = time.perf_counter()
             image = runtime.load_image(image_path)
-            stage_pack = runtime.teacher_force_candidate(
-                image=image,
-                question=stage_question,
-                candidate_text=intervention_text,
-                output_attentions=True,
-            )
-            stage_content_indices = select_content_indices(runtime.tokenizer, stage_pack.cont_ids)
-            stage_a = stage_a_score_from_pack(
-                pack=stage_pack,
-                headset=headset,
-                beta=float(args.beta),
-                lambda_a=float(args.lambda_a),
-                content_indices=stage_content_indices,
-            )
-            cheap_pack = runtime.teacher_force_candidate(
-                image=image,
-                question=cheap_question,
-                candidate_text=intervention_text,
-                output_attentions=False,
-            )
-            cheap_content_indices = select_content_indices(runtime.tokenizer, cheap_pack.cont_ids)
-            cheap = cheap_features_from_pack(
-                runtime=runtime,
-                pack=cheap_pack,
-                sample_id=sid,
-                image_name=image_name,
-                question=cheap_question,
-                content_indices=cheap_content_indices,
-                lp_tail_quantile=float(args.lp_tail_quantile),
-                lp_tail_eps=float(args.lp_tail_eps),
-                lp_len_corr_alpha=float(args.lp_len_corr_alpha),
-            )
+            def compute_cheap() -> Dict[str, Any]:
+                cheap_pack = runtime.teacher_force_candidate(
+                    image=image,
+                    question=cheap_question,
+                    candidate_text=intervention_text,
+                    output_attentions=False,
+                )
+                cheap_content_indices = select_content_indices(runtime.tokenizer, cheap_pack.cont_ids)
+                return cheap_features_from_pack(
+                    runtime=runtime,
+                    pack=cheap_pack,
+                    sample_id=sid,
+                    image_name=image_name,
+                    question=cheap_question,
+                    content_indices=cheap_content_indices,
+                    lp_tail_quantile=float(args.lp_tail_quantile),
+                    lp_tail_eps=float(args.lp_tail_eps),
+                    lp_len_corr_alpha=float(args.lp_len_corr_alpha),
+                )
+
+            def compute_stage_a() -> Dict[str, float]:
+                stage_pack = runtime.teacher_force_candidate(
+                    image=image,
+                    question=stage_question,
+                    candidate_text=intervention_text,
+                    output_attentions=True,
+                )
+                stage_content_indices = select_content_indices(runtime.tokenizer, stage_pack.cont_ids)
+                return stage_a_score_from_pack(
+                    pack=stage_pack,
+                    headset=headset,
+                    beta=float(args.beta),
+                    lambda_a=float(args.lambda_a),
+                    content_indices=stage_content_indices,
+                )
+
+            if str(args.feature_order) == "cheap_first":
+                cheap = compute_cheap()
+                stage_a = compute_stage_a()
+            else:
+                stage_a = compute_stage_a()
+                cheap = compute_cheap()
             feature_dt = time.perf_counter() - t0
             feature_secs.append(float(feature_dt))
 
@@ -381,7 +402,7 @@ def main() -> None:
                     image = runtime.load_image(os.path.join(os.path.abspath(args.image_folder), image_name))
                     final_text = runtime.generate_baseline(
                         image=image,
-                        question=question,
+                        question=stage_question,
                         max_new_tokens=int(args.baseline_max_new_tokens),
                     )
                     baseline_secs.append(float(time.perf_counter() - t0))
@@ -467,6 +488,7 @@ def main() -> None:
                 "lambda_a": float(args.lambda_a),
                 "late_start": int(args.late_start),
                 "late_end": int(args.late_end),
+                "feature_order": str(args.feature_order),
                 "generate_baseline_on_fallback": bool(args.generate_baseline_on_fallback),
             },
             "counts": {
