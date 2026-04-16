@@ -97,10 +97,11 @@ def main() -> None:
     disable_torch_init()
 
     model_path = os.path.expanduser(args.model_path)
+    model_base = os.path.expanduser(args.model_base) if str(args.model_base or "").strip() else None
     model_name = get_model_name_from_path(model_path)
     tokenizer, model, image_processor, _ = load_pretrained_model(
         model_path,
-        args.model_base,
+        model_base,
         model_name,
         device_map="cuda",
         attn_implementation=str(args.attn_type),

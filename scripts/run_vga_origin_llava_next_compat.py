@@ -61,6 +61,8 @@ def main() -> None:
     ap.add_argument("--attn_norm", type=parse_bool, default=False)
     ap.add_argument("--sampling", type=parse_bool, default=False)
     args = ap.parse_args()
+    if not str(args.model_base or "").strip():
+        args.model_base = None
 
     repo_root = Path(__file__).resolve().parents[1]
     vga_root = Path(args.vga_root)
