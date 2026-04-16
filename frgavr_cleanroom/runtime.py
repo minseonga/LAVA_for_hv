@@ -588,7 +588,10 @@ class CleanroomLlavaRuntime:
                     input_ids,
                     **gen_kwargs,
                 )
-        gen_ids = output_ids[:, input_ids.shape[1]:]
+        if int(output_ids.shape[1]) > int(input_ids.shape[1]):
+            gen_ids = output_ids[:, input_ids.shape[1]:]
+        else:
+            gen_ids = output_ids
         return self.tokenizer.batch_decode(gen_ids, skip_special_tokens=True)[0].strip()
 
 
