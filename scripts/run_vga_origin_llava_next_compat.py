@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -98,6 +100,45 @@ def ensure_generation_config(model: Any, tokenizer: Any) -> None:
             setattr(model.generation_config, attr, getattr(tokenizer, attr))
     if getattr(model.generation_config, "pad_token_id", None) is None:
         model.generation_config.pad_token_id = getattr(model.generation_config, "eos_token_id", None)
+
+
+def image_id_from_filename(image_name: str) -> str:
+    match = re.search(r"(\d+)(?=\.[^.]+$|$)", os.path.basename(str(image_name)))
+    return str(int(match.group(1))) if match else ""
+
+
+def materialize_vendor_question_file(question_file: str, answers_file: str) -> str:
+    """Fill fields that VGA_origin's LLaVA-NeXT script assumes are present."""
+    source = Path(os.path.abspath(question_file))
+    out_dir = Path(os.path.abspath(answers_file)).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / f"{source.stem}.vga_next_vendor_schema.jsonl"
+
+    changed = False
+    n_rows = 0
+    with open(source, "r", encoding="utf-8") as fin, open(target, "w", encoding="utf-8") as fout:
+        for line in fin:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            before = dict(row)
+            if not str(row.get("question", "")).strip() and str(row.get("text", "")).strip():
+                row["question"] = row["text"]
+            row.setdefault("label", "")
+            if not str(row.get("image_id", "")).strip():
+                row["image_id"] = image_id_from_filename(str(row.get("image", "")))
+            changed = changed or row != before
+            n_rows += 1
+            fout.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    if changed:
+        print(f"[schema] materialized vendor question file: {target} n={n_rows}", flush=True)
+        return str(target)
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        pass
+    return str(source)
 
 
 def main() -> None:
@@ -198,6 +239,7 @@ def main() -> None:
 
     module.load_pretrained_model = patched_load_pretrained_model
     module.copy.deepcopy = patched_deepcopy
+    args.question_file = materialize_vendor_question_file(args.question_file, args.answers_file)
     print(str(args), flush=True)
     module.eval_model(args)
 
