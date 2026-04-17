@@ -72,7 +72,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--seed", type=int, default=17)
     ap.add_argument("--torch-type", default="fp16", choices=["fp16", "bf16"])
-    ap.add_argument("--attn-implementation", default="none", choices=["none", "flash_attention_2", "sdpa", "eager"])
+    ap.add_argument("--attn-implementation", default="eager", choices=["none", "flash_attention_2", "sdpa", "eager"])
     ap.add_argument("--do-sample", type=parse_bool, default=False)
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--top-p", type=float, default=None)
@@ -105,8 +105,12 @@ def main() -> None:
         "device_map": "cuda",
         "torch_dtype": OFFICIAL_TORCH_TYPE_ARG[str(args.torch_type)],
     }
-    if args.attn_implementation != "none":
-        load_kwargs["attn_implementation"] = str(args.attn_implementation)
+    attn_implementation = str(args.attn_implementation)
+    if attn_implementation == "none":
+        # Official LLaVA-NeXT defaults to flash_attention_2 inside builder.py.
+        # Use eager as the explicit no-flash-attn fallback.
+        attn_implementation = "eager"
+    load_kwargs["attn_implementation"] = attn_implementation
 
     tokenizer, model, image_processor, _ = load_pretrained_model(
         model_path,
