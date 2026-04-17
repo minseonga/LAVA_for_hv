@@ -64,6 +64,8 @@ def patch_transformers_compat() -> None:
         def from_legacy_cache_with_none(cls: Any, past_key_values: Any = None) -> Any:
             if past_key_values is None:
                 return cls()
+            if isinstance(past_key_values, cache_utils.Cache):
+                return past_key_values
             return original_from_legacy_cache(past_key_values)
 
         cache_utils.DynamicCache.from_legacy_cache = from_legacy_cache_with_none
