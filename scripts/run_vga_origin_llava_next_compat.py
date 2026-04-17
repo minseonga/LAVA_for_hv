@@ -19,10 +19,13 @@ def parse_bool(value: Any) -> bool:
 
 
 def patch_transformers_compat() -> None:
+    import torch
     import transformers.cache_utils as cache_utils
     import transformers.modeling_utils as modeling_utils
     import transformers.pytorch_utils as pytorch_utils
+    import transformers.generation.stopping_criteria as stopping_criteria
     from transformers import CLIPVisionModel
+    from transformers.generation.stopping_criteria import StoppingCriteria
     from transformers.generation.utils import GenerationMixin
 
     for name in (
@@ -42,6 +45,19 @@ def patch_transformers_compat() -> None:
 
         CLIPVisionModel.from_pretrained = classmethod(from_pretrained_with_safetensors)
         CLIPVisionModel._llava_next_safetensors_patch = True  # type: ignore[attr-defined]
+
+    if not hasattr(stopping_criteria, "EosTokenCriteria"):
+        class EosTokenCriteria(StoppingCriteria):
+            def __init__(self, eos_token_id: Any) -> None:
+                if isinstance(eos_token_id, int):
+                    eos_token_id = [eos_token_id]
+                self.eos_token_id = torch.tensor(eos_token_id)
+
+            def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs: Any) -> torch.BoolTensor:
+                eos_token_id = self.eos_token_id.to(input_ids.device)
+                return torch.isin(input_ids[:, -1], eos_token_id)
+
+        stopping_criteria.EosTokenCriteria = EosTokenCriteria
 
     # LLaVA-Next vendor classes call super().generate(), relying on the
     # pre-4.50 behavior where PreTrainedModel inherited GenerationMixin.
