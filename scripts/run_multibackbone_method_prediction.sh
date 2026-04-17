@@ -6,7 +6,7 @@ set -euo pipefail
 # This script standardizes baseline/VGA/PAI prediction calls across the
 # backbones currently represented in this repository:
 #   - llava15:    LLaVA-1.5 style runner
-#   - llava_next: VGA_origin/llava_next runner
+#   - llava_next: official LLaVA-NeXT baseline runner; legacy VGA runner for VGA
 #   - qwen25_vl:  VGA_origin/Qwen2.5-VL runner
 #   - qwen35_vl:  Qwen3.5-VL raw baseline runner
 #
@@ -16,6 +16,7 @@ set -euo pipefail
 CAL_ROOT="${CAL_ROOT:-/home/kms/LLaVA_calibration}"
 VGA_ROOT="${VGA_ROOT:-$CAL_ROOT/VGA_origin}"
 PAI_ROOT="${PAI_ROOT:-/home/kms/PAI}"
+LLAVA_NEXT_ROOT="${LLAVA_NEXT_ROOT:-/home/kms/LLaVA-NeXT}"
 
 CAL_PYTHON_BIN="${CAL_PYTHON_BIN:-python}"
 VGA_PYTHON_BIN="${VGA_PYTHON_BIN:-/home/kms/miniconda3/envs/vga_base/bin/python}"
@@ -34,6 +35,7 @@ BACKBONE="${BACKBONE:-llava15}"      # llava15 | llava_next | qwen25_vl | qwen35
 METHOD="${METHOD:-vga}"              # baseline | vga | pai
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/multibackbone_raw/${TASK}/${BACKBONE}/${METHOD}}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
+LIMIT="${LIMIT:-0}"
 
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 MODEL_BASE="${MODEL_BASE:-}"
@@ -60,6 +62,9 @@ VGA_SAMPLING="${VGA_SAMPLING:-false}"
 VGA_ATTN_NORM="${VGA_ATTN_NORM:-false}"
 VGA_TORCH_TYPE="${VGA_TORCH_TYPE:-bf16}"
 VGA_ATTN_TYPE="${VGA_ATTN_TYPE:-eager}"
+LLAVA_NEXT_MODEL_NAME="${LLAVA_NEXT_MODEL_NAME:-}"
+LLAVA_NEXT_ATTN_IMPLEMENTATION="${LLAVA_NEXT_ATTN_IMPLEMENTATION:-none}"
+LLAVA_NEXT_TORCH_TYPE="${LLAVA_NEXT_TORCH_TYPE:-fp16}"
 
 PAI_MODEL="${PAI_MODEL:-}"
 PAI_USE_ATTN="${PAI_USE_ATTN:-1}"
@@ -303,21 +308,21 @@ if ! reuse_file "$PRED_JSONL"; then
           --max-new-tokens "$MAX_NEW_TOKENS" \
           --seed "$SEED"
       elif [[ "$BACKBONE" == "llava_next" ]]; then
-        "$LLAVA_NEXT_PYTHON_BIN" "$CAL_ROOT/scripts/run_llava_next_question_subset.py" \
-          --vga-root "$VGA_ROOT" \
+        "$LLAVA_NEXT_PYTHON_BIN" "$CAL_ROOT/scripts/run_official_llava_next_question_subset.py" \
+          --llava-next-root "$LLAVA_NEXT_ROOT" \
           --model-path "$MODEL_PATH" \
           --model-base "${MODEL_BASE:-}" \
           --image-folder "$IMAGE_FOLDER" \
           --question-file "$QUESTION_FILE" \
           --answers-file "$PRED_JSONL" \
           --conv-mode "$CONV_MODE" \
+          --model-name "$LLAVA_NEXT_MODEL_NAME" \
           --max-new-tokens "$MAX_NEW_TOKENS" \
-          --torch-type "$VGA_TORCH_TYPE" \
-          --attn-type "$VGA_ATTN_TYPE" \
-          --use-cache true \
-          --generation-mode manual_greedy \
+          --torch-type "$LLAVA_NEXT_TORCH_TYPE" \
+          --attn-implementation "$LLAVA_NEXT_ATTN_IMPLEMENTATION" \
           --do-sample false \
           --num-beams 1 \
+          --limit "$LIMIT" \
           --seed "$SEED"
       elif [[ "$BACKBONE" == "llava15" ]]; then
         "$CAL_PYTHON_BIN" -m llava.eval.model_vqa_loader \
