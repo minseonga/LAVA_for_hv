@@ -47,6 +47,7 @@ def patch_transformers_compat() -> None:
     import transformers.modeling_utils as modeling_utils
     import transformers.pytorch_utils as pytorch_utils
     from transformers import CLIPVisionModel
+    from transformers.generation.utils import GenerationMixin
 
     for name in (
         "apply_chunking_to_forward",
@@ -65,6 +66,14 @@ def patch_transformers_compat() -> None:
 
         CLIPVisionModel.from_pretrained = classmethod(from_pretrained_with_safetensors)
         CLIPVisionModel._llava_next_safetensors_patch = True  # type: ignore[attr-defined]
+
+    # LLaVA-Next vendor classes call super().generate(), relying on the
+    # pre-4.50 behavior where PreTrainedModel inherited GenerationMixin.
+    for name, value in GenerationMixin.__dict__.items():
+        if name.startswith("__"):
+            continue
+        if not hasattr(modeling_utils.PreTrainedModel, name):
+            setattr(modeling_utils.PreTrainedModel, name, value)
 
 
 def main() -> None:
