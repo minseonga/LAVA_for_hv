@@ -82,6 +82,17 @@ def patch_transformers_compat() -> None:
         cache_utils.DynamicCache.seen_tokens = property(lambda self: self.get_seq_length())  # type: ignore[attr-defined]
     if not hasattr(cache_utils.Cache, "get_max_length") and hasattr(cache_utils.Cache, "get_max_cache_shape"):
         cache_utils.Cache.get_max_length = cache_utils.Cache.get_max_cache_shape  # type: ignore[attr-defined]
+    if hasattr(cache_utils, "DynamicCache") and not getattr(cache_utils.DynamicCache, "_llava_next_none_legacy_patch", False):
+        original_from_legacy_cache = cache_utils.DynamicCache.from_legacy_cache
+
+        @classmethod
+        def from_legacy_cache_with_none(cls: Any, past_key_values: Any = None) -> Any:
+            if past_key_values is None:
+                return cls()
+            return original_from_legacy_cache(past_key_values)
+
+        cache_utils.DynamicCache.from_legacy_cache = from_legacy_cache_with_none
+        cache_utils.DynamicCache._llava_next_none_legacy_patch = True  # type: ignore[attr-defined]
 
 
 def ensure_generation_config(model: Any, tokenizer: Any) -> None:
@@ -114,6 +125,7 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--top-p", type=float, default=1.0)
     ap.add_argument("--num-beams", type=int, default=1)
+    ap.add_argument("--use-cache", type=parse_bool, default=True)
     args = ap.parse_args()
 
     if os.path.exists(args.answers_file):
@@ -194,7 +206,8 @@ def main() -> None:
                 "do_sample": bool(args.do_sample),
                 "num_beams": int(args.num_beams),
                 "max_new_tokens": int(args.max_new_tokens),
-                "use_cache": True,
+                "use_cache": bool(args.use_cache),
+                "attention_mask": torch.ones_like(input_ids, dtype=torch.long),
                 "stopping_criteria": [stopping_criteria],
                 "pad_token_id": tokenizer.eos_token_id,
             }

@@ -314,6 +314,7 @@ if ! reuse_file "$PRED_JSONL"; then
           --max-new-tokens "$MAX_NEW_TOKENS" \
           --torch-type "$VGA_TORCH_TYPE" \
           --attn-type "$VGA_ATTN_TYPE" \
+          --use-cache true \
           --do-sample false \
           --num-beams 1 \
           --seed "$SEED"

@@ -57,6 +57,17 @@ def patch_transformers_compat() -> None:
         cache_utils.DynamicCache.seen_tokens = property(lambda self: self.get_seq_length())  # type: ignore[attr-defined]
     if not hasattr(cache_utils.Cache, "get_max_length") and hasattr(cache_utils.Cache, "get_max_cache_shape"):
         cache_utils.Cache.get_max_length = cache_utils.Cache.get_max_cache_shape  # type: ignore[attr-defined]
+    if hasattr(cache_utils, "DynamicCache") and not getattr(cache_utils.DynamicCache, "_llava_next_none_legacy_patch", False):
+        original_from_legacy_cache = cache_utils.DynamicCache.from_legacy_cache
+
+        @classmethod
+        def from_legacy_cache_with_none(cls: Any, past_key_values: Any = None) -> Any:
+            if past_key_values is None:
+                return cls()
+            return original_from_legacy_cache(past_key_values)
+
+        cache_utils.DynamicCache.from_legacy_cache = from_legacy_cache_with_none
+        cache_utils.DynamicCache._llava_next_none_legacy_patch = True  # type: ignore[attr-defined]
 
 
 def ensure_generation_config(model: Any, tokenizer: Any) -> None:
