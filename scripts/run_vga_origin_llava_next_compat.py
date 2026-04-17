@@ -107,12 +107,13 @@ def image_id_from_filename(image_name: str) -> str:
     return str(int(match.group(1))) if match else ""
 
 
-def materialize_vendor_question_file(question_file: str, answers_file: str) -> str:
+def materialize_vendor_question_file(question_file: str, answers_file: str, limit: int = 0) -> str:
     """Fill fields that VGA_origin's LLaVA-NeXT script assumes are present."""
     source = Path(os.path.abspath(question_file))
     out_dir = Path(os.path.abspath(answers_file)).parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    target = out_dir / f"{source.stem}.vga_next_vendor_schema.jsonl"
+    suffix = f".limited{int(limit)}" if int(limit) > 0 else ""
+    target = out_dir / f"{source.stem}{suffix}.vga_next_vendor_schema.jsonl"
 
     changed = False
     n_rows = 0
@@ -120,6 +121,8 @@ def materialize_vendor_question_file(question_file: str, answers_file: str) -> s
         for line in fin:
             if not line.strip():
                 continue
+            if int(limit) > 0 and n_rows >= int(limit):
+                break
             row = json.loads(line)
             before = dict(row)
             if not str(row.get("question", "")).strip() and str(row.get("text", "")).strip():
@@ -131,7 +134,7 @@ def materialize_vendor_question_file(question_file: str, answers_file: str) -> s
             n_rows += 1
             fout.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    if changed:
+    if changed or int(limit) > 0:
         print(f"[schema] materialized vendor question file: {target} n={n_rows}", flush=True)
         return str(target)
     try:
@@ -156,6 +159,7 @@ def main() -> None:
     ap.add_argument("--question-file", type=str, default="tables/question.jsonl")
     ap.add_argument("--answers-file", type=str, default="answer.jsonl")
     ap.add_argument("--conv-mode", type=str, default="llava_llama_3")
+    ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--num-chunks", type=int, default=1)
     ap.add_argument("--chunk-idx", type=int, default=0)
     ap.add_argument("--temperature", type=float, default=1.0)
@@ -239,7 +243,7 @@ def main() -> None:
 
     module.load_pretrained_model = patched_load_pretrained_model
     module.copy.deepcopy = patched_deepcopy
-    args.question_file = materialize_vendor_question_file(args.question_file, args.answers_file)
+    args.question_file = materialize_vendor_question_file(args.question_file, args.answers_file, limit=int(args.limit))
     print(str(args), flush=True)
     module.eval_model(args)
 

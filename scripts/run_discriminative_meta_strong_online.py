@@ -277,6 +277,10 @@ def main() -> None:
     ap.add_argument("--model_base", type=str, default="")
     ap.add_argument("--conv_mode", type=str, default="llava_v1")
     ap.add_argument("--device", type=str, default="cuda")
+    ap.add_argument("--runtime_backend", type=str, default="llava15_cleanroom", choices=["llava15_cleanroom", "llava_next_official"])
+    ap.add_argument("--llava_next_root", type=str, default="/home/kms/LLaVA-NeXT")
+    ap.add_argument("--llava_next_torch_type", type=str, default="fp16", choices=["fp16", "bf16"])
+    ap.add_argument("--llava_next_attn_implementation", type=str, default="eager", choices=["none", "flash_attention_2", "sdpa", "eager"])
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--intervention_pred_key", type=str, default="auto")
     ap.add_argument("--baseline_pred_key", type=str, default="auto")
@@ -340,12 +344,25 @@ def main() -> None:
     )
     headset = load_headset(os.path.abspath(args.headset_json), late_start=int(args.late_start), late_end=int(args.late_end))
     controller = MetaStrongController.from_bundle(read_json(os.path.abspath(args.policy_bundle_json)))
-    runtime = CleanroomLlavaRuntime(
-        model_path=str(args.model_path),
-        model_base=(None if not str(args.model_base).strip() else str(args.model_base)),
-        conv_mode=str(args.conv_mode),
-        device=str(args.device),
-    )
+    if str(args.runtime_backend) == "llava_next_official":
+        from frgavr_cleanroom.llava_next_runtime import OfficialLlavaNextRuntime
+
+        runtime = OfficialLlavaNextRuntime(
+            llava_next_root=str(args.llava_next_root),
+            model_path=str(args.model_path),
+            model_base=(None if not str(args.model_base).strip() else str(args.model_base)),
+            conv_mode=str(args.conv_mode),
+            device=str(args.device),
+            torch_type=str(args.llava_next_torch_type),
+            attn_implementation=str(args.llava_next_attn_implementation),
+        )
+    else:
+        runtime = CleanroomLlavaRuntime(
+            model_path=str(args.model_path),
+            model_base=(None if not str(args.model_base).strip() else str(args.model_base)),
+            conv_mode=str(args.conv_mode),
+            device=str(args.device),
+        )
 
     feature_rows: List[Dict[str, Any]] = []
     routing_inputs: List[Dict[str, Any]] = []
@@ -601,6 +618,10 @@ def main() -> None:
                 "model_base": str(args.model_base),
                 "conv_mode": str(args.conv_mode),
                 "device": str(args.device),
+                "runtime_backend": str(args.runtime_backend),
+                "llava_next_root": str(args.llava_next_root),
+                "llava_next_torch_type": str(args.llava_next_torch_type),
+                "llava_next_attn_implementation": str(args.llava_next_attn_implementation),
                 "beta": float(args.beta),
                 "lambda_a": float(args.lambda_a),
                 "late_start": int(args.late_start),

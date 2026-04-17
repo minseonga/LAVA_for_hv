@@ -11,6 +11,10 @@ DEVICE="${DEVICE:-cuda}"
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 MODEL_BASE="${MODEL_BASE:-}"
 CONV_MODE="${CONV_MODE:-llava_v1}"
+RUNTIME_BACKEND="${RUNTIME_BACKEND:-llava15_cleanroom}"
+LLAVA_NEXT_ROOT="${LLAVA_NEXT_ROOT:-/home/kms/LLaVA-NeXT}"
+LLAVA_NEXT_TORCH_TYPE="${LLAVA_NEXT_TORCH_TYPE:-fp16}"
+LLAVA_NEXT_ATTN_IMPLEMENTATION="${LLAVA_NEXT_ATTN_IMPLEMENTATION:-eager}"
 
 QUESTION_FILE="${QUESTION_FILE:-$CAL_ROOT/experiments/pope_full_9000/pope_9000_q_with_object.jsonl}"
 IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
@@ -77,6 +81,10 @@ PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_discriminative_m
   --model_base "$MODEL_BASE" \
   --conv_mode "$CONV_MODE" \
   --device "$DEVICE" \
+  --runtime_backend "$RUNTIME_BACKEND" \
+  --llava_next_root "$LLAVA_NEXT_ROOT" \
+  --llava_next_torch_type "$LLAVA_NEXT_TORCH_TYPE" \
+  --llava_next_attn_implementation "$LLAVA_NEXT_ATTN_IMPLEMENTATION" \
   --limit "$LIMIT" \
   --beta "$BETA" \
   --lambda_a "$LAMBDA_A" \

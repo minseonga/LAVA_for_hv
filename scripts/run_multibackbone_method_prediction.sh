@@ -242,6 +242,7 @@ run_vga_like() {
       --sampling "$VGA_SAMPLING" \
       --torch_type "$VGA_TORCH_TYPE" \
       --attn_type "$VGA_ATTN_TYPE" \
+      --limit "$LIMIT" \
       --seed "$SEED"
   else
     "$VGA_PYTHON_BIN" "$runner" \
