@@ -46,6 +46,7 @@ def read_jsonl(path: str, limit: int = 0) -> List[Dict[str, Any]]:
 def patch_transformers_compat() -> None:
     import transformers.modeling_utils as modeling_utils
     import transformers.pytorch_utils as pytorch_utils
+    from transformers import CLIPVisionModel
 
     for name in (
         "apply_chunking_to_forward",
@@ -54,6 +55,16 @@ def patch_transformers_compat() -> None:
     ):
         if not hasattr(modeling_utils, name) and hasattr(pytorch_utils, name):
             setattr(modeling_utils, name, getattr(pytorch_utils, name))
+
+    if not getattr(CLIPVisionModel, "_llava_next_safetensors_patch", False):
+        original_from_pretrained = CLIPVisionModel.from_pretrained
+
+        def from_pretrained_with_safetensors(cls: Any, pretrained_model_name_or_path: Any, *a: Any, **kw: Any) -> Any:
+            kw.setdefault("use_safetensors", True)
+            return original_from_pretrained(pretrained_model_name_or_path, *a, **kw)
+
+        CLIPVisionModel.from_pretrained = classmethod(from_pretrained_with_safetensors)
+        CLIPVisionModel._llava_next_safetensors_patch = True  # type: ignore[attr-defined]
 
 
 def main() -> None:
