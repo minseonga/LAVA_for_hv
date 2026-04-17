@@ -44,6 +44,7 @@ def read_jsonl(path: str, limit: int = 0) -> List[Dict[str, Any]]:
 
 
 def patch_transformers_compat() -> None:
+    import transformers.cache_utils as cache_utils
     import transformers.modeling_utils as modeling_utils
     import transformers.pytorch_utils as pytorch_utils
     from transformers import CLIPVisionModel
@@ -74,6 +75,13 @@ def patch_transformers_compat() -> None:
             continue
         if not hasattr(modeling_utils.PreTrainedModel, name):
             setattr(modeling_utils.PreTrainedModel, name, value)
+
+    if not hasattr(cache_utils.Cache, "seen_tokens"):
+        cache_utils.Cache.seen_tokens = property(lambda self: self.get_seq_length())  # type: ignore[attr-defined]
+    if hasattr(cache_utils, "DynamicCache") and not hasattr(cache_utils.DynamicCache, "seen_tokens"):
+        cache_utils.DynamicCache.seen_tokens = property(lambda self: self.get_seq_length())  # type: ignore[attr-defined]
+    if not hasattr(cache_utils.Cache, "get_max_length") and hasattr(cache_utils.Cache, "get_max_cache_shape"):
+        cache_utils.Cache.get_max_length = cache_utils.Cache.get_max_cache_shape  # type: ignore[attr-defined]
 
 
 def ensure_generation_config(model: Any, tokenizer: Any) -> None:
