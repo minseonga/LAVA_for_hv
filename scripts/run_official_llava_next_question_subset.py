@@ -18,8 +18,12 @@ os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 
 TORCH_TYPE_MAP = {
     "fp16": torch.float16,
-    "fp32": torch.float32,
     "bf16": torch.bfloat16,
+}
+
+OFFICIAL_TORCH_TYPE_ARG = {
+    "fp16": "float16",
+    "bf16": "bfloat16",
 }
 
 
@@ -67,7 +71,7 @@ def main() -> None:
     ap.add_argument("--max-new-tokens", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--seed", type=int, default=17)
-    ap.add_argument("--torch-type", default="fp16", choices=["fp16", "fp32", "bf16"])
+    ap.add_argument("--torch-type", default="fp16", choices=["fp16", "bf16"])
     ap.add_argument("--attn-implementation", default="none", choices=["none", "flash_attention_2", "sdpa", "eager"])
     ap.add_argument("--do-sample", type=parse_bool, default=False)
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -99,7 +103,7 @@ def main() -> None:
 
     load_kwargs: Dict[str, Any] = {
         "device_map": "cuda",
-        "torch_dtype": TORCH_TYPE_MAP[str(args.torch_type)],
+        "torch_dtype": OFFICIAL_TORCH_TYPE_ARG[str(args.torch_type)],
     }
     if args.attn_implementation != "none":
         load_kwargs["attn_implementation"] = str(args.attn_implementation)
