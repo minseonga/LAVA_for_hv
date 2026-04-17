@@ -530,19 +530,26 @@ def main() -> None:
         if str(args.controller_mode) == "cheap_c_only":
             scores = controller.score_components(row)
             c_score = scores.get("c_score")
+            c_weight = 1.0 if controller.c_expert is None else float(controller.c_expert.w_c)
             if args.cheap_c_tau_override is not None:
                 tau = float(args.cheap_c_tau_override)
             elif controller.c_expert is not None:
                 tau = float(controller.c_expert.tau)
             else:
                 tau = None
+            weighted_c_score = None if c_score is None else float(c_weight * float(c_score))
             row["expert"] = "c_only_fast"
-            row["route"] = "baseline" if c_score is not None and tau is not None and float(c_score) >= float(tau) else "method"
+            row["route"] = (
+                "baseline"
+                if weighted_c_score is not None and tau is not None and float(weighted_c_score) >= float(tau)
+                else "method"
+            )
             row["b_score"] = scores.get("b_score")
             row["c_score"] = c_score
             row["f_score"] = scores.get("f_score")
-            row["meta_score"] = c_score
+            row["meta_score"] = weighted_c_score
             row["meta_tau"] = tau
+            row["c_score_weight"] = c_weight
         elif int(maybe_int(row.get("stage_a_prefilter_skipped")) or 0) == 1:
             scores = controller.score_components(row)
             row["expert"] = "cheap_prefilter"
