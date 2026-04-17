@@ -109,6 +109,38 @@ def ensure_generation_config(model: Any, tokenizer: Any) -> None:
         model.generation_config.pad_token_id = getattr(model.generation_config, "eos_token_id", None)
 
 
+def manual_greedy_decode(
+    model: Any,
+    input_ids: torch.Tensor,
+    image_tensor: torch.Tensor,
+    image_sizes: List[Any],
+    max_new_tokens: int,
+    stop_token_ids: List[int],
+) -> torch.Tensor:
+    generated = input_ids
+    new_tokens: List[torch.Tensor] = []
+
+    for _ in range(int(max_new_tokens)):
+        attention_mask = torch.ones_like(generated, dtype=torch.long)
+        outputs = model(
+            input_ids=generated,
+            attention_mask=attention_mask,
+            images=image_tensor.unsqueeze(0).to(model.dtype).cuda(),
+            image_sizes=image_sizes,
+            use_cache=False,
+            return_dict=True,
+        )
+        next_token = torch.argmax(outputs.logits[:, -1, :], dim=-1, keepdim=True)
+        new_tokens.append(next_token)
+        generated = torch.cat([generated, next_token], dim=1)
+        if int(next_token.item()) in stop_token_ids:
+            break
+
+    if not new_tokens:
+        return torch.empty((input_ids.shape[0], 0), dtype=input_ids.dtype, device=input_ids.device)
+    return torch.cat(new_tokens, dim=1)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run vanilla LLaVA-Next on an arbitrary image-question JSONL subset.")
     ap.add_argument("--vga-root", default="VGA_origin")
@@ -128,6 +160,7 @@ def main() -> None:
     ap.add_argument("--top-p", type=float, default=1.0)
     ap.add_argument("--num-beams", type=int, default=1)
     ap.add_argument("--use-cache", type=parse_bool, default=True)
+    ap.add_argument("--generation-mode", choices=["manual_greedy", "hf_generate"], default="manual_greedy")
     args = ap.parse_args()
 
     if os.path.exists(args.answers_file):
@@ -217,8 +250,27 @@ def main() -> None:
                 gen_kwargs["temperature"] = float(args.temperature)
                 gen_kwargs["top_p"] = float(args.top_p)
 
+            stop_token_ids = []
+            if conv.stop_token_ids:
+                stop_token_ids.extend(int(x) for x in conv.stop_token_ids)
+            if tokenizer.eos_token_id is not None:
+                stop_token_ids.append(int(tokenizer.eos_token_id))
+            stop_token_ids = sorted(set(stop_token_ids))
+
             with torch.inference_mode():
-                output_ids = model.generate(input_ids, **gen_kwargs)
+                if args.generation_mode == "manual_greedy":
+                    if bool(args.do_sample) or int(args.num_beams) != 1:
+                        raise ValueError("manual_greedy only supports do_sample=false and num_beams=1")
+                    output_ids = manual_greedy_decode(
+                        model=model,
+                        input_ids=input_ids,
+                        image_tensor=image_tensor,
+                        image_sizes=image_sizes,
+                        max_new_tokens=int(args.max_new_tokens),
+                        stop_token_ids=stop_token_ids,
+                    )
+                else:
+                    output_ids = model.generate(input_ids, **gen_kwargs)
 
             if int(output_ids.shape[1]) > int(input_ids.shape[1]):
                 gen_ids = output_ids[:, input_ids.shape[1] :]

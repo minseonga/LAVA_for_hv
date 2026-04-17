@@ -315,6 +315,7 @@ if ! reuse_file "$PRED_JSONL"; then
           --torch-type "$VGA_TORCH_TYPE" \
           --attn-type "$VGA_ATTN_TYPE" \
           --use-cache true \
+          --generation-mode manual_greedy \
           --do-sample false \
           --num-beams 1 \
           --seed "$SEED"
