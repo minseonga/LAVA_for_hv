@@ -93,9 +93,14 @@ def main() -> None:
     from transformers import set_seed
 
     original_from_pretrained = transformers.AutoTokenizer.from_pretrained
+    tokenizer_placeholders = {
+        "/path/to/llama3-llava-next-8b",
+        "/path/to/Meta-Llama-3-8B-Instruct",
+        "/path/to/Meta-Llama-3-8B",
+    }
 
     def patched_from_pretrained(pretrained_model_name_or_path: Any, *a: Any, **kw: Any) -> Any:
-        if str(pretrained_model_name_or_path) == "/path/to/llama3-llava-next-8b":
+        if str(pretrained_model_name_or_path) in tokenizer_placeholders:
             return original_from_pretrained(args.model_path, *a, **kw)
         return original_from_pretrained(pretrained_model_name_or_path, *a, **kw)
 
@@ -112,6 +117,28 @@ def main() -> None:
         transformers.AutoTokenizer.from_pretrained = original_from_pretrained
 
     set_seed(int(args.seed))
+    runtime_tokenizer = None
+    original_load_pretrained_model = module.load_pretrained_model
+    original_deepcopy = module.copy.deepcopy
+
+    def patched_load_pretrained_model(*a: Any, **kw: Any) -> Any:
+        nonlocal runtime_tokenizer
+        out = original_load_pretrained_model(*a, **kw)
+        runtime_tokenizer = out[0]
+        return out
+
+    def patched_deepcopy(obj: Any, *a: Any, **kw: Any) -> Any:
+        copied = original_deepcopy(obj, *a, **kw)
+        if (
+            runtime_tokenizer is not None
+            and getattr(copied, "sep_style", None) == module.SeparatorStyle.LLAMA_3
+            and getattr(copied, "tokenizer", None) is None
+        ):
+            copied.tokenizer = runtime_tokenizer
+        return copied
+
+    module.load_pretrained_model = patched_load_pretrained_model
+    module.copy.deepcopy = patched_deepcopy
     print(str(args), flush=True)
     module.eval_model(args)
 

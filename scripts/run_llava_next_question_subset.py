@@ -140,6 +140,8 @@ def main() -> None:
                 model_question = DEFAULT_IMAGE_TOKEN + "\n" + question
 
             conv = conv_templates[args.conv_mode].copy()
+            if conv.sep_style == SeparatorStyle.LLAMA_3 and conv.tokenizer is None:
+                conv.tokenizer = tokenizer
             conv.append_message(conv.roles[0], model_question)
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
