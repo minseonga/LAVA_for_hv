@@ -316,6 +316,22 @@ def main() -> None:
             "Stage-A replays from 9000 to about 380."
         ),
     )
+    ap.add_argument(
+        "--controller_mode",
+        type=str,
+        default="meta_strong",
+        choices=["meta_strong", "cheap_c_only"],
+        help=(
+            "meta_strong computes the calibrated B/C/fusion policy. cheap_c_only "
+            "skips Stage-A attention replay and routes with the c_only expert."
+        ),
+    )
+    ap.add_argument(
+        "--cheap_c_tau_override",
+        type=float,
+        default=None,
+        help="Optional route threshold for controller_mode=cheap_c_only. Defaults to the frozen c_only tau.",
+    )
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=False)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -453,7 +469,13 @@ def main() -> None:
                 )
 
             force_method_by_prefilter = False
-            if stage_a_prefilter is not None:
+            if str(args.controller_mode) == "cheap_c_only":
+                cheap = compute_cheap()
+                stage_a = {}
+                row["stage_a_prefilter_c_score"] = ""
+                row["stage_a_prefilter_skipped"] = 1
+                n_stage_a_prefilter_skipped += 1
+            elif stage_a_prefilter is not None:
                 cheap = compute_cheap()
                 row.update(cheap)
                 prelim_scores = controller.score_components(row)
@@ -505,7 +527,23 @@ def main() -> None:
             row["harm"] = 0
             row["help"] = 0
 
-        if int(maybe_int(row.get("stage_a_prefilter_skipped")) or 0) == 1:
+        if str(args.controller_mode) == "cheap_c_only":
+            scores = controller.score_components(row)
+            c_score = scores.get("c_score")
+            if args.cheap_c_tau_override is not None:
+                tau = float(args.cheap_c_tau_override)
+            elif controller.c_expert is not None:
+                tau = float(controller.c_expert.tau)
+            else:
+                tau = None
+            row["expert"] = "c_only_fast"
+            row["route"] = "baseline" if c_score is not None and tau is not None and float(c_score) >= float(tau) else "method"
+            row["b_score"] = scores.get("b_score")
+            row["c_score"] = c_score
+            row["f_score"] = scores.get("f_score")
+            row["meta_score"] = c_score
+            row["meta_tau"] = tau
+        elif int(maybe_int(row.get("stage_a_prefilter_skipped")) or 0) == 1:
             scores = controller.score_components(row)
             row["expert"] = "cheap_prefilter"
             row["route"] = "method"
@@ -627,7 +665,9 @@ def main() -> None:
                 "late_start": int(args.late_start),
                 "late_end": int(args.late_end),
                 "feature_order": str(args.feature_order),
+                "controller_mode": str(args.controller_mode),
                 "stage_a_prefilter_c_score_min": stage_a_prefilter,
+                "cheap_c_tau_override": args.cheap_c_tau_override,
                 "generate_baseline_on_fallback": bool(args.generate_baseline_on_fallback),
             },
             "counts": {
