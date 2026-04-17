@@ -76,6 +76,18 @@ def patch_transformers_compat() -> None:
             setattr(modeling_utils.PreTrainedModel, name, value)
 
 
+def ensure_generation_config(model: Any, tokenizer: Any) -> None:
+    from transformers import GenerationConfig
+
+    if getattr(model, "generation_config", None) is None:
+        model.generation_config = GenerationConfig.from_model_config(model.config)
+    for attr in ("eos_token_id", "bos_token_id", "pad_token_id"):
+        if getattr(model.generation_config, attr, None) is None and getattr(tokenizer, attr, None) is not None:
+            setattr(model.generation_config, attr, getattr(tokenizer, attr))
+    if getattr(model.generation_config, "pad_token_id", None) is None:
+        model.generation_config.pad_token_id = getattr(model.generation_config, "eos_token_id", None)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run vanilla LLaVA-Next on an arbitrary image-question JSONL subset.")
     ap.add_argument("--vga-root", default="VGA_origin")
@@ -131,6 +143,7 @@ def main() -> None:
         attn_implementation=str(args.attn_type),
         torch_dtype=TORCH_TYPE_MAP[str(args.torch_type)],
     )
+    ensure_generation_config(model, tokenizer)
     model.eval()
 
     rows = read_jsonl(args.question_file, limit=int(args.limit))
