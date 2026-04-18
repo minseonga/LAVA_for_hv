@@ -172,7 +172,13 @@ def main() -> None:
                     gen_kwargs["top_p"] = float(args.top_p)
 
             with torch.inference_mode():
-                output_ids = model.generate(input_ids, **gen_kwargs)
+                try:
+                    output_ids = model.generate(input_ids, **gen_kwargs)
+                except ValueError as exc:
+                    if "model_kwargs" not in str(exc) or "modalities" not in str(exc):
+                        raise
+                    gen_kwargs.pop("modalities", None)
+                    output_ids = model.generate(input_ids, **gen_kwargs)
 
             output_text = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
             if output_text.endswith(stop_str):
