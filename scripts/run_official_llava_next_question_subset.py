@@ -151,15 +151,12 @@ def main() -> None:
             image = Image.open(os.path.join(args.image_folder, image_name)).convert("RGB")
             image_sizes = [image.size]
             if use_official_mistral_path:
-                # Match the official LLaVA-NeXT Mistral VQA path. With
-                # process_images + image_sizes, llava-v1.6-mistral-7b can
-                # immediately emit EOS in this env, producing empty outputs.
-                image_tensor = [
-                    image_processor.preprocess(image, return_tensors="pt")["pixel_values"].to(
-                        device="cuda",
-                        dtype=TORCH_TYPE_MAP[str(args.torch_type)],
-                    )
-                ]
+                # Match official LLaVA-NeXT cli.py for Mistral: pass the
+                # single-image tensor directly instead of a one-element list.
+                image_tensor = image_processor.preprocess(image, return_tensors="pt")["pixel_values"].to(
+                    device="cuda",
+                    dtype=TORCH_TYPE_MAP[str(args.torch_type)],
+                )
                 image_sizes = []
             else:
                 image_tensor = process_images([image], image_processor, model.config)
@@ -178,8 +175,8 @@ def main() -> None:
             }
             if image_sizes:
                 gen_kwargs["image_sizes"] = image_sizes
+            gen_kwargs["stopping_criteria"] = [stopping_criteria]
             if not use_official_mistral_path:
-                gen_kwargs["stopping_criteria"] = [stopping_criteria]
                 gen_kwargs["modalities"] = ["image"] * int(input_ids.shape[0])
             if bool(args.do_sample):
                 gen_kwargs["temperature"] = float(args.temperature)
