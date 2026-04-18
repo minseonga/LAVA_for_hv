@@ -191,6 +191,29 @@ def materialize_vendor_question_file(question_file: str, answers_file: str, limi
     return str(source)
 
 
+def load_vendor_eval_module(origin_path: Path) -> Any:
+    """Load the VGA LLaVA-NeXT eval script with narrow runtime fixes.
+
+    Keep vendor files untouched. The upstream script assumes ``conv.sep`` is
+    always the generation stop string, but LLaVA v1-style templates use
+    ``sep2`` as the assistant-side stop string. Treating ``sep`` (a space) as
+    EOS causes early empty generations for Vicuna/LLaVA-v1 prompts.
+    """
+    spec = importlib.util.spec_from_file_location("vga_origin_object_hallucination_vqa_llava_next", origin_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load VGA origin runner from {origin_path}")
+    module = importlib.util.module_from_spec(spec)
+    source = origin_path.read_text(encoding="utf-8")
+    old = "        stop_str = conv.sep\n"
+    new = "        stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2\n"
+    if old in source:
+        source = source.replace(old, new, 1)
+        print("[compat] patched LLaVA-NeXT VGA stop string for SeparatorStyle.TWO", flush=True)
+    sys.modules[spec.name] = module
+    exec(compile(source, str(origin_path), "exec"), module.__dict__)
+    return module
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
@@ -257,12 +280,7 @@ def main() -> None:
     transformers.AutoTokenizer.from_pretrained = patched_from_pretrained
     try:
         origin_path = vga_root / "eval" / "object_hallucination_vqa_llava-next.py"
-        spec = importlib.util.spec_from_file_location("vga_origin_object_hallucination_vqa_llava_next", origin_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Could not load VGA origin runner from {origin_path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
+        module = load_vendor_eval_module(origin_path)
         patch_llava_next_multimodal_signature()
     finally:
         transformers.AutoTokenizer.from_pretrained = original_from_pretrained
