@@ -65,6 +65,9 @@ VGA_ATTN_TYPE="${VGA_ATTN_TYPE:-eager}"
 LLAVA_NEXT_MODEL_NAME="${LLAVA_NEXT_MODEL_NAME:-}"
 LLAVA_NEXT_ATTN_IMPLEMENTATION="${LLAVA_NEXT_ATTN_IMPLEMENTATION:-eager}"
 LLAVA_NEXT_TORCH_TYPE="${LLAVA_NEXT_TORCH_TYPE:-fp16}"
+LLAVA_NEXT_DO_SAMPLE="${LLAVA_NEXT_DO_SAMPLE:-false}"
+LLAVA_NEXT_TEMPERATURE="${LLAVA_NEXT_TEMPERATURE:-0.0}"
+LLAVA_NEXT_NUM_BEAMS="${LLAVA_NEXT_NUM_BEAMS:-1}"
 
 PAI_MODEL="${PAI_MODEL:-}"
 PAI_USE_ATTN="${PAI_USE_ATTN:-1}"
@@ -321,8 +324,9 @@ if ! reuse_file "$PRED_JSONL"; then
           --max-new-tokens "$MAX_NEW_TOKENS" \
           --torch-type "$LLAVA_NEXT_TORCH_TYPE" \
           --attn-implementation "$LLAVA_NEXT_ATTN_IMPLEMENTATION" \
-          --do-sample false \
-          --num-beams 1 \
+          --do-sample "$LLAVA_NEXT_DO_SAMPLE" \
+          --temperature "$LLAVA_NEXT_TEMPERATURE" \
+          --num-beams "$LLAVA_NEXT_NUM_BEAMS" \
           --limit "$LIMIT" \
           --seed "$SEED"
       elif [[ "$BACKBONE" == "llava15" ]]; then
