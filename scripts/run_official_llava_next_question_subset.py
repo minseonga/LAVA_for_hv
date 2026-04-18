@@ -121,6 +121,7 @@ def main() -> None:
     model.eval()
     if hasattr(model, "tie_weights"):
         model.tie_weights()
+    use_official_mistral_path = "mistral" in str(args.conv_mode).lower() or "mistral" in str(model_name).lower()
 
     rows = read_jsonl(args.question_file, limit=int(args.limit))
     with open(args.answers_file, "w", encoding="utf-8") as f:
@@ -149,23 +150,37 @@ def main() -> None:
 
             image = Image.open(os.path.join(args.image_folder, image_name)).convert("RGB")
             image_sizes = [image.size]
-            image_tensor = process_images([image], image_processor, model.config)
-            image_tensor = to_cuda_images(image_tensor, TORCH_TYPE_MAP[str(args.torch_type)])
+            if use_official_mistral_path:
+                # Match the official LLaVA-NeXT Mistral VQA path. With
+                # process_images + image_sizes, llava-v1.6-mistral-7b can
+                # immediately emit EOS in this env, producing empty outputs.
+                image_tensor = [
+                    image_processor.preprocess(image, return_tensors="pt")["pixel_values"].to(
+                        device="cuda",
+                        dtype=TORCH_TYPE_MAP[str(args.torch_type)],
+                    )
+                ]
+                image_sizes = []
+            else:
+                image_tensor = process_images([image], image_processor, model.config)
+                image_tensor = to_cuda_images(image_tensor, TORCH_TYPE_MAP[str(args.torch_type)])
 
             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
             stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
 
             gen_kwargs: Dict[str, Any] = {
                 "images": image_tensor,
-                "image_sizes": image_sizes,
                 "do_sample": bool(args.do_sample),
                 "num_beams": int(args.num_beams),
                 "max_new_tokens": int(args.max_new_tokens),
                 "use_cache": True,
-                "stopping_criteria": [stopping_criteria],
                 "pad_token_id": tokenizer.eos_token_id,
-                "modalities": ["image"] * int(input_ids.shape[0]),
             }
+            if image_sizes:
+                gen_kwargs["image_sizes"] = image_sizes
+            if not use_official_mistral_path:
+                gen_kwargs["stopping_criteria"] = [stopping_criteria]
+                gen_kwargs["modalities"] = ["image"] * int(input_ids.shape[0])
             if bool(args.do_sample):
                 gen_kwargs["temperature"] = float(args.temperature)
                 if args.top_p is not None:
