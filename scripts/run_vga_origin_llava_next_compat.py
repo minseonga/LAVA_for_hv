@@ -90,6 +90,53 @@ def patch_transformers_compat() -> None:
         cache_utils.DynamicCache._llava_next_none_legacy_patch = True  # type: ignore[attr-defined]
 
 
+def patch_llava_next_multimodal_signature() -> None:
+    from llava_next.model.llava_arch import LlavaMetaForCausalLM
+
+    if getattr(LlavaMetaForCausalLM, "_vga_compat_image_sizes_patch", False):
+        return
+
+    original_prepare = LlavaMetaForCausalLM.prepare_inputs_labels_for_multimodal
+
+    def looks_like_image_sizes(value: Any) -> bool:
+        if value is None or isinstance(value, str):
+            return False
+        if not isinstance(value, (list, tuple)):
+            return False
+        if not value:
+            return False
+        return not all(isinstance(item, str) for item in value)
+
+    def prepare_inputs_labels_for_multimodal_with_image_size_shift(
+        self: Any,
+        input_ids: Any,
+        position_ids: Any,
+        attention_mask: Any,
+        past_key_values: Any,
+        labels: Any,
+        images: Any,
+        modalities: Any = ["image"],
+        image_sizes: Any = None,
+    ) -> Any:
+        if image_sizes is None and looks_like_image_sizes(modalities):
+            image_sizes = modalities
+            modalities = ["image"] * len(image_sizes)
+        return original_prepare(
+            self,
+            input_ids,
+            position_ids,
+            attention_mask,
+            past_key_values,
+            labels,
+            images,
+            modalities=modalities,
+            image_sizes=image_sizes,
+        )
+
+    LlavaMetaForCausalLM.prepare_inputs_labels_for_multimodal = prepare_inputs_labels_for_multimodal_with_image_size_shift
+    LlavaMetaForCausalLM._vga_compat_image_sizes_patch = True  # type: ignore[attr-defined]
+
+
 def ensure_generation_config(model: Any, tokenizer: Any) -> None:
     from transformers import GenerationConfig
 
@@ -216,6 +263,7 @@ def main() -> None:
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         spec.loader.exec_module(module)
+        patch_llava_next_multimodal_signature()
     finally:
         transformers.AutoTokenizer.from_pretrained = original_from_pretrained
 
