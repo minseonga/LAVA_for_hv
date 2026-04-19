@@ -90,6 +90,87 @@ def summarize(values: Sequence[float], prefix: str) -> Dict[str, float]:
     }
 
 
+_YESNO_TOKEN_ID_CACHE: Dict[int, Dict[str, List[int]]] = {}
+
+
+def yesno_token_id_sets(tokenizer: Any) -> Dict[str, List[int]]:
+    cache_key = id(tokenizer)
+    cached = _YESNO_TOKEN_ID_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    variants = {
+        "yes": ["yes", "Yes", "YES", " yes", " Yes", " YES"],
+        "no": ["no", "No", "NO", " no", " No", " NO"],
+    }
+    out: Dict[str, List[int]] = {}
+    for label, texts in variants.items():
+        ids: List[int] = []
+        for text in texts:
+            encoded = tokenizer(str(text), add_special_tokens=False)
+            token_ids = getattr(encoded, "input_ids", encoded)
+            if token_ids:
+                try:
+                    ids.append(int(token_ids[0]))
+                except Exception:
+                    continue
+        out[label] = sorted(set(ids))
+
+    _YESNO_TOKEN_ID_CACHE[cache_key] = out
+    return out
+
+
+def logsumexp_ids(log_probs: torch.Tensor, token_ids: Sequence[int]) -> torch.Tensor:
+    valid = [int(i) for i in token_ids if 0 <= int(i) < int(log_probs.numel())]
+    if not valid:
+        return torch.tensor(-100.0, dtype=log_probs.dtype, device=log_probs.device)
+    idx = torch.tensor(valid, dtype=torch.long, device=log_probs.device)
+    return torch.logsumexp(log_probs.index_select(0, idx), dim=0)
+
+
+def yesno_decision_features(runtime: CleanroomLlavaRuntime, first_log_probs: torch.Tensor, candidate_text: str) -> Dict[str, Any]:
+    token_ids = yesno_token_id_sets(runtime.tokenizer)
+    yes_lp_t = logsumexp_ids(first_log_probs, token_ids.get("yes", []))
+    no_lp_t = logsumexp_ids(first_log_probs, token_ids.get("no", []))
+    yes_lp = float(yes_lp_t.item())
+    no_lp = float(no_lp_t.item())
+    yes_minus_no = float((yes_lp_t - no_lp_t).item())
+    yes_prob_binary = float(torch.sigmoid(yes_lp_t - no_lp_t).item())
+    no_prob_binary = float(1.0 - yes_prob_binary)
+
+    candidate_label = final_label_from_text(candidate_text)
+    if candidate_label == "yes":
+        cand_lp = yes_lp
+        alt_lp = no_lp
+        cand_prob = yes_prob_binary
+        cand_margin = yes_minus_no
+    elif candidate_label == "no":
+        cand_lp = no_lp
+        alt_lp = yes_lp
+        cand_prob = no_prob_binary
+        cand_margin = -yes_minus_no
+    else:
+        cand_lp = -100.0
+        alt_lp = -100.0
+        cand_prob = 0.0
+        cand_margin = 0.0
+
+    return {
+        "cheap_decision_yes_lp": yes_lp,
+        "cheap_decision_no_lp": no_lp,
+        "cheap_decision_yes_minus_no": yes_minus_no,
+        "cheap_decision_yes_prob_binary": yes_prob_binary,
+        "cheap_decision_no_prob_binary": no_prob_binary,
+        "cheap_decision_candidate_label": candidate_label,
+        "cheap_decision_candidate_label_lp": float(cand_lp),
+        "cheap_decision_alt_label_lp": float(alt_lp),
+        "cheap_decision_candidate_minus_alt": float(cand_margin),
+        "cheap_decision_candidate_prob_binary": float(cand_prob),
+        "cheap_decision_prefers_candidate": int(candidate_label in {"yes", "no"} and cand_margin >= 0.0),
+        "cheap_decision_margin_abs": float(abs(yes_minus_no)),
+    }
+
+
 def cheap_features_from_pack(
     runtime: CleanroomLlavaRuntime,
     pack: ForwardPack,
@@ -171,6 +252,7 @@ def cheap_features_from_pack(
     row.update(summarize(gap_content, "cheap_target_gap_content"))
     row.update(summarize(argmax_all, "cheap_target_argmax_all"))
     row.update(summarize(argmax_content, "cheap_target_argmax_content"))
+    row.update(yesno_decision_features(runtime, log_probs[0], pack.candidate_text))
     return row
 
 
