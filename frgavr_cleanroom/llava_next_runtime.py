@@ -87,6 +87,7 @@ class OfficialLlavaNextRuntime:
         self.device = torch.device(str(device or "cuda"))
         self.torch_type = torch_type
         self.dtype = TORCH_DTYPE[torch_type]
+        self.teacher_force_forward_mode = str(os.environ.get("CLEANROOM_TF_FORWARD_MODE", "backbone")).strip().lower()
 
     def load_image(self, image_path: str) -> Image.Image:
         return Image.open(image_path).convert("RGB")
@@ -187,8 +188,12 @@ class OfficialLlavaNextRuntime:
             }
             if pos_ids_e is not None:
                 forward_kwargs["position_ids"] = pos_ids_e
-            outputs = backbone(**forward_kwargs)
-            logits = self.model.lm_head(outputs[0])
+            if self.teacher_force_forward_mode in {"model", "full", "legacy"}:
+                outputs = self.model(**forward_kwargs)
+                logits = outputs.logits
+            else:
+                outputs = backbone(**forward_kwargs)
+                logits = self.model.lm_head(outputs[0])
 
         labels_exp = labels_e[0]
         text_positions = torch.where(labels_exp != int(IGNORE_INDEX))[0]
