@@ -39,6 +39,10 @@ LIMIT="${LIMIT:-0}"
 
 MODEL_PATH="${MODEL_PATH:-liuhaotian/llava-v1.5-7b}"
 MODEL_BASE="${MODEL_BASE:-}"
+MODEL_BASE_ARGS=()
+if [[ -n "$MODEL_BASE" ]]; then
+  MODEL_BASE_ARGS=(--model-base "$MODEL_BASE")
+fi
 IMAGE_FOLDER="${IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
 
 Q_NOOBJ="${Q_NOOBJ:-$CAL_ROOT/experiments/pope_full_9000/pope_9000_q.jsonl}"
@@ -210,7 +214,7 @@ run_vga_like() {
     "$VGA_PYTHON_BIN" "$runner" \
       --vga-root "$VGA_ROOT" \
       --model-path "$MODEL_PATH" \
-      --model-base "${MODEL_BASE:-}" \
+      "${MODEL_BASE_ARGS[@]}" \
       --image-folder "$IMAGE_FOLDER" \
       --question-file "$QUESTION_FILE" \
       --answers-file "$PRED_JSONL" \
@@ -229,7 +233,7 @@ run_vga_like() {
     "$VGA_PYTHON_BIN" "$runner" \
       --vga-root "$VGA_ROOT" \
       --model-path "$MODEL_PATH" \
-      --model-base "${MODEL_BASE:-}" \
+      "${MODEL_BASE_ARGS[@]}" \
       --image-folder "$IMAGE_FOLDER" \
       --question-file "$QUESTION_FILE" \
       --answers-file "$PRED_JSONL" \
@@ -250,7 +254,7 @@ run_vga_like() {
   else
     "$VGA_PYTHON_BIN" "$runner" \
       --model-path "$MODEL_PATH" \
-      --model-base "${MODEL_BASE:-}" \
+      "${MODEL_BASE_ARGS[@]}" \
       --image-folder "$IMAGE_FOLDER" \
       --question-file "$QUESTION_FILE" \
       --answers-file "$PRED_JSONL" \
@@ -315,7 +319,7 @@ if ! reuse_file "$PRED_JSONL"; then
         "$LLAVA_NEXT_PYTHON_BIN" "$CAL_ROOT/scripts/run_official_llava_next_question_subset.py" \
           --llava-next-root "$LLAVA_NEXT_ROOT" \
           --model-path "$MODEL_PATH" \
-          --model-base "${MODEL_BASE:-}" \
+          "${MODEL_BASE_ARGS[@]}" \
           --image-folder "$IMAGE_FOLDER" \
           --question-file "$QUESTION_FILE" \
           --answers-file "$PRED_JSONL" \
@@ -332,7 +336,7 @@ if ! reuse_file "$PRED_JSONL"; then
       elif [[ "$BACKBONE" == "llava15" ]]; then
         "$CAL_PYTHON_BIN" -m llava.eval.model_vqa_loader \
           --model-path "$MODEL_PATH" \
-          --model-base "${MODEL_BASE:-}" \
+          "${MODEL_BASE_ARGS[@]}" \
           --image-folder "$IMAGE_FOLDER" \
           --question-file "$QUESTION_FILE" \
           --answers-file "$PRED_JSONL" \
