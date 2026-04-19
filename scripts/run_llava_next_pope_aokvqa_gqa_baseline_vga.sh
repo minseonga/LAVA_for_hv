@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Run LLaVA-NeXT POPE transfer experiments on A-OKVQA and GQA:
+# Run LLaVA-NeXT POPE experiments on MSCOCO, A-OKVQA, and GQA:
 #   1) baseline with the official LLaVA-NeXT runner
 #   2) VGA with the LLaVA-NeXT VGA compatibility runner
 #
 # Expected prepared dataset files:
+#   $CAL_ROOT/experiments/pope_full_9000/pope_9000_q.jsonl
+#   $CAL_ROOT/experiments/pope_full_9000/pope_9000_q_with_object.jsonl
+#   $CAL_ROOT/experiments/pope_full_9000/pope_9000_gt.csv
 #   $CAL_ROOT/experiments/pope_hf_multidataset/aokvqa/pope_aokvqa_9000_q.jsonl
 #   $CAL_ROOT/experiments/pope_hf_multidataset/aokvqa/pope_aokvqa_9000_q_with_object.jsonl
 #   $CAL_ROOT/experiments/pope_hf_multidataset/aokvqa/pope_aokvqa_9000_gt.csv
@@ -33,7 +36,7 @@ CONV_MODE="${CONV_MODE:-llava_llama_3}"
 BACKBONE_TAG="${BACKBONE_TAG:-llava_next_llama3_8b}"
 
 DATA_ROOT="${DATA_ROOT:-$CAL_ROOT/experiments/pope_hf_multidataset}"
-DATASETS="${DATASETS:-aokvqa,gqa}"
+DATASETS="${DATASETS:-mscoco,aokvqa,gqa}"
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/paper_raw/pope}"
 
 LIMIT="${LIMIT:-0}"
@@ -56,7 +59,7 @@ VGA_ATTN_COEF="${VGA_ATTN_COEF:-0.2}"
 VGA_CD_ALPHA="${VGA_CD_ALPHA:-0.02}"
 VGA_HEAD_BALANCING="${VGA_HEAD_BALANCING:-simg}"
 VGA_START_LAYER="${VGA_START_LAYER:-0}"
-VGA_END_LAYER="${VGA_END_LAYER:-15}"
+VGA_END_LAYER="${VGA_END_LAYER:-16}"
 VGA_SAMPLING="${VGA_SAMPLING:-false}"
 VGA_ATTN_NORM="${VGA_ATTN_NORM:-false}"
 VGA_TORCH_TYPE="${VGA_TORCH_TYPE:-fp16}"
@@ -81,8 +84,17 @@ truthy() {
 dataset_config() {
   local dataset="$1"
   case "$dataset" in
+    mscoco|coco|MSCOCO|COCO)
+      DS_NAME="mscoco"
+      DS_OUT_NAME="${MSCOCO_OUT_NAME:-llava_next_llama3_8b}"
+      IMAGE_FOLDER="${MSCOCO_IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
+      Q_NOOBJ="${MSCOCO_Q_NOOBJ:-$CAL_ROOT/experiments/pope_full_9000/pope_9000_q.jsonl}"
+      Q_WITHOBJ="${MSCOCO_Q_WITHOBJ:-$CAL_ROOT/experiments/pope_full_9000/pope_9000_q_with_object.jsonl}"
+      GT_CSV="${MSCOCO_GT_CSV:-$CAL_ROOT/experiments/pope_full_9000/pope_9000_gt.csv}"
+      ;;
     aokvqa|a-okvqa|AOKVQA|A-OKVQA)
       DS_NAME="aokvqa"
+      DS_OUT_NAME="$DS_NAME/$BACKBONE_TAG"
       IMAGE_FOLDER="${AOKVQA_IMAGE_FOLDER:-/home/kms/data/pope/val2014}"
       Q_NOOBJ="${AOKVQA_Q_NOOBJ:-$DATA_ROOT/aokvqa/pope_aokvqa_9000_q.jsonl}"
       Q_WITHOBJ="${AOKVQA_Q_WITHOBJ:-$DATA_ROOT/aokvqa/pope_aokvqa_9000_q_with_object.jsonl}"
@@ -90,6 +102,7 @@ dataset_config() {
       ;;
     gqa|GQA)
       DS_NAME="gqa"
+      DS_OUT_NAME="$DS_NAME/$BACKBONE_TAG"
       IMAGE_FOLDER="${GQA_IMAGE_FOLDER:-/home/kms/data/GQA}"
       Q_NOOBJ="${GQA_Q_NOOBJ:-$DATA_ROOT/gqa/pope_gqa_9000_q.jsonl}"
       Q_WITHOBJ="${GQA_Q_WITHOBJ:-$DATA_ROOT/gqa/pope_gqa_9000_q_with_object.jsonl}"
@@ -183,9 +196,9 @@ for raw_dataset in "${DATASET_LIST[@]}"; do
   require_file "$Q_WITHOBJ"
   require_file "$GT_CSV"
 
-  ds_root="$OUT_ROOT/$DS_NAME/$BACKBONE_TAG"
+  ds_root="$OUT_ROOT/$DS_OUT_NAME"
   baseline_out="$ds_root/baseline_${LLAVA_NEXT_ATTN_IMPLEMENTATION}_tok${MAX_NEW_TOKENS}_full9000"
-  vga_out="$ds_root/vga_${VGA_ATTN_TYPE}_tok${MAX_NEW_TOKENS}_full9000"
+  vga_out="$ds_root/vga_${VGA_ATTN_TYPE}_tok${MAX_NEW_TOKENS}_layers${VGA_START_LAYER}_${VGA_END_LAYER}_full9000"
 
   echo "== dataset=$DS_NAME backbone=$BACKBONE_TAG =="
   echo "[settings] model_path=$MODEL_PATH"
