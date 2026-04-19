@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -50,6 +52,46 @@ def patch_legacy_transformers_bloom_masks() -> None:
             return mask[None, None, :, :].expand(batch_size, 1, tgt_length, src_length)
 
         bloom._make_causal_mask = _make_causal_mask  # type: ignore[attr-defined]
+
+
+def image_id_from_filename(image_name: str) -> str:
+    match = re.search(r"(\d+)(?=\.[^.]+$|$)", os.path.basename(str(image_name)))
+    return str(int(match.group(1))) if match else ""
+
+
+def materialize_vendor_question_file(question_file: str, answers_file: str) -> str:
+    """Fill fields that VGA_origin's LLaVA-1.5 script assumes are present."""
+    source = Path(os.path.abspath(question_file))
+    out_dir = Path(os.path.abspath(answers_file)).parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / f"{source.stem}.vga_llava_vendor_schema.jsonl"
+
+    changed = False
+    n_rows = 0
+    with open(source, "r", encoding="utf-8") as fin, open(target, "w", encoding="utf-8") as fout:
+        for line in fin:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            before = dict(row)
+            if not str(row.get("question", "")).strip() and str(row.get("text", "")).strip():
+                row["question"] = row["text"]
+            if "label" not in row:
+                row["label"] = row.get("answer", "")
+            if not str(row.get("image_id", "")).strip():
+                row["image_id"] = image_id_from_filename(str(row.get("image", "")))
+            changed = changed or row != before
+            n_rows += 1
+            fout.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    if changed:
+        print(f"[schema] materialized vendor question file: {target} n={n_rows}", flush=True)
+        return str(target)
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        pass
+    return str(source)
 
 
 def main() -> None:
@@ -124,6 +166,7 @@ def main() -> None:
         transformers.AutoTokenizer.from_pretrained = original_from_pretrained
 
     set_seed(int(args.seed))
+    args.question_file = materialize_vendor_question_file(args.question_file, args.answers_file)
     print(str(args), flush=True)
     module.eval_model(args)
 
