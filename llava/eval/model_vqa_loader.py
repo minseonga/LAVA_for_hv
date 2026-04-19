@@ -386,10 +386,16 @@ def eval_model(args):
     disable_torch_init()
     model_path = os.path.expanduser(args.model_path)
     model_name = get_model_name_from_path(model_path)
+    # This repo's LLaVA builder defaults to device_map="auto", but the
+    # CLIPVisionModel used by LLaVA-1.5 does not support auto device maps in
+    # the vga_base transformers stack. Use a single visible CUDA device instead.
+    direct_device = "cuda:0"
     tokenizer, model, image_processor, context_len = load_pretrained_model(
         model_path,
         args.model_base,
         model_name,
+        device_map=direct_device,
+        device=direct_device,
         enable_ais_gating=bool(args.enable_ais_gating),
         ais_early_start=int(args.ais_early_start),
         ais_early_end=int(args.ais_early_end),
