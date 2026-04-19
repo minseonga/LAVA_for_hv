@@ -89,6 +89,7 @@ class ForwardPack:
     text_positions: torch.Tensor
     logits: torch.Tensor
     attentions: Optional[Tuple[torch.Tensor, ...]]
+    last_hidden_state: Optional[torch.Tensor] = None
 
 
 @dataclass
@@ -456,6 +457,7 @@ class CleanroomLlavaRuntime:
         question: str,
         candidate_text: str,
         output_attentions: bool,
+        output_hidden_states: bool = False,
     ) -> ForwardPack:
         from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX
         from llava.mm_utils import tokenizer_image_token
@@ -498,7 +500,7 @@ class CleanroomLlavaRuntime:
                 "attention_mask": attn_mask_e,
                 "use_cache": False,
                 "output_attentions": bool(output_attentions),
-                "output_hidden_states": False,
+                "output_hidden_states": bool(output_hidden_states),
                 "return_dict": True,
             }
             if pos_ids_e is not None:
@@ -546,6 +548,11 @@ class CleanroomLlavaRuntime:
             text_positions=text_positions.detach().cpu(),
             logits=logits[0].detach().cpu(),
             attentions=None if outputs.attentions is None else tuple(att.detach().cpu() for att in outputs.attentions),
+            last_hidden_state=(
+                None
+                if getattr(outputs, "hidden_states", None) is None
+                else outputs.hidden_states[-1][0].detach().cpu()
+            ),
         )
 
     def generate_baseline(

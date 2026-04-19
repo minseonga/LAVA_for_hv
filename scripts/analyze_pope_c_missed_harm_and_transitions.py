@@ -43,6 +43,12 @@ def parse_int01(value: object) -> Optional[int]:
     return None
 
 
+def parse_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def load_gt(path: str, id_col: str, label_col: str, group_col: str) -> Dict[str, Dict[str, str]]:
     out: Dict[str, Dict[str, str]] = {}
     with open(path, "r", encoding="utf-8") as f:
@@ -262,6 +268,7 @@ def main() -> None:
     ap.add_argument("--top_k", type=int, default=1)
     ap.add_argument("--threshold", type=float, default=None)
     ap.add_argument("--min_present_rate", type=float, default=0.8)
+    ap.add_argument("--feature_rows_only", type=parse_bool, default=False)
     ap.add_argument("--max_examples", type=int, default=20)
     args = ap.parse_args()
 
@@ -272,6 +279,8 @@ def main() -> None:
 
     rows: List[Dict[str, Any]] = []
     for sid, g in gt.items():
+        if bool(args.feature_rows_only) and sid not in feature_rows:
+            continue
         b = baseline.get(sid, {})
         m = intervention.get(sid, {})
         baseline_label = b.get("label", "")

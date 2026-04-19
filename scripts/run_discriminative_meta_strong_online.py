@@ -171,6 +171,74 @@ def yesno_decision_features(runtime: CleanroomLlavaRuntime, first_log_probs: tor
     }
 
 
+def mean_hidden(hidden: torch.Tensor, indices: Sequence[int]) -> Optional[torch.Tensor]:
+    valid = [int(i) for i in indices if 0 <= int(i) < int(hidden.shape[0])]
+    if not valid:
+        return None
+    idx = torch.tensor(valid, dtype=torch.long, device=hidden.device)
+    return hidden.index_select(0, idx).mean(dim=0)
+
+
+def cosine_or_zero(left: Optional[torch.Tensor], right: Optional[torch.Tensor]) -> float:
+    if left is None or right is None:
+        return 0.0
+    return float(F.cosine_similarity(left.to(torch.float32), right.to(torch.float32), dim=0).item())
+
+
+def norm_or_zero(value: Optional[torch.Tensor]) -> float:
+    if value is None:
+        return 0.0
+    return float(torch.linalg.vector_norm(value.to(torch.float32)).item())
+
+
+def hidden_alignment_features(pack: ForwardPack) -> Dict[str, Any]:
+    hidden = getattr(pack, "last_hidden_state", None)
+    if hidden is None:
+        return {}
+
+    h = hidden.to(torch.float32)
+    cont_positions = [int(i) for i in pack.cont_label_positions.tolist()]
+    decision_positions = [int(i) for i in pack.decision_positions.tolist()]
+    vision_positions = [int(i) for i in pack.vision_positions.tolist()]
+    text_positions = [int(i) for i in pack.text_positions.tolist()]
+    cont_set = set(cont_positions)
+    prompt_positions = [int(i) for i in text_positions if int(i) not in cont_set]
+
+    first_decision = mean_hidden(h, decision_positions[:1])
+    mean_decision = mean_hidden(h, decision_positions)
+    first_answer = mean_hidden(h, cont_positions[:1])
+    mean_answer = mean_hidden(h, cont_positions)
+    vision_mean = mean_hidden(h, vision_positions)
+    prompt_mean = mean_hidden(h, prompt_positions)
+
+    first_decision_vision = cosine_or_zero(first_decision, vision_mean)
+    first_decision_prompt = cosine_or_zero(first_decision, prompt_mean)
+    mean_decision_vision = cosine_or_zero(mean_decision, vision_mean)
+    mean_decision_prompt = cosine_or_zero(mean_decision, prompt_mean)
+    answer_vision = cosine_or_zero(mean_answer, vision_mean)
+    answer_prompt = cosine_or_zero(mean_answer, prompt_mean)
+
+    return {
+        "cheap_hidden_first_decision_to_vision_cos": first_decision_vision,
+        "cheap_hidden_first_decision_to_prompt_cos": first_decision_prompt,
+        "cheap_hidden_first_decision_vision_minus_prompt": float(first_decision_vision - first_decision_prompt),
+        "cheap_hidden_mean_decision_to_vision_cos": mean_decision_vision,
+        "cheap_hidden_mean_decision_to_prompt_cos": mean_decision_prompt,
+        "cheap_hidden_mean_decision_vision_minus_prompt": float(mean_decision_vision - mean_decision_prompt),
+        "cheap_hidden_answer_to_vision_cos": answer_vision,
+        "cheap_hidden_answer_to_prompt_cos": answer_prompt,
+        "cheap_hidden_answer_vision_minus_prompt": float(answer_vision - answer_prompt),
+        "cheap_hidden_first_answer_to_vision_cos": cosine_or_zero(first_answer, vision_mean),
+        "cheap_hidden_first_answer_to_prompt_cos": cosine_or_zero(first_answer, prompt_mean),
+        "cheap_hidden_first_decision_norm": norm_or_zero(first_decision),
+        "cheap_hidden_mean_decision_norm": norm_or_zero(mean_decision),
+        "cheap_hidden_first_answer_norm": norm_or_zero(first_answer),
+        "cheap_hidden_answer_mean_norm": norm_or_zero(mean_answer),
+        "cheap_hidden_vision_mean_norm": norm_or_zero(vision_mean),
+        "cheap_hidden_prompt_mean_norm": norm_or_zero(prompt_mean),
+    }
+
+
 def cheap_features_from_pack(
     runtime: CleanroomLlavaRuntime,
     pack: ForwardPack,
@@ -252,7 +320,19 @@ def cheap_features_from_pack(
     row.update(summarize(gap_content, "cheap_target_gap_content"))
     row.update(summarize(argmax_all, "cheap_target_argmax_all"))
     row.update(summarize(argmax_content, "cheap_target_argmax_content"))
+    row.update(
+        {
+            "cheap_first_target_lp": float(target_lp[0].item()),
+            "cheap_first_entropy": float(token_ent[0].item()),
+            "cheap_first_top1_margin": float(top1_margin[0].item()),
+            "cheap_first_target_gap": float(target_gap[0].item()),
+            "cheap_first_target_is_argmax": float(target_is_argmax[0].item()),
+            "cheap_first_target_logit": float(target_logit[0].item()),
+            "cheap_first_best_other_logit": float(best_other_logit[0].item()),
+        }
+    )
     row.update(yesno_decision_features(runtime, log_probs[0], pack.candidate_text))
+    row.update(hidden_alignment_features(pack))
     return row
 
 
@@ -414,6 +494,12 @@ def main() -> None:
         default=None,
         help="Optional route threshold for controller_mode=cheap_c_only. Defaults to the frozen c_only tau.",
     )
+    ap.add_argument(
+        "--cheap_hidden_features",
+        type=parse_bool,
+        default=False,
+        help="Request hidden states during cheap-C replay and add same-forward image/text alignment features.",
+    )
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=False)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -520,6 +606,7 @@ def main() -> None:
                     question=cheap_question,
                     candidate_text=intervention_text,
                     output_attentions=False,
+                    output_hidden_states=bool(args.cheap_hidden_features),
                 )
                 cheap_content_indices = select_content_indices(runtime.tokenizer, cheap_pack.cont_ids)
                 return cheap_features_from_pack(

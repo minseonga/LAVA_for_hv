@@ -41,6 +41,7 @@ LOG_EVERY="${LOG_EVERY:-25}"
 FEATURE_ORDER="${FEATURE_ORDER:-cheap_first}"
 CONTROLLER_MODE="${CONTROLLER_MODE:-meta_strong}"
 CHEAP_C_TAU_OVERRIDE="${CHEAP_C_TAU_OVERRIDE:-}"
+CHEAP_HIDDEN_FEATURES="${CHEAP_HIDDEN_FEATURES:-false}"
 STAGE_A_PREFILTER_C_SCORE_MIN="${STAGE_A_PREFILTER_C_SCORE_MIN:-}"
 
 BETA="${BETA:-1.0}"
@@ -94,6 +95,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_discriminative_m
   --late_end "$LATE_END" \
   --feature_order "$FEATURE_ORDER" \
   --controller_mode "$CONTROLLER_MODE" \
+  --cheap_hidden_features "$CHEAP_HIDDEN_FEATURES" \
   ${CHEAP_C_TAU_OVERRIDE:+--cheap_c_tau_override "$CHEAP_C_TAU_OVERRIDE"} \
   ${STAGE_A_PREFILTER_C_SCORE_MIN:+--stage_a_prefilter_c_score_min "$STAGE_A_PREFILTER_C_SCORE_MIN"} \
   --generate_baseline_on_fallback "$GENERATE_BASELINE_ON_FALLBACK" \
