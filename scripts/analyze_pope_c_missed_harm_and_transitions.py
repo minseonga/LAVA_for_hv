@@ -369,6 +369,49 @@ def evaluate_scores(
     }
 
 
+def selected_ids_for_scores(
+    rows: Sequence[Mapping[str, Any]],
+    scores: Mapping[str, float],
+    threshold: Optional[float],
+) -> set[str]:
+    if threshold is None:
+        return set()
+    row_ids = {str(row["id"]) for row in rows}
+    return {
+        str(sid)
+        for sid, score in scores.items()
+        if str(sid) in row_ids and float(score) >= float(threshold)
+    }
+
+
+def evaluate_selected_ids(rows: Sequence[Mapping[str, Any]], selected_ids: Iterable[str]) -> Dict[str, Any]:
+    selected_set = {str(sid) for sid in selected_ids}
+    selected = harm_fixed = help_lost = neutral = correct = 0
+    for row in rows:
+        selected_here = str(row["id"]) in selected_set
+        if selected_here:
+            selected += 1
+            harm_fixed += int(row["harm"])
+            help_lost += int(row["help"])
+            if not int(row["harm"]) and not int(row["help"]):
+                neutral += 1
+            correct += int(row["baseline_correct"])
+        else:
+            correct += int(row["intervention_correct"])
+    n_harm = sum(int(row["harm"]) for row in rows)
+    return {
+        "threshold": None,
+        "selected": selected,
+        "selected_harm": harm_fixed,
+        "selected_help": help_lost,
+        "selected_neutral": neutral,
+        "net": harm_fixed - help_lost,
+        "final_acc": correct / len(rows) if rows else 0.0,
+        "precision": harm_fixed / selected if selected else 0.0,
+        "recall": harm_fixed / n_harm if n_harm else 0.0,
+    }
+
+
 def make_interaction_scores(
     rows: Sequence[Mapping[str, Any]],
     token_spec: Mapping[str, Any],
@@ -417,6 +460,98 @@ def quantile_values(values: Sequence[float], quantiles: Sequence[float]) -> List
     return sorted(set(out))
 
 
+def strip_private_result(result: Mapping[str, Any]) -> Dict[str, Any]:
+    return {str(k): v for k, v in result.items() if not str(k).startswith("_")}
+
+
+def run_dynamic_union_greedy(
+    rows: Sequence[Mapping[str, Any]],
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    pool_top_k: int,
+    max_rules: int,
+    min_rule_net: int,
+    min_rule_precision: float,
+    min_incremental_net: int,
+) -> Dict[str, Any]:
+    pool: List[Mapping[str, Any]] = [
+        cand
+        for cand in candidates
+        if int(cand.get("selected", 0)) > 0
+        and int(cand.get("net", 0)) >= int(min_rule_net)
+        and float(cand.get("precision", 0.0)) >= float(min_rule_precision)
+        and cand.get("_selected_ids")
+    ]
+    pool.sort(
+        key=lambda r: (
+            float(r.get("final_acc", 0.0)),
+            int(r.get("net", 0)),
+            float(r.get("precision", 0.0)),
+            -int(r.get("selected", 0)),
+        ),
+        reverse=True,
+    )
+    pool = pool[: int(pool_top_k)]
+
+    selected_ids: set[str] = set()
+    used_indices: set[int] = set()
+    current = evaluate_selected_ids(rows, selected_ids)
+    steps: List[Dict[str, Any]] = []
+
+    for _ in range(int(max_rules)):
+        best: Optional[Tuple[Tuple[float, int, float, int], int, set[str], Dict[str, Any]]] = None
+        for idx, cand in enumerate(pool):
+            if idx in used_indices:
+                continue
+            cand_ids = {str(sid) for sid in cand.get("_selected_ids", set())}
+            if not cand_ids:
+                continue
+            merged_ids = selected_ids | cand_ids
+            if len(merged_ids) == len(selected_ids):
+                continue
+            metric = evaluate_selected_ids(rows, merged_ids)
+            incremental_net = int(metric["net"]) - int(current["net"])
+            incremental_selected = int(metric["selected"]) - int(current["selected"])
+            key = (
+                float(incremental_net),
+                int(metric["net"]),
+                float(metric["precision"]),
+                -int(incremental_selected),
+            )
+            if best is None or key > best[0]:
+                best = (key, idx, merged_ids, metric)
+
+        if best is None:
+            break
+        _, best_idx, best_ids, best_metric = best
+        incremental_net = int(best_metric["net"]) - int(current["net"])
+        if incremental_net < int(min_incremental_net):
+            break
+
+        chosen = pool[best_idx]
+        steps.append(
+            {
+                "step": len(steps) + 1,
+                "incremental_net": incremental_net,
+                "incremental_selected": int(best_metric["selected"]) - int(current["selected"]),
+                "incremental_harm": int(best_metric["selected_harm"]) - int(current["selected_harm"]),
+                "incremental_help": int(best_metric["selected_help"]) - int(current["selected_help"]),
+                "rule": strip_private_result(chosen),
+                "cumulative": best_metric,
+            }
+        )
+        selected_ids = best_ids
+        current = best_metric
+        used_indices.add(best_idx)
+
+    return {
+        "pool_size": len(pool),
+        "initial": evaluate_selected_ids(rows, set()),
+        "final": current,
+        "steps": steps,
+    }
+
+
 def run_interaction_sweep(
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -425,6 +560,12 @@ def run_interaction_sweep(
     weights: Sequence[float],
     min_present_rate: float,
     top_k_each: int,
+    dynamic_union: bool = False,
+    dynamic_pool_top_k: int = 100,
+    dynamic_max_rules: int = 5,
+    dynamic_min_rule_net: int = 1,
+    dynamic_min_rule_precision: float = 0.0,
+    dynamic_min_incremental_net: int = 1,
 ) -> Dict[str, Any]:
     token_specs = infer_single_feature_specs(rows, feature_names=token_features, min_present_rate=min_present_rate)
     aux_specs = infer_single_feature_specs(rows, feature_names=aux_features, min_present_rate=min_present_rate)
@@ -432,6 +573,12 @@ def run_interaction_sweep(
     aux_specs = aux_specs[: int(top_k_each)]
 
     results: List[Dict[str, Any]] = []
+
+    def add_candidate(rule: Dict[str, Any], scores: Mapping[str, float]) -> None:
+        metric = evaluate_scores(rows, scores)
+        selected_ids = selected_ids_for_scores(rows, scores, metric.get("threshold"))
+        results.append({**rule, **metric, "_selected_ids": selected_ids})
+
     for token_spec in token_specs:
         base_scores = {
             str(row["id"]): float(z)
@@ -439,8 +586,7 @@ def run_interaction_sweep(
             for z in [z_value(row, token_spec)]
             if z is not None
         }
-        base_eval = evaluate_scores(rows, base_scores)
-        results.append(
+        add_candidate(
             {
                 "mode": "token_only",
                 "weight": 0.0,
@@ -451,8 +597,8 @@ def run_interaction_sweep(
                 "aux_feature": "",
                 "aux_direction": "",
                 "aux_auroc": 0.0,
-                **base_eval,
-            }
+            },
+            base_scores,
         )
 
         for aux_spec in aux_specs:
@@ -462,8 +608,7 @@ def run_interaction_sweep(
             for mode in ("add", "mul", "min", "max"):
                 for w in weights if mode == "add" else [0.0]:
                     scores = make_interaction_scores(rows, token_spec, aux_spec, mode=mode, weight=float(w))
-                    metric = evaluate_scores(rows, scores)
-                    results.append(
+                    add_candidate(
                         {
                             "mode": mode,
                             "weight": float(w),
@@ -474,8 +619,8 @@ def run_interaction_sweep(
                             "aux_feature": aux_spec["feature"],
                             "aux_direction": aux_spec["direction"],
                             "aux_auroc": aux_spec["auroc"],
-                            **metric,
-                        }
+                        },
+                        scores,
                     )
             for gate_tau in gate_taus:
                 for mode in ("gate", "gate_add"):
@@ -488,8 +633,7 @@ def run_interaction_sweep(
                             weight=float(w),
                             gate_tau=float(gate_tau),
                         )
-                        metric = evaluate_scores(rows, scores)
-                        results.append(
+                        add_candidate(
                             {
                                 "mode": mode,
                                 "weight": float(w),
@@ -500,8 +644,8 @@ def run_interaction_sweep(
                                 "aux_feature": aux_spec["feature"],
                                 "aux_direction": aux_spec["direction"],
                                 "aux_auroc": aux_spec["auroc"],
-                                **metric,
-                            }
+                            },
+                            scores,
                         )
 
     results.sort(
@@ -513,11 +657,22 @@ def run_interaction_sweep(
         ),
         reverse=True,
     )
-    return {
+    out: Dict[str, Any] = {
         "token_specs": token_specs,
         "aux_specs": aux_specs,
-        "top_results": results[:50],
+        "top_results": [strip_private_result(result) for result in results[:50]],
     }
+    if bool(dynamic_union):
+        out["dynamic_union"] = run_dynamic_union_greedy(
+            rows,
+            results,
+            pool_top_k=int(dynamic_pool_top_k),
+            max_rules=int(dynamic_max_rules),
+            min_rule_net=int(dynamic_min_rule_net),
+            min_rule_precision=float(dynamic_min_rule_precision),
+            min_incremental_net=int(dynamic_min_incremental_net),
+        )
+    return out
 
 
 def count_outcomes(rows: Iterable[Mapping[str, Any]], route_key: Optional[str] = None) -> Dict[str, Any]:
@@ -595,6 +750,12 @@ def main() -> None:
     )
     ap.add_argument("--interaction_weights", default="-1.0,-0.5,-0.25,0.25,0.5,1.0")
     ap.add_argument("--interaction_top_k_each", type=int, default=8)
+    ap.add_argument("--dynamic_union", type=parse_bool, default=False)
+    ap.add_argument("--dynamic_pool_top_k", type=int, default=100)
+    ap.add_argument("--dynamic_max_rules", type=int, default=5)
+    ap.add_argument("--dynamic_min_rule_net", type=int, default=1)
+    ap.add_argument("--dynamic_min_rule_precision", type=float, default=0.0)
+    ap.add_argument("--dynamic_min_incremental_net", type=int, default=1)
     ap.add_argument("--max_examples", type=int, default=20)
     args = ap.parse_args()
 
@@ -638,7 +799,10 @@ def main() -> None:
             "help": int(outcome == "help"),
             "outcome": outcome,
         }
-        row.update(feature_rows.get(sid, {}))
+        protected_keys = set(row.keys()) | {"outcome"}
+        for key, value in feature_rows.get(sid, {}).items():
+            if key not in protected_keys:
+                row[key] = value
         row["id"] = sid
         if bool(args.derive_decision_kl_features):
             add_decision_kl_features(row)
@@ -730,6 +894,12 @@ def main() -> None:
             weights=weights,
             min_present_rate=float(args.min_present_rate),
             top_k_each=int(args.interaction_top_k_each),
+            dynamic_union=bool(args.dynamic_union),
+            dynamic_pool_top_k=int(args.dynamic_pool_top_k),
+            dynamic_max_rules=int(args.dynamic_max_rules),
+            dynamic_min_rule_net=int(args.dynamic_min_rule_net),
+            dynamic_min_rule_precision=float(args.dynamic_min_rule_precision),
+            dynamic_min_incremental_net=int(args.dynamic_min_incremental_net),
         )
 
     Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
@@ -779,6 +949,52 @@ def main() -> None:
                 row.get("aux_feature"),
                 row.get("aux_direction"),
             )
+        dynamic = out.get("interaction_sweep", {}).get("dynamic_union")
+        if dynamic:
+            final = dynamic.get("final", {})
+            print(
+                "dynamic_union_final",
+                "acc",
+                round(float(final.get("final_acc", 0.0)), 6),
+                "net",
+                final.get("net"),
+                "prec",
+                round(float(final.get("precision", 0.0)), 4),
+                "sel",
+                final.get("selected"),
+                "harm",
+                final.get("selected_harm"),
+                "help",
+                final.get("selected_help"),
+                "pool",
+                dynamic.get("pool_size"),
+            )
+            print("dynamic_union_steps")
+            for step in dynamic.get("steps", []):
+                rule = step.get("rule", {})
+                cumulative = step.get("cumulative", {})
+                print(
+                    "step",
+                    step.get("step"),
+                    "inc_net",
+                    step.get("incremental_net"),
+                    "cum_net",
+                    cumulative.get("net"),
+                    "cum_acc",
+                    round(float(cumulative.get("final_acc", 0.0)), 6),
+                    "mode",
+                    rule.get("mode"),
+                    "w",
+                    rule.get("weight"),
+                    "gate",
+                    rule.get("gate_tau"),
+                    "tok",
+                    rule.get("token_feature"),
+                    rule.get("token_direction"),
+                    "aux",
+                    rule.get("aux_feature"),
+                    rule.get("aux_direction"),
+                )
     print("[saved]", args.out_json)
 
 
