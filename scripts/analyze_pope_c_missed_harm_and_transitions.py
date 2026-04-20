@@ -49,6 +49,55 @@ def parse_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def binary_entropy(p: float) -> float:
+    eps = 1e-12
+    p = min(1.0 - eps, max(eps, float(p)))
+    q = 1.0 - p
+    return float(-(p * math.log(p) + q * math.log(q)))
+
+
+def binary_kl_to_uniform(p: float) -> float:
+    eps = 1e-12
+    p = min(1.0 - eps, max(eps, float(p)))
+    q = 1.0 - p
+    return float(p * math.log(2.0 * p) + q * math.log(2.0 * q))
+
+
+def add_decision_kl_features(row: Dict[str, Any]) -> None:
+    """Derive no-extra-forward decision KL/entropy features from existing CSV scalars."""
+    candidate_p = parse_float(row.get("cheap_decision_candidate_prob_binary"))
+    yes_p = parse_float(row.get("cheap_decision_yes_prob_binary"))
+    no_p = parse_float(row.get("cheap_decision_no_prob_binary"))
+    margin = parse_float(row.get("cheap_decision_candidate_minus_alt"))
+
+    if candidate_p is not None:
+        p = min(1.0 - 1e-12, max(1e-12, float(candidate_p)))
+        row["cheap_decision_candidate_kl_uniform"] = binary_kl_to_uniform(p)
+        row["cheap_decision_candidate_entropy"] = binary_entropy(p)
+        row["cheap_decision_candidate_conf_abs"] = abs(p - 0.5)
+        row["cheap_decision_candidate_neg_entropy"] = -binary_entropy(p)
+
+    if yes_p is not None:
+        p = min(1.0 - 1e-12, max(1e-12, float(yes_p)))
+        row["cheap_decision_yesno_kl_uniform"] = binary_kl_to_uniform(p)
+        row["cheap_decision_yesno_entropy"] = binary_entropy(p)
+        row["cheap_decision_yesno_conf_abs"] = abs(p - 0.5)
+        row["cheap_decision_yesno_neg_entropy"] = -binary_entropy(p)
+
+    if no_p is not None:
+        p = min(1.0 - 1e-12, max(1e-12, float(no_p)))
+        row["cheap_decision_no_kl_uniform"] = binary_kl_to_uniform(p)
+        row["cheap_decision_no_entropy"] = binary_entropy(p)
+        row["cheap_decision_no_conf_abs"] = abs(p - 0.5)
+
+    if margin is not None:
+        row["cheap_decision_margin_abs_log1p"] = math.log1p(abs(float(margin)))
+        row["cheap_decision_margin_signed_kl_proxy"] = math.copysign(
+            binary_kl_to_uniform(candidate_p if candidate_p is not None else 0.5),
+            float(margin),
+        )
+
+
 def load_gt(path: str, id_col: str, label_col: str, group_col: str) -> Dict[str, Dict[str, str]]:
     out: Dict[str, Dict[str, str]] = {}
     with open(path, "r", encoding="utf-8") as f:
@@ -269,6 +318,7 @@ def main() -> None:
     ap.add_argument("--threshold", type=float, default=None)
     ap.add_argument("--min_present_rate", type=float, default=0.8)
     ap.add_argument("--feature_rows_only", type=parse_bool, default=False)
+    ap.add_argument("--derive_decision_kl_features", type=parse_bool, default=False)
     ap.add_argument("--max_examples", type=int, default=20)
     args = ap.parse_args()
 
@@ -314,6 +364,8 @@ def main() -> None:
         }
         row.update(feature_rows.get(sid, {}))
         row["id"] = sid
+        if bool(args.derive_decision_kl_features):
+            add_decision_kl_features(row)
         rows.append(row)
 
     feature_prefixes = [x.strip() for x in str(args.feature_prefixes).split(",") if x.strip()]
