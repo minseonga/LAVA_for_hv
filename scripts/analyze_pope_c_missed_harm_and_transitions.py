@@ -283,31 +283,42 @@ def infer_single_feature_specs(
 
 
 def choose_threshold(rows: Sequence[Mapping[str, Any]], scores: Mapping[str, float]) -> Optional[float]:
-    vals = sorted(set(float(v) for v in scores.values()))
-    if not vals:
+    pairs = [
+        (float(scores[str(row["id"])]), row)
+        for row in rows
+        if str(row["id"]) in scores
+    ]
+    if not pairs:
         return None
-    thresholds = [max(vals) + 1e-9] + vals + [min(vals) - 1e-9]
-    best_key = None
-    best_tau = None
-    for tau in thresholds:
-        selected = harm_fixed = help_lost = correct = 0
-        for row in rows:
-            sid = str(row["id"])
-            score = scores.get(sid)
-            selected_here = score is not None and float(score) >= float(tau)
-            if selected_here:
-                selected += 1
-                correct += int(row["baseline_correct"])
-                harm_fixed += int(row["harm"])
-                help_lost += int(row["help"])
-            else:
-                correct += int(row["intervention_correct"])
+
+    # Exact threshold search in O(n log n). The previous implementation tried
+    # every unique threshold and rescanned all rows, which becomes prohibitive
+    # for interaction sweeps over thousands of feature combinations.
+    pairs.sort(key=lambda item: item[0], reverse=True)
+    base_correct = sum(int(row["intervention_correct"]) for row in rows)
+    best_key = (base_correct / len(rows) if rows else 0.0, 0, 0)
+    best_tau = float(pairs[0][0]) + 1e-9
+
+    selected = harm_fixed = help_lost = correct_delta = 0
+    i = 0
+    while i < len(pairs):
+        score_value = float(pairs[i][0])
+        j = i
+        while j < len(pairs) and float(pairs[j][0]) == score_value:
+            row = pairs[j][1]
+            selected += 1
+            harm_fixed += int(row["harm"])
+            help_lost += int(row["help"])
+            correct_delta += int(row["baseline_correct"]) - int(row["intervention_correct"])
+            j += 1
+        correct = base_correct + correct_delta
         final_acc = correct / len(rows) if rows else 0.0
         net = harm_fixed - help_lost
         key = (final_acc, net, -selected)
-        if best_key is None or key > best_key:
+        if key > best_key:
             best_key = key
-            best_tau = tau
+            best_tau = score_value
+        i = j
     return best_tau
 
 
