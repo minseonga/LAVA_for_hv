@@ -293,7 +293,8 @@ def choose_threshold(rows: Sequence[Mapping[str, Any]], scores: Mapping[str, flo
         selected = harm_fixed = help_lost = correct = 0
         for row in rows:
             sid = str(row["id"])
-            selected_here = float(scores[sid]) >= float(tau)
+            score = scores.get(sid)
+            selected_here = score is not None and float(score) >= float(tau)
             if selected_here:
                 selected += 1
                 correct += int(row["baseline_correct"])
