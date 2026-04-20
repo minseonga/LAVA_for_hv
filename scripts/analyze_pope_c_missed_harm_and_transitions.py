@@ -7,7 +7,7 @@ import json
 import math
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 def parse_yes_no(text: str) -> str:
@@ -236,6 +236,52 @@ def score_row(row: Mapping[str, Any], specs: Sequence[Mapping[str, Any]]) -> Opt
     return mean(vals)
 
 
+def orient_value(value: float, direction: str) -> float:
+    return float(value) if str(direction) == "high" else -float(value)
+
+
+def z_value(row: Mapping[str, Any], spec: Mapping[str, Any]) -> Optional[float]:
+    x = parse_float(row.get(str(spec["feature"])))
+    if x is None:
+        return None
+    x = orient_value(float(x), str(spec.get("direction", "high")))
+    return float((x - float(spec["mu"])) / float(spec["sd"] or 1.0))
+
+
+def infer_single_feature_specs(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    feature_names: Sequence[str],
+    min_present_rate: float,
+) -> List[Dict[str, Any]]:
+    specs: List[Dict[str, Any]] = []
+    for col in feature_names:
+        n_present = sum(1 for row in rows if parse_float(row.get(col)) is not None)
+        if n_present < max(5, int(float(min_present_rate) * len(rows))):
+            continue
+        paired = [(parse_float(row.get(col)), int(row.get("harm", 0))) for row in rows]
+        paired = [(x, y) for x, y in paired if x is not None]
+        vals = [float(x) for x, _ in paired]
+        ys = [int(y) for _, y in paired]
+        auc_high = auroc(vals, ys)
+        if auc_high is None:
+            continue
+        auc_low = 1.0 - auc_high
+        direction = "high" if auc_high >= auc_low else "low"
+        oriented = vals if direction == "high" else [-x for x in vals]
+        specs.append(
+            {
+                "feature": col,
+                "direction": direction,
+                "auroc": max(float(auc_high), float(auc_low)),
+                "mu": mean(oriented),
+                "sd": pstdev(oriented),
+            }
+        )
+    specs.sort(key=lambda x: float(x["auroc"]), reverse=True)
+    return specs
+
+
 def choose_threshold(rows: Sequence[Mapping[str, Any]], scores: Mapping[str, float]) -> Optional[float]:
     vals = sorted(set(float(v) for v in scores.values()))
     if not vals:
@@ -262,6 +308,204 @@ def choose_threshold(rows: Sequence[Mapping[str, Any]], scores: Mapping[str, flo
             best_key = key
             best_tau = tau
     return best_tau
+
+
+def evaluate_scores(
+    rows: Sequence[Mapping[str, Any]],
+    scores: Mapping[str, float],
+    *,
+    threshold: Optional[float] = None,
+) -> Dict[str, Any]:
+    tau = threshold if threshold is not None else choose_threshold(rows, scores)
+    selected = harm_fixed = help_lost = neutral = correct = 0
+    if tau is None:
+        correct = sum(int(row["intervention_correct"]) for row in rows)
+        return {
+            "threshold": None,
+            "selected": 0,
+            "selected_harm": 0,
+            "selected_help": 0,
+            "selected_neutral": 0,
+            "net": 0,
+            "final_acc": correct / len(rows) if rows else 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+        }
+    for row in rows:
+        sid = str(row["id"])
+        selected_here = sid in scores and float(scores[sid]) >= float(tau)
+        if selected_here:
+            selected += 1
+            harm_fixed += int(row["harm"])
+            help_lost += int(row["help"])
+            if not int(row["harm"]) and not int(row["help"]):
+                neutral += 1
+            correct += int(row["baseline_correct"])
+        else:
+            correct += int(row["intervention_correct"])
+    n_harm = sum(int(row["harm"]) for row in rows)
+    return {
+        "threshold": tau,
+        "selected": selected,
+        "selected_harm": harm_fixed,
+        "selected_help": help_lost,
+        "selected_neutral": neutral,
+        "net": harm_fixed - help_lost,
+        "final_acc": correct / len(rows) if rows else 0.0,
+        "precision": harm_fixed / selected if selected else 0.0,
+        "recall": harm_fixed / n_harm if n_harm else 0.0,
+    }
+
+
+def make_interaction_scores(
+    rows: Sequence[Mapping[str, Any]],
+    token_spec: Mapping[str, Any],
+    aux_spec: Mapping[str, Any],
+    *,
+    mode: str,
+    weight: float,
+    gate_tau: Optional[float] = None,
+) -> Dict[str, float]:
+    scores: Dict[str, float] = {}
+    for row in rows:
+        tz = z_value(row, token_spec)
+        az = z_value(row, aux_spec)
+        if tz is None or az is None:
+            continue
+        if mode == "add":
+            score = float(tz) + float(weight) * float(az)
+        elif mode == "mul":
+            score = float(tz) * float(az)
+        elif mode == "min":
+            score = min(float(tz), float(az))
+        elif mode == "max":
+            score = max(float(tz), float(az))
+        elif mode == "gate":
+            if gate_tau is None or float(az) < float(gate_tau):
+                continue
+            score = float(tz)
+        elif mode == "gate_add":
+            if gate_tau is None or float(az) < float(gate_tau):
+                continue
+            score = float(tz) + float(weight) * float(az)
+        else:
+            raise ValueError(f"Unsupported interaction mode: {mode}")
+        scores[str(row["id"])] = float(score)
+    return scores
+
+
+def quantile_values(values: Sequence[float], quantiles: Sequence[float]) -> List[float]:
+    if not values:
+        return []
+    vals = sorted(float(v) for v in values)
+    out: List[float] = []
+    for q in quantiles:
+        idx = min(len(vals) - 1, max(0, int(round(float(q) * (len(vals) - 1)))))
+        out.append(vals[idx])
+    return sorted(set(out))
+
+
+def run_interaction_sweep(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    token_features: Sequence[str],
+    aux_features: Sequence[str],
+    weights: Sequence[float],
+    min_present_rate: float,
+    top_k_each: int,
+) -> Dict[str, Any]:
+    token_specs = infer_single_feature_specs(rows, feature_names=token_features, min_present_rate=min_present_rate)
+    aux_specs = infer_single_feature_specs(rows, feature_names=aux_features, min_present_rate=min_present_rate)
+    token_specs = token_specs[: int(top_k_each)]
+    aux_specs = aux_specs[: int(top_k_each)]
+
+    results: List[Dict[str, Any]] = []
+    for token_spec in token_specs:
+        base_scores = {
+            str(row["id"]): float(z)
+            for row in rows
+            for z in [z_value(row, token_spec)]
+            if z is not None
+        }
+        base_eval = evaluate_scores(rows, base_scores)
+        results.append(
+            {
+                "mode": "token_only",
+                "weight": 0.0,
+                "gate_tau": None,
+                "token_feature": token_spec["feature"],
+                "token_direction": token_spec["direction"],
+                "token_auroc": token_spec["auroc"],
+                "aux_feature": "",
+                "aux_direction": "",
+                "aux_auroc": 0.0,
+                **base_eval,
+            }
+        )
+
+        for aux_spec in aux_specs:
+            aux_zs = [z_value(row, aux_spec) for row in rows]
+            aux_vals = [float(x) for x in aux_zs if x is not None]
+            gate_taus = quantile_values(aux_vals, [0.25, 0.5, 0.75, 0.9])
+            for mode in ("add", "mul", "min", "max"):
+                for w in weights if mode == "add" else [0.0]:
+                    scores = make_interaction_scores(rows, token_spec, aux_spec, mode=mode, weight=float(w))
+                    metric = evaluate_scores(rows, scores)
+                    results.append(
+                        {
+                            "mode": mode,
+                            "weight": float(w),
+                            "gate_tau": None,
+                            "token_feature": token_spec["feature"],
+                            "token_direction": token_spec["direction"],
+                            "token_auroc": token_spec["auroc"],
+                            "aux_feature": aux_spec["feature"],
+                            "aux_direction": aux_spec["direction"],
+                            "aux_auroc": aux_spec["auroc"],
+                            **metric,
+                        }
+                    )
+            for gate_tau in gate_taus:
+                for mode in ("gate", "gate_add"):
+                    for w in weights if mode == "gate_add" else [0.0]:
+                        scores = make_interaction_scores(
+                            rows,
+                            token_spec,
+                            aux_spec,
+                            mode=mode,
+                            weight=float(w),
+                            gate_tau=float(gate_tau),
+                        )
+                        metric = evaluate_scores(rows, scores)
+                        results.append(
+                            {
+                                "mode": mode,
+                                "weight": float(w),
+                                "gate_tau": float(gate_tau),
+                                "token_feature": token_spec["feature"],
+                                "token_direction": token_spec["direction"],
+                                "token_auroc": token_spec["auroc"],
+                                "aux_feature": aux_spec["feature"],
+                                "aux_direction": aux_spec["direction"],
+                                "aux_auroc": aux_spec["auroc"],
+                                **metric,
+                            }
+                        )
+
+    results.sort(
+        key=lambda r: (
+            float(r.get("final_acc", 0.0)),
+            int(r.get("net", 0)),
+            float(r.get("precision", 0.0)),
+            -int(r.get("selected", 0)),
+        ),
+        reverse=True,
+    )
+    return {
+        "token_specs": token_specs,
+        "aux_specs": aux_specs,
+        "top_results": results[:50],
+    }
 
 
 def count_outcomes(rows: Iterable[Mapping[str, Any]], route_key: Optional[str] = None) -> Dict[str, Any]:
@@ -319,6 +563,26 @@ def main() -> None:
     ap.add_argument("--min_present_rate", type=float, default=0.8)
     ap.add_argument("--feature_rows_only", type=parse_bool, default=False)
     ap.add_argument("--derive_decision_kl_features", type=parse_bool, default=False)
+    ap.add_argument("--interaction_sweep", type=parse_bool, default=False)
+    ap.add_argument(
+        "--interaction_token_features",
+        default=(
+            "cheap_target_gap_content_min,cheap_lp_content_min,cheap_lp_content_std,"
+            "cheap_lp_content_tail_gap,cheap_lp_content_min_len_corr,cheap_lp_all_mean"
+        ),
+    )
+    ap.add_argument(
+        "--interaction_aux_features",
+        default=(
+            "cheap_decision_candidate_prob_binary,cheap_decision_candidate_minus_alt,"
+            "cheap_decision_candidate_label_lp,cheap_decision_alt_label_lp,"
+            "cheap_decision_candidate_kl_uniform,cheap_decision_candidate_entropy,"
+            "cheap_decision_margin_signed_kl_proxy,cheap_decision_yesno_kl_uniform,"
+            "cheap_decision_yesno_entropy,cheap_decision_yesno_conf_abs"
+        ),
+    )
+    ap.add_argument("--interaction_weights", default="-1.0,-0.5,-0.25,0.25,0.5,1.0")
+    ap.add_argument("--interaction_top_k_each", type=int, default=8)
     ap.add_argument("--max_examples", type=int, default=20)
     args = ap.parse_args()
 
@@ -443,6 +707,18 @@ def main() -> None:
         "missed_harm_examples": missed_examples,
         "caught_harm_examples": caught_examples,
     }
+    if bool(args.interaction_sweep):
+        token_features = [x.strip() for x in str(args.interaction_token_features).split(",") if x.strip()]
+        aux_features = [x.strip() for x in str(args.interaction_aux_features).split(",") if x.strip()]
+        weights = [float(x.strip()) for x in str(args.interaction_weights).split(",") if x.strip()]
+        out["interaction_sweep"] = run_interaction_sweep(
+            rows,
+            token_features=token_features,
+            aux_features=aux_features,
+            weights=weights,
+            min_present_rate=float(args.min_present_rate),
+            top_k_each=int(args.interaction_top_k_each),
+        )
 
     Path(args.out_json).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out_json, "w", encoding="utf-8") as f:
@@ -461,6 +737,36 @@ def main() -> None:
         print(spec["feature"], "dir", spec["direction"], "auroc", round(float(spec["auroc"]), 6))
     print("missed_harm_by_transition", analysis["missed_harm_by_transition"])
     print("caught_harm_by_transition", analysis["caught_harm_by_transition"])
+    if bool(args.interaction_sweep):
+        top = out.get("interaction_sweep", {}).get("top_results", [])
+        print("interaction_sweep_top")
+        for row in top[:10]:
+            print(
+                "acc",
+                round(float(row.get("final_acc", 0.0)), 6),
+                "net",
+                row.get("net"),
+                "prec",
+                round(float(row.get("precision", 0.0)), 4),
+                "sel",
+                row.get("selected"),
+                "harm",
+                row.get("selected_harm"),
+                "help",
+                row.get("selected_help"),
+                "mode",
+                row.get("mode"),
+                "w",
+                row.get("weight"),
+                "gate",
+                row.get("gate_tau"),
+                "tok",
+                row.get("token_feature"),
+                row.get("token_direction"),
+                "aux",
+                row.get("aux_feature"),
+                row.get("aux_direction"),
+            )
     print("[saved]", args.out_json)
 
 
