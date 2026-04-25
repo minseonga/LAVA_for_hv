@@ -43,6 +43,7 @@ CONTROLLER_MODE="${CONTROLLER_MODE:-meta_strong}"
 CHEAP_C_TAU_OVERRIDE="${CHEAP_C_TAU_OVERRIDE:-}"
 CHEAP_HIDDEN_FEATURES="${CHEAP_HIDDEN_FEATURES:-false}"
 STAGE_A_PREFILTER_C_SCORE_MIN="${STAGE_A_PREFILTER_C_SCORE_MIN:-}"
+EXTRACT_ONLY="${EXTRACT_ONLY:-false}"
 
 BETA="${BETA:-1.0}"
 LAMBDA_A="${LAMBDA_A:-0.5}"
@@ -55,7 +56,7 @@ if [[ ! -f "$INTERVENTION_PRED_JSONL" ]]; then
   echo "[error] missing intervention predictions: $INTERVENTION_PRED_JSONL" >&2
   exit 1
 fi
-if [[ ! -f "$POLICY_BUNDLE_JSON" ]]; then
+if [[ "$EXTRACT_ONLY" != "true" && ! -f "$POLICY_BUNDLE_JSON" ]]; then
   echo "[error] missing policy bundle: $POLICY_BUNDLE_JSON" >&2
   exit 1
 fi
@@ -96,6 +97,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_discriminative_m
   --feature_order "$FEATURE_ORDER" \
   --controller_mode "$CONTROLLER_MODE" \
   --cheap_hidden_features "$CHEAP_HIDDEN_FEATURES" \
+  --extract_only "$EXTRACT_ONLY" \
   ${CHEAP_C_TAU_OVERRIDE:+--cheap_c_tau_override "$CHEAP_C_TAU_OVERRIDE"} \
   ${STAGE_A_PREFILTER_C_SCORE_MIN:+--stage_a_prefilter_c_score_min "$STAGE_A_PREFILTER_C_SCORE_MIN"} \
   --generate_baseline_on_fallback "$GENERATE_BASELINE_ON_FALLBACK" \

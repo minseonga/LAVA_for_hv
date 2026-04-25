@@ -428,7 +428,7 @@ def main() -> None:
     ap.add_argument("--question_file", type=str, required=True)
     ap.add_argument("--image_folder", type=str, required=True)
     ap.add_argument("--intervention_pred_jsonl", type=str, required=True)
-    ap.add_argument("--policy_bundle_json", type=str, required=True)
+    ap.add_argument("--policy_bundle_json", type=str, default="")
     ap.add_argument("--headset_json", type=str, required=True)
     ap.add_argument("--out_dir", type=str, required=True)
     ap.add_argument("--baseline_pred_jsonl", type=str, default="")
@@ -500,6 +500,15 @@ def main() -> None:
         default=False,
         help="Request hidden states during cheap-C replay and add same-forward image/text alignment features.",
     )
+    ap.add_argument(
+        "--extract_only",
+        type=parse_bool,
+        default=False,
+        help=(
+            "Compute stage_a + cheap PCP features and cached-label diagnostics only. "
+            "Routing is skipped and final predictions pass through the intervention output."
+        ),
+    )
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=False)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -527,7 +536,14 @@ def main() -> None:
         else {}
     )
     headset = load_headset(os.path.abspath(args.headset_json), late_start=int(args.late_start), late_end=int(args.late_end))
-    controller = MetaStrongController.from_bundle(read_json(os.path.abspath(args.policy_bundle_json)))
+    if bool(args.extract_only):
+        if args.stage_a_prefilter_c_score_min is not None:
+            raise ValueError("--extract_only cannot be combined with --stage_a_prefilter_c_score_min.")
+        controller = None
+    else:
+        if not str(args.policy_bundle_json or "").strip():
+            raise ValueError("--policy_bundle_json is required unless --extract_only true.")
+        controller = MetaStrongController.from_bundle(read_json(os.path.abspath(args.policy_bundle_json)))
     if str(args.runtime_backend) == "llava_next_official":
         from frgavr_cleanroom.llava_next_runtime import OfficialLlavaNextRuntime
 
@@ -638,7 +654,17 @@ def main() -> None:
                 )
 
             force_method_by_prefilter = False
-            if str(args.controller_mode) == "cheap_c_only":
+            if bool(args.extract_only):
+                if str(args.feature_order) == "cheap_first":
+                    cheap = compute_cheap()
+                    stage_a = compute_stage_a()
+                else:
+                    stage_a = compute_stage_a()
+                    cheap = compute_cheap()
+                n_stage_a_computed += 1
+                row["stage_a_prefilter_c_score"] = ""
+                row["stage_a_prefilter_skipped"] = 0
+            elif str(args.controller_mode) == "cheap_c_only":
                 cheap = compute_cheap()
                 stage_a = {}
                 row["stage_a_prefilter_c_score"] = ""
@@ -696,7 +722,15 @@ def main() -> None:
             row["harm"] = 0
             row["help"] = 0
 
-        if str(args.controller_mode) == "cheap_c_only":
+        if bool(args.extract_only):
+            row["expert"] = "extract_only"
+            row["route"] = "method"
+            row["b_score"] = ""
+            row["c_score"] = ""
+            row["f_score"] = ""
+            row["meta_score"] = ""
+            row["meta_tau"] = ""
+        elif str(args.controller_mode) == "cheap_c_only":
             scores = controller.score_components(row)
             c_score = scores.get("c_score")
             c_weight = 1.0 if controller.c_expert is None else float(controller.c_expert.w_c)
@@ -740,7 +774,9 @@ def main() -> None:
 
         final_text = intervention_text
         final_source = "method"
-        if str(row.get("route")) == "baseline":
+        if bool(args.extract_only):
+            final_source = "intervention_passthrough"
+        elif str(row.get("route")) == "baseline":
             if baseline_text:
                 final_text = baseline_text
                 final_source = "baseline_cached"
@@ -826,7 +862,9 @@ def main() -> None:
                 "baseline_pred_jsonl": os.path.abspath(args.baseline_pred_jsonl) if str(args.baseline_pred_jsonl or "").strip() else "",
                 "baseline_pred_key": str(args.baseline_pred_key),
                 "gt_csv": os.path.abspath(args.gt_csv) if str(args.gt_csv or "").strip() else "",
-                "policy_bundle_json": os.path.abspath(args.policy_bundle_json),
+                "policy_bundle_json": (
+                    os.path.abspath(args.policy_bundle_json) if str(args.policy_bundle_json or "").strip() else ""
+                ),
                 "headset_json": os.path.abspath(args.headset_json),
                 "model_path": str(args.model_path),
                 "model_base": str(args.model_base),
@@ -842,6 +880,7 @@ def main() -> None:
                 "late_end": int(args.late_end),
                 "feature_order": str(args.feature_order),
                 "controller_mode": str(args.controller_mode),
+                "extract_only": bool(args.extract_only),
                 "stage_a_prefilter_c_score_min": stage_a_prefilter,
                 "cheap_c_tau_override": args.cheap_c_tau_override,
                 "generate_baseline_on_fallback": bool(args.generate_baseline_on_fallback),
