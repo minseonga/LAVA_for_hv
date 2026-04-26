@@ -509,6 +509,15 @@ def main() -> None:
             "Routing is skipped and final predictions pass through the intervention output."
         ),
     )
+    ap.add_argument(
+        "--skip_stage_a",
+        type=parse_bool,
+        default=False,
+        help=(
+            "Skip Stage-A/headset attention replay and extract cheap PCP features only. "
+            "Use this for PCP C/D calibration where stage_a_score is not needed."
+        ),
+    )
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=False)
     ap.add_argument("--log_every", type=int, default=25)
     args = ap.parse_args()
@@ -535,7 +544,13 @@ def main() -> None:
         if str(args.gt_csv or "").strip()
         else {}
     )
-    headset = load_headset(os.path.abspath(args.headset_json), late_start=int(args.late_start), late_end=int(args.late_end))
+    headset = None
+    if not bool(args.skip_stage_a):
+        headset = load_headset(
+            os.path.abspath(args.headset_json),
+            late_start=int(args.late_start),
+            late_end=int(args.late_end),
+        )
     if bool(args.extract_only):
         if args.stage_a_prefilter_c_score_min is not None:
             raise ValueError("--extract_only cannot be combined with --stage_a_prefilter_c_score_min.")
@@ -638,6 +653,8 @@ def main() -> None:
                 )
 
             def compute_stage_a() -> Dict[str, float]:
+                if bool(args.skip_stage_a):
+                    return {}
                 stage_pack = runtime.teacher_force_candidate(
                     image=image,
                     question=stage_question,
@@ -655,13 +672,17 @@ def main() -> None:
 
             force_method_by_prefilter = False
             if bool(args.extract_only):
-                if str(args.feature_order) == "cheap_first":
+                if bool(args.skip_stage_a):
+                    cheap = compute_cheap()
+                    stage_a = {}
+                elif str(args.feature_order) == "cheap_first":
                     cheap = compute_cheap()
                     stage_a = compute_stage_a()
                 else:
                     stage_a = compute_stage_a()
                     cheap = compute_cheap()
-                n_stage_a_computed += 1
+                if not bool(args.skip_stage_a):
+                    n_stage_a_computed += 1
                 row["stage_a_prefilter_c_score"] = ""
                 row["stage_a_prefilter_skipped"] = 0
             elif str(args.controller_mode) == "cheap_c_only":
@@ -881,6 +902,7 @@ def main() -> None:
                 "feature_order": str(args.feature_order),
                 "controller_mode": str(args.controller_mode),
                 "extract_only": bool(args.extract_only),
+                "skip_stage_a": bool(args.skip_stage_a),
                 "stage_a_prefilter_c_score_min": stage_a_prefilter,
                 "cheap_c_tau_override": args.cheap_c_tau_override,
                 "generate_baseline_on_fallback": bool(args.generate_baseline_on_fallback),

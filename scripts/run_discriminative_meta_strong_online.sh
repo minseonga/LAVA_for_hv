@@ -44,6 +44,7 @@ CHEAP_C_TAU_OVERRIDE="${CHEAP_C_TAU_OVERRIDE:-}"
 CHEAP_HIDDEN_FEATURES="${CHEAP_HIDDEN_FEATURES:-false}"
 STAGE_A_PREFILTER_C_SCORE_MIN="${STAGE_A_PREFILTER_C_SCORE_MIN:-}"
 EXTRACT_ONLY="${EXTRACT_ONLY:-false}"
+SKIP_STAGE_A="${SKIP_STAGE_A:-false}"
 
 BETA="${BETA:-1.0}"
 LAMBDA_A="${LAMBDA_A:-0.5}"
@@ -51,6 +52,10 @@ LATE_START="${LATE_START:--1}"
 LATE_END="${LATE_END:--1}"
 GENERATE_BASELINE_ON_FALLBACK="${GENERATE_BASELINE_ON_FALLBACK:-false}"
 BASELINE_MAX_NEW_TOKENS="${BASELINE_MAX_NEW_TOKENS:-8}"
+
+if [[ "$EXTRACT_ONLY" == "true" ]]; then
+  POLICY_BUNDLE_JSON=""
+fi
 
 if [[ ! -f "$INTERVENTION_PRED_JSONL" ]]; then
   echo "[error] missing intervention predictions: $INTERVENTION_PRED_JSONL" >&2
@@ -98,6 +103,7 @@ PYTHONUNBUFFERED=1 PYTHONPATH="$CAL_ROOT" "$PY_BIN" scripts/run_discriminative_m
   --controller_mode "$CONTROLLER_MODE" \
   --cheap_hidden_features "$CHEAP_HIDDEN_FEATURES" \
   --extract_only "$EXTRACT_ONLY" \
+  --skip_stage_a "$SKIP_STAGE_A" \
   ${CHEAP_C_TAU_OVERRIDE:+--cheap_c_tau_override "$CHEAP_C_TAU_OVERRIDE"} \
   ${STAGE_A_PREFILTER_C_SCORE_MIN:+--stage_a_prefilter_c_score_min "$STAGE_A_PREFILTER_C_SCORE_MIN"} \
   --generate_baseline_on_fallback "$GENERATE_BASELINE_ON_FALLBACK" \
