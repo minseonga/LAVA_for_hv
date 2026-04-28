@@ -41,8 +41,20 @@ def main():
                     help="Number of images to sample from train2014")
     ap.add_argument("--n_questions_per_image", type=int, default=6,
                     help="Total yes/no questions per image (must be even: half yes, half no)")
+    ap.add_argument("--min_present_categories", type=int, default=2,
+                    help="Minimum number of present categories required per sampled image")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+
+    if args.n_questions_per_image <= 0 or args.n_questions_per_image % 2 != 0:
+        raise ValueError("--n_questions_per_image must be a positive even number")
+    n_half = args.n_questions_per_image // 2
+    if args.min_present_categories < n_half:
+        print(
+            "[WARN] --min_present_categories is smaller than half of "
+            "--n_questions_per_image; some images may produce fewer than "
+            f"{args.n_questions_per_image} rows."
+        )
 
     os.makedirs(args.out_dir, exist_ok=True)
     random.seed(args.seed)
@@ -66,11 +78,10 @@ def main():
     # Build image_id -> filename
     img_id_to_file = {img["id"]: img["file_name"] for img in coco["images"]}
 
-    # Filter to images that actually exist on disk
+    # Filter to images that actually exist on disk.
     valid_img_ids = []
     for img_id, fname in img_id_to_file.items():
-        # Only include images that have at least 2 categories (so we can make yes/no pairs)
-        if len(img_to_cats[img_id]) >= 2 and os.path.exists(os.path.join(args.image_folder, fname)):
+        if len(img_to_cats[img_id]) >= args.min_present_categories and os.path.exists(os.path.join(args.image_folder, fname)):
             valid_img_ids.append(img_id)
 
     print(f"[DEBUG] Valid train2014 images with annotations: {len(valid_img_ids)}")
@@ -106,7 +117,6 @@ def main():
         return absent[:n]
 
     # ── 3. Generate questions ────────────────────────────────────────
-    n_half = args.n_questions_per_image // 2  # half yes, half no
 
     random_rows = []
     adversarial_rows = []
