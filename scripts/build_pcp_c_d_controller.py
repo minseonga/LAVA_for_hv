@@ -72,14 +72,16 @@ def is_route_candidate(row: Dict[str, Any], candidate_filter: str) -> bool:
     mode = str(candidate_filter or "all")
     if mode == "all":
         return True
+    baseline_label = str(row.get("baseline_label", "")).strip().lower()
+    intervention_label = str(row.get("intervention_label", "")).strip().lower()
+    if baseline_label not in {"yes", "no"}:
+        baseline_label = parse_yes_no(row.get("baseline_text", ""))
+    if intervention_label not in {"yes", "no"}:
+        intervention_label = parse_yes_no(row.get("intervention_text", ""))
     if mode == "changed_answer":
-        baseline_label = str(row.get("baseline_label", "")).strip().lower()
-        intervention_label = str(row.get("intervention_label", "")).strip().lower()
-        if baseline_label not in {"yes", "no"}:
-            baseline_label = parse_yes_no(row.get("baseline_text", ""))
-        if intervention_label not in {"yes", "no"}:
-            intervention_label = parse_yes_no(row.get("intervention_text", ""))
         return baseline_label in {"yes", "no"} and intervention_label in {"yes", "no"} and baseline_label != intervention_label
+    if mode == "yes_to_no":
+        return baseline_label == "yes" and intervention_label == "no"
     raise ValueError(f"Unsupported candidate_filter={candidate_filter!r}")
 
 
@@ -361,11 +363,12 @@ def main() -> None:
         "--candidate_filter",
         type=str,
         default="all",
-        choices=["all", "changed_answer"],
+        choices=["all", "changed_answer", "yes_to_no"],
         help=(
             "Rows eligible for fallback during calibration. changed_answer uses only "
-            "samples where baseline and intervention yes/no labels differ; this is "
-            "deployable because it uses predictions, not ground truth."
+            "samples where baseline and intervention yes/no labels differ; yes_to_no "
+            "uses the subset where the intervention suppresses a baseline yes answer. "
+            "Both are deployable because they use predictions, not ground truth."
         ),
     )
     args = ap.parse_args()

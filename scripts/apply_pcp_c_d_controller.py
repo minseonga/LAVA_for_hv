@@ -65,7 +65,7 @@ def main() -> None:
         "--candidate_filter",
         type=str,
         default="auto",
-        choices=["auto", "all", "changed_answer"],
+        choices=["auto", "all", "changed_answer", "yes_to_no"],
         help="Fallback-eligible rows. auto uses the policy_json candidate_filter when available.",
     )
     args = ap.parse_args()
