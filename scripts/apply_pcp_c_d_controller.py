@@ -61,6 +61,13 @@ def main() -> None:
     ap.add_argument("--out_dir", type=str, required=True)
     ap.add_argument("--family", type=str, default="selected", choices=["selected", "c_only", "d_only", "cd_fusion"])
     ap.add_argument("--derive_decision_kl", type=parse_bool, default=True)
+    ap.add_argument(
+        "--candidate_filter",
+        type=str,
+        default="auto",
+        choices=["auto", "all", "changed_answer"],
+        help="Fallback-eligible rows. auto uses the policy_json candidate_filter when available.",
+    )
     args = ap.parse_args()
 
     rows = pcp.load_rows(os.path.abspath(args.rows_csv), derive_decision_kl=bool(args.derive_decision_kl))
@@ -73,6 +80,9 @@ def main() -> None:
     family = str(policy["family"])
     alpha = float(policy["alpha"])
     tau = float(policy["tau"])
+    candidate_filter = str(args.candidate_filter)
+    if candidate_filter == "auto":
+        candidate_filter = str(bundle.get("candidate_filter") or "all")
 
     route_rows: List[Dict[str, Any]] = []
     pred_rows: List[Dict[str, Any]] = []
@@ -85,7 +95,8 @@ def main() -> None:
             alpha=alpha,
         )
         route = "method"
-        if score is not None and float(score) >= float(tau):
+        can_route = pcp.is_route_candidate(row, candidate_filter)
+        if can_route and score is not None and float(score) >= float(tau):
             route = "baseline"
         final_text = str(row.get("intervention_text", ""))
         final_source = "method"
@@ -101,6 +112,7 @@ def main() -> None:
             "alpha": alpha,
             "tau": tau,
             "score": score,
+            "route_candidate": int(can_route),
             "c_score": pcp.mean_z_score(row, c_features),
             "d_score": pcp.mean_z_score(row, d_features),
             "harm": int(base.maybe_int(row.get("harm")) or 0),
@@ -130,6 +142,7 @@ def main() -> None:
         family=family,
         alpha=alpha,
         tau=tau,
+        candidate_filter=candidate_filter,
     )
 
     out_dir = os.path.abspath(args.out_dir)
@@ -149,6 +162,7 @@ def main() -> None:
                 "rows_csv": os.path.abspath(args.rows_csv),
                 "policy_json": os.path.abspath(args.policy_json),
                 "family": str(args.family),
+                "candidate_filter": candidate_filter,
                 "derive_decision_kl": bool(args.derive_decision_kl),
             },
             "policy": {

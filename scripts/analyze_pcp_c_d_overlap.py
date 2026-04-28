@@ -24,11 +24,14 @@ def selected_ids_for_family(
     family: str,
     alpha: float,
     tau: float,
+    candidate_filter: str,
 ) -> Set[str]:
     out: Set[str] = set()
     for row in rows:
         sid = str(row.get("id", "")).strip()
         if not sid:
+            continue
+        if not pcp.is_route_candidate(row, candidate_filter):
             continue
         score = None
         if family == "c_only":
@@ -147,6 +150,7 @@ def main() -> None:
     with open(os.path.abspath(args.policy_json), "r", encoding="utf-8") as f:
         bundle: Dict[str, Any] = json.load(f)
 
+    candidate_filter = str(bundle.get("candidate_filter") or "all")
     c_features = list(bundle.get("selected_c_features") or [])
     d_features = list(bundle.get("selected_d_features") or [])
     best_results = bundle.get("best_results") or {}
@@ -163,6 +167,7 @@ def main() -> None:
         family="c_only",
         alpha=float(c_policy["alpha"]),
         tau=float(c_policy["tau"]),
+        candidate_filter=candidate_filter,
     )
     d_ids = selected_ids_for_family(
         rows,
@@ -171,6 +176,7 @@ def main() -> None:
         family="d_only",
         alpha=float(d_policy["alpha"]),
         tau=float(d_policy["tau"]),
+        candidate_filter=candidate_filter,
     )
     both_ids = c_ids & d_ids
     union_ids = c_ids | d_ids
@@ -183,6 +189,7 @@ def main() -> None:
             "rows_csv": os.path.abspath(args.rows_csv),
             "policy_json": os.path.abspath(args.policy_json),
             "derive_decision_kl": bool(args.derive_decision_kl),
+            "candidate_filter": candidate_filter,
         },
         "policies": {
             "c_only": c_policy,

@@ -16,6 +16,23 @@ def parse_bool(value: object) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def parse_yes_no(text: object) -> str:
+    s = str(text or "").strip().lower()
+    if not s:
+        return ""
+    first = s.split(".", 1)[0].replace(",", " ")
+    words = {w.strip() for w in first.split()}
+    if "no" in words or "not" in words:
+        return "no"
+    if "yes" in words:
+        return "yes"
+    if s.startswith("no"):
+        return "no"
+    if s.startswith("yes"):
+        return "yes"
+    return ""
+
+
 def add_decision_kl_features(row: Dict[str, Any]) -> None:
     candidate_p = base.maybe_float(row.get("cheap_decision_candidate_prob_binary"))
     if candidate_p is not None:
@@ -49,6 +66,21 @@ def load_rows(rows_csv: str, *, derive_decision_kl: bool) -> List[Dict[str, Any]
             add_decision_kl_features(merged)
         out.append(merged)
     return out
+
+
+def is_route_candidate(row: Dict[str, Any], candidate_filter: str) -> bool:
+    mode = str(candidate_filter or "all")
+    if mode == "all":
+        return True
+    if mode == "changed_answer":
+        baseline_label = str(row.get("baseline_label", "")).strip().lower()
+        intervention_label = str(row.get("intervention_label", "")).strip().lower()
+        if baseline_label not in {"yes", "no"}:
+            baseline_label = parse_yes_no(row.get("baseline_text", ""))
+        if intervention_label not in {"yes", "no"}:
+            intervention_label = parse_yes_no(row.get("intervention_text", ""))
+        return baseline_label in {"yes", "no"} and intervention_label in {"yes", "no"} and baseline_label != intervention_label
+    raise ValueError(f"Unsupported candidate_filter={candidate_filter!r}")
 
 
 def feature_present_count(rows: Sequence[Dict[str, Any]], feature: str) -> int:
@@ -106,6 +138,7 @@ def evaluate_policy(
     family: str,
     alpha: float,
     tau: float,
+    candidate_filter: str = "all",
 ) -> Dict[str, Any]:
     n = 0
     selected = 0
@@ -145,7 +178,8 @@ def evaluate_policy(
         baseline_correct_total += int(bc)
         intervention_correct_total += int(ic)
 
-        use_baseline = bool(float(score) >= float(tau))
+        can_route = is_route_candidate(row, str(candidate_filter))
+        use_baseline = bool(can_route and float(score) >= float(tau))
         if use_baseline:
             selected += 1
             selected_harm += harm
@@ -232,6 +266,7 @@ def search_family(
     min_baseline_rate: float,
     max_baseline_rate: float,
     min_selected_count: int,
+    candidate_filter: str,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     candidates: List[Dict[str, Any]] = []
     best: Optional[Dict[str, Any]] = None
@@ -246,6 +281,8 @@ def search_family(
     for alpha in alphas:
         score_values: List[float] = []
         for row in rows:
+            if not is_route_candidate(row, str(candidate_filter)):
+                continue
             c_score = mean_z_score(row, c_features)
             d_score = mean_z_score(row, d_features)
             if family == "c_only":
@@ -269,6 +306,7 @@ def search_family(
                 family=family,
                 alpha=float(alpha),
                 tau=float(tau),
+                candidate_filter=str(candidate_filter),
             )
             candidates.append(result)
             if int(result["selected_count"]) < int(min_selected_count):
@@ -319,15 +357,30 @@ def main() -> None:
     ap.add_argument("--min_baseline_rate", type=float, default=0.0)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
     ap.add_argument("--min_selected_count", type=int, default=0)
+    ap.add_argument(
+        "--candidate_filter",
+        type=str,
+        default="all",
+        choices=["all", "changed_answer"],
+        help=(
+            "Rows eligible for fallback during calibration. changed_answer uses only "
+            "samples where baseline and intervention yes/no labels differ; this is "
+            "deployable because it uses predictions, not ground truth."
+        ),
+    )
     args = ap.parse_args()
 
     rows = load_rows(os.path.abspath(args.rows_csv), derive_decision_kl=bool(args.derive_decision_kl))
+    candidate_filter = str(args.candidate_filter)
+    fit_rows = [row for row in rows if is_route_candidate(row, candidate_filter)]
+    if not fit_rows:
+        raise RuntimeError(f"No rows remain after candidate_filter={candidate_filter!r}.")
     c_feature_names = [x.strip() for x in str(args.c_feature_cols).split(",") if x.strip()]
     d_feature_names = [x.strip() for x in str(args.d_feature_cols).split(",") if x.strip()]
     alpha_grid = [float(x.strip()) for x in str(args.alpha_grid).split(",") if x.strip()]
 
     c_metrics, selected_c = orient_feature_list(
-        rows,
+        fit_rows,
         c_feature_names,
         target="harm",
         min_present_rate=float(args.min_present_rate),
@@ -335,7 +388,7 @@ def main() -> None:
         top_k=int(args.top_k_c),
     )
     d_metrics, selected_d = orient_feature_list(
-        rows,
+        fit_rows,
         d_feature_names,
         target="harm",
         min_present_rate=float(args.min_present_rate),
@@ -357,6 +410,7 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
+            candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
         if best is not None:
@@ -373,6 +427,7 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
+            candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
         if best is not None:
@@ -389,6 +444,7 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
+            candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
         if best is not None:
@@ -412,6 +468,7 @@ def main() -> None:
     base.write_csv(tau_sweep_csv, sweep_rows)
     policy_obj = {
         "rows_csv": os.path.abspath(args.rows_csv),
+        "candidate_filter": candidate_filter,
         "selected_c_features": selected_c,
         "selected_d_features": selected_d,
         "best_results": family_results,
@@ -435,11 +492,15 @@ def main() -> None:
                 "min_baseline_rate": float(args.min_baseline_rate),
                 "max_baseline_rate": float(args.max_baseline_rate),
                 "min_selected_count": int(args.min_selected_count),
+                "candidate_filter": candidate_filter,
             },
             "counts": {
                 "n_rows": int(len(rows)),
                 "n_harm": int(sum(int(row.get("harm", 0) or 0) for row in rows)),
                 "n_help": int(sum(int(row.get("help", 0) or 0) for row in rows)),
+                "n_route_candidates": int(len(fit_rows)),
+                "n_route_candidate_harm": int(sum(int(row.get("harm", 0) or 0) for row in fit_rows)),
+                "n_route_candidate_help": int(sum(int(row.get("help", 0) or 0) for row in fit_rows)),
             },
             "selected_c_features": selected_c,
             "selected_d_features": selected_d,

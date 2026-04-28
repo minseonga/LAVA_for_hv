@@ -24,6 +24,7 @@ TOP_K_C="${TOP_K_C:-3}"
 TOP_K_D="${TOP_K_D:-4}"
 ALPHA_GRID="${ALPHA_GRID:-0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9}"
 TAU_OBJECTIVE="${TAU_OBJECTIVE:-final_acc}"
+CANDIDATE_FILTER="${CANDIDATE_FILTER:-changed_answer}"
 
 LLAVA15_PY="${LLAVA15_PY:-/home/kms/miniconda3/envs/vga_base/bin/python}"
 LLAVA_NEXT_PY="${LLAVA_NEXT_PY:-/home/kms/miniconda3/envs/llava_next_official/bin/python}"
@@ -153,7 +154,8 @@ PYTHONPATH="$CAL_ROOT" "$PY_BIN" "$CAL_ROOT/scripts/build_pcp_c_d_controller.py"
   --top_k_c "$TOP_K_C" \
   --top_k_d "$TOP_K_D" \
   --alpha_grid "$ALPHA_GRID" \
-  --tau_objective "$TAU_OBJECTIVE"
+  --tau_objective "$TAU_OBJECTIVE" \
+  --candidate_filter "$CANDIDATE_FILTER"
 
 echo "[3/3] overlap analysis -> $OVERLAP_JSON"
 PYTHONPATH="$CAL_ROOT" "$PY_BIN" "$CAL_ROOT/scripts/analyze_pcp_c_d_overlap.py" \
