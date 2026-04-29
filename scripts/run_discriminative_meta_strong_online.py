@@ -905,6 +905,7 @@ def main() -> None:
                 "skip_stage_a": bool(args.skip_stage_a),
                 "stage_a_prefilter_c_score_min": stage_a_prefilter,
                 "cheap_c_tau_override": args.cheap_c_tau_override,
+                "cheap_hidden_features": bool(args.cheap_hidden_features),
                 "generate_baseline_on_fallback": bool(args.generate_baseline_on_fallback),
             },
             "counts": {
