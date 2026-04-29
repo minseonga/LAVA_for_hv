@@ -32,7 +32,7 @@ export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
 
 TASK="${TASK:-pope}"                 # pope | chair
 BACKBONE="${BACKBONE:-llava15}"      # llava15 | llava_next | qwen25_vl | qwen35_vl
-METHOD="${METHOD:-vga}"              # baseline | vga | pai
+METHOD="${METHOD:-vga}"              # baseline | vga | pai | pai_attn | pai_cd | pai_cfg
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/multibackbone_raw/${TASK}/${BACKBONE}/${METHOD}}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
 LIMIT="${LIMIT:-0}"
@@ -303,6 +303,27 @@ run_pai() {
     --seed "$SEED"
 }
 
+configure_pai_variant() {
+  case "$METHOD" in
+    pai)
+      # Legacy mode: honor externally supplied PAI_USE_ATTN/PAI_USE_CFG.
+      ;;
+    pai_attn|pai_no_cd)
+      PAI_USE_ATTN=1
+      PAI_USE_CFG=0
+      ;;
+    pai_cd|pai_full)
+      PAI_USE_ATTN=1
+      PAI_USE_CFG=1
+      ;;
+    pai_cfg)
+      PAI_USE_ATTN=0
+      PAI_USE_CFG=1
+      ;;
+  esac
+  echo "[settings] pai_use_attn=$PAI_USE_ATTN pai_use_cfg=$PAI_USE_CFG alpha=$PAI_ALPHA gamma=$PAI_GAMMA layers=$PAI_START_LAYER-$PAI_END_LAYER"
+}
+
 if ! reuse_file "$PRED_JSONL"; then
   remove_if_overwrite "$PRED_JSONL"
   case "$METHOD" in
@@ -351,11 +372,12 @@ if ! reuse_file "$PRED_JSONL"; then
     vga)
       run_vga_like "$VGA_USE_ADD" "$VGA_START_LAYER" "$VGA_END_LAYER"
       ;;
-    pai)
+    pai|pai_attn|pai_no_cd|pai_cd|pai_full|pai_cfg)
       if [[ "$BACKBONE" == "qwen35_vl" ]]; then
         echo "[error] PAI for BACKBONE=qwen35_vl requires a PAI ModelLoader/adapter port." >&2
         exit 2
       fi
+      configure_pai_variant
       run_pai
       ;;
     *)
@@ -373,7 +395,7 @@ if [[ "$TASK" == "pope" ]]; then
     if [[ "$METHOD" == "baseline" && "$BACKBONE" == "llava15" ]]; then
       PRED_TEXT_KEY="text"
     fi
-    if [[ "$METHOD" == "pai" ]]; then
+    if [[ "$METHOD" == pai* ]]; then
       PRED_TEXT_KEY="text"
     fi
   fi
@@ -389,7 +411,7 @@ else
     if [[ "$METHOD" == "baseline" && "$BACKBONE" == "llava15" ]]; then
       CAPTION_KEY="text"
     fi
-    if [[ "$METHOD" == "pai" ]]; then
+    if [[ "$METHOD" == pai* ]]; then
       CAPTION_KEY="text"
     fi
   fi
