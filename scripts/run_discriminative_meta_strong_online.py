@@ -90,6 +90,76 @@ def summarize(values: Sequence[float], prefix: str) -> Dict[str, float]:
     }
 
 
+def normalize_object_text(text: object) -> str:
+    chars: List[str] = []
+    for ch in str(text or "").strip().lower():
+        chars.append(ch if ch.isalnum() else " ")
+    return " ".join("".join(chars).split())
+
+
+def object_terms_from_sample(sample: Mapping[str, Any]) -> List[str]:
+    raw = sample.get("object", sample.get("objects", ""))
+    if isinstance(raw, str):
+        vals: List[Any] = [raw]
+    elif isinstance(raw, Sequence):
+        vals = list(raw)
+    else:
+        vals = []
+    out: List[str] = []
+    seen = set()
+    for value in vals:
+        term = str(value or "").strip()
+        norm = normalize_object_text(term)
+        if not norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(term)
+    return out
+
+
+def token_decode_norm(tokenizer: Any, token_ids: Sequence[int]) -> str:
+    try:
+        text = tokenizer.decode([int(i) for i in token_ids], skip_special_tokens=True)
+    except Exception:
+        text = ""
+    return normalize_object_text(text)
+
+
+def object_token_indices(tokenizer: Any, cont_ids: torch.Tensor, object_terms: Sequence[str]) -> List[int]:
+    if int(cont_ids.numel()) <= 0 or not object_terms:
+        return []
+    ids = [int(x) for x in cont_ids.tolist()]
+    selected = set()
+    for term in object_terms:
+        target = normalize_object_text(term)
+        if not target:
+            continue
+        try:
+            term_len = len(tokenizer(str(term), add_special_tokens=False).input_ids)
+        except Exception:
+            term_len = len(target.split())
+        max_len = max(1, min(int(term_len) + 4, 12))
+        exact_spans: List[range] = []
+        loose_spans: List[range] = []
+        for start in range(len(ids)):
+            for end in range(start + 1, min(len(ids), start + max_len) + 1):
+                norm = token_decode_norm(tokenizer, ids[start:end])
+                if not norm:
+                    continue
+                if norm == target:
+                    exact_spans.append(range(start, end))
+                elif target in norm.split() or (" " in target and target in norm):
+                    loose_spans.append(range(start, end))
+        spans = exact_spans if exact_spans else loose_spans
+        if not spans:
+            continue
+        min_size = min(len(span) for span in spans)
+        for span in spans:
+            if len(span) == min_size:
+                selected.update(int(i) for i in span)
+    return sorted(selected)
+
+
 _YESNO_TOKEN_ID_CACHE: Dict[int, Dict[str, List[int]]] = {}
 
 
@@ -191,13 +261,14 @@ def norm_or_zero(value: Optional[torch.Tensor]) -> float:
     return float(torch.linalg.vector_norm(value.to(torch.float32)).item())
 
 
-def hidden_alignment_features(pack: ForwardPack) -> Dict[str, Any]:
+def hidden_alignment_features(pack: ForwardPack, object_indices: Sequence[int]) -> Dict[str, Any]:
     hidden = getattr(pack, "last_hidden_state", None)
     if hidden is None:
         return {}
 
     h = hidden.to(torch.float32)
     cont_positions = [int(i) for i in pack.cont_label_positions.tolist()]
+    object_positions = [cont_positions[int(i)] for i in object_indices if 0 <= int(i) < len(cont_positions)]
     decision_positions = [int(i) for i in pack.decision_positions.tolist()]
     vision_positions = [int(i) for i in pack.vision_positions.tolist()]
     text_positions = [int(i) for i in pack.text_positions.tolist()]
@@ -208,6 +279,7 @@ def hidden_alignment_features(pack: ForwardPack) -> Dict[str, Any]:
     mean_decision = mean_hidden(h, decision_positions)
     first_answer = mean_hidden(h, cont_positions[:1])
     mean_answer = mean_hidden(h, cont_positions)
+    mean_object = mean_hidden(h, object_positions)
     vision_mean = mean_hidden(h, vision_positions)
     prompt_mean = mean_hidden(h, prompt_positions)
 
@@ -217,6 +289,8 @@ def hidden_alignment_features(pack: ForwardPack) -> Dict[str, Any]:
     mean_decision_prompt = cosine_or_zero(mean_decision, prompt_mean)
     answer_vision = cosine_or_zero(mean_answer, vision_mean)
     answer_prompt = cosine_or_zero(mean_answer, prompt_mean)
+    object_vision = cosine_or_zero(mean_object, vision_mean)
+    object_prompt = cosine_or_zero(mean_object, prompt_mean)
 
     return {
         "cheap_hidden_first_decision_to_vision_cos": first_decision_vision,
@@ -228,12 +302,16 @@ def hidden_alignment_features(pack: ForwardPack) -> Dict[str, Any]:
         "cheap_hidden_answer_to_vision_cos": answer_vision,
         "cheap_hidden_answer_to_prompt_cos": answer_prompt,
         "cheap_hidden_answer_vision_minus_prompt": float(answer_vision - answer_prompt),
+        "cheap_hidden_object_to_vision_cos": object_vision,
+        "cheap_hidden_object_to_prompt_cos": object_prompt,
+        "cheap_hidden_object_vision_minus_prompt": float(object_vision - object_prompt),
         "cheap_hidden_first_answer_to_vision_cos": cosine_or_zero(first_answer, vision_mean),
         "cheap_hidden_first_answer_to_prompt_cos": cosine_or_zero(first_answer, prompt_mean),
         "cheap_hidden_first_decision_norm": norm_or_zero(first_decision),
         "cheap_hidden_mean_decision_norm": norm_or_zero(mean_decision),
         "cheap_hidden_first_answer_norm": norm_or_zero(first_answer),
         "cheap_hidden_answer_mean_norm": norm_or_zero(mean_answer),
+        "cheap_hidden_object_mean_norm": norm_or_zero(mean_object),
         "cheap_hidden_vision_mean_norm": norm_or_zero(vision_mean),
         "cheap_hidden_prompt_mean_norm": norm_or_zero(prompt_mean),
     }
@@ -247,6 +325,8 @@ def cheap_features_from_pack(
     image_name: str,
     question: str,
     content_indices: Sequence[int],
+    object_terms: Sequence[str],
+    object_indices: Sequence[int],
     lp_tail_quantile: float,
     lp_tail_eps: float,
     lp_len_corr_alpha: float,
@@ -273,6 +353,7 @@ def cheap_features_from_pack(
 
     cont_idx = list(range(int(target_ids.numel())))
     pick = list(content_indices) if content_indices else cont_idx
+    object_pick = [int(i) for i in object_indices if 0 <= int(i) < int(target_ids.numel())]
 
     def pick_values(tensor: torch.Tensor, indices: Sequence[int]) -> List[float]:
         return [float(tensor[int(i)].item()) for i in indices]
@@ -287,6 +368,11 @@ def cheap_features_from_pack(
     gap_content = pick_values(target_gap, pick)
     argmax_all = pick_values(target_is_argmax, cont_idx)
     argmax_content = pick_values(target_is_argmax, pick)
+    lp_object = pick_values(target_lp, object_pick)
+    ent_object = pick_values(token_ent, object_pick)
+    margin_object = pick_values(top1_margin, object_pick)
+    gap_object = pick_values(target_gap, object_pick)
+    argmax_object = pick_values(target_is_argmax, object_pick)
 
     lp_content_mean = mean_or_zero(lp_content)
     lp_content_std = std_or_zero(lp_content)
@@ -302,9 +388,15 @@ def cheap_features_from_pack(
         "question": question,
         "n_cont_tokens": int(len(cont_idx)),
         "n_content_tokens": int(len(pick)),
+        "n_object_terms": int(len(object_terms)),
+        "n_object_tokens": int(len(object_pick)),
         "cheap_content_fraction": float(len(pick) / max(1, len(cont_idx))),
+        "cheap_object_present": int(len(object_pick) > 0),
+        "cheap_object_fraction": float(len(object_pick) / max(1, len(cont_idx))),
         "cheap_conflict_lp_minus_entropy": float(mean_or_zero(lp_content) - mean_or_zero(ent_content)),
         "cheap_conflict_gap_minus_entropy": float(mean_or_zero(gap_content) - mean_or_zero(ent_content)),
+        "cheap_object_lp_minus_entropy": float(mean_or_zero(lp_object) - mean_or_zero(ent_object)),
+        "cheap_object_gap_minus_entropy": float(mean_or_zero(gap_object) - mean_or_zero(ent_object)),
         "cheap_lp_content_tail_gap": lp_content_tail_gap,
         "cheap_lp_content_tail_z": lp_content_tail_z,
         "cheap_lp_content_q10": lp_content_q10,
@@ -320,6 +412,11 @@ def cheap_features_from_pack(
     row.update(summarize(gap_content, "cheap_target_gap_content"))
     row.update(summarize(argmax_all, "cheap_target_argmax_all"))
     row.update(summarize(argmax_content, "cheap_target_argmax_content"))
+    row.update(summarize(lp_object, "cheap_lp_object"))
+    row.update(summarize(ent_object, "cheap_entropy_object"))
+    row.update(summarize(margin_object, "cheap_margin_object"))
+    row.update(summarize(gap_object, "cheap_target_gap_object"))
+    row.update(summarize(argmax_object, "cheap_target_argmax_object"))
     row.update(
         {
             "cheap_first_target_lp": float(target_lp[0].item()),
@@ -331,8 +428,18 @@ def cheap_features_from_pack(
             "cheap_first_best_other_logit": float(best_other_logit[0].item()),
         }
     )
+    first_obj = object_pick[0] if object_pick else None
+    row.update(
+        {
+            "cheap_first_object_target_lp": 0.0 if first_obj is None else float(target_lp[int(first_obj)].item()),
+            "cheap_first_object_entropy": 0.0 if first_obj is None else float(token_ent[int(first_obj)].item()),
+            "cheap_first_object_top1_margin": 0.0 if first_obj is None else float(top1_margin[int(first_obj)].item()),
+            "cheap_first_object_target_gap": 0.0 if first_obj is None else float(target_gap[int(first_obj)].item()),
+            "cheap_first_object_target_is_argmax": 0.0 if first_obj is None else float(target_is_argmax[int(first_obj)].item()),
+        }
+    )
     row.update(yesno_decision_features(runtime, log_probs[0], pack.candidate_text))
-    row.update(hidden_alignment_features(pack))
+    row.update(hidden_alignment_features(pack, object_pick))
     return row
 
 
@@ -602,12 +709,14 @@ def main() -> None:
         intervention_text = str(intervention_map.get(sid, "")).strip()
         baseline_text = str(baseline_map.get(sid, "")).strip()
         gt_label = str(gt_map.get(sid, "")).strip().lower()
+        object_terms = object_terms_from_sample(sample)
         row: Dict[str, Any] = {
             "id": sid,
             "image": image_name,
             "question": stage_question,
             "stage_question": stage_question,
             "cheap_question": cheap_question,
+            "object_terms": "; ".join(object_terms),
             "intervention_text": intervention_text,
             "baseline_text": baseline_text,
             "gt_label": gt_label,
@@ -640,6 +749,7 @@ def main() -> None:
                     output_hidden_states=bool(args.cheap_hidden_features),
                 )
                 cheap_content_indices = select_content_indices(runtime.tokenizer, cheap_pack.cont_ids)
+                cheap_object_indices = object_token_indices(runtime.tokenizer, cheap_pack.cont_ids, object_terms)
                 return cheap_features_from_pack(
                     runtime=runtime,
                     pack=cheap_pack,
@@ -647,6 +757,8 @@ def main() -> None:
                     image_name=image_name,
                     question=cheap_question,
                     content_indices=cheap_content_indices,
+                    object_terms=object_terms,
+                    object_indices=cheap_object_indices,
                     lp_tail_quantile=float(args.lp_tail_quantile),
                     lp_tail_eps=float(args.lp_tail_eps),
                     lp_len_corr_alpha=float(args.lp_len_corr_alpha),
