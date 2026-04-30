@@ -58,6 +58,37 @@ def read_csv_rows(path: str) -> List[Dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+def sample_id(row: Dict[str, Any]) -> str:
+    """POPE rows must be joined on question id, not COCO image id."""
+    for key in ("question_id", "id", "qid", "image_id"):
+        raw = str(row.get(key, "")).strip()
+        if raw:
+            try:
+                return str(int(float(raw)))
+            except Exception:
+                return raw
+    return safe_id(row)
+
+
+def read_prediction_map_by_sample_id(path: str, *, text_key: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for row in read_jsonl_rows(path):
+        sid = sample_id(row)
+        if not sid:
+            continue
+        if text_key and text_key != "auto":
+            text = str(row.get(text_key, "")).strip()
+        else:
+            text = ""
+            for key in ("text", "answer", "caption", "prediction", "output"):
+                value = str(row.get(key, "")).strip()
+                if value:
+                    text = value
+                    break
+        out[sid] = text
+    return out
+
+
 def read_label_map(path: str) -> Dict[str, Dict[str, str]]:
     if not str(path or "").strip():
         return {}
@@ -77,7 +108,7 @@ def read_label_map(path: str) -> Dict[str, Dict[str, str]]:
     }
     out: Dict[str, Dict[str, str]] = {}
     for row in read_csv_rows(path):
-        sid = safe_id(row)
+        sid = sample_id(row)
         if not sid:
             continue
         out[sid] = {key: row.get(key, "") for key in keep if key in row}
@@ -211,7 +242,7 @@ def main() -> None:
     set_seed(int(args.seed))
     disable_torch_init()
 
-    pred_map = read_prediction_map(args.intervention_pred_jsonl, text_key=args.pred_text_key)
+    pred_map = read_prediction_map_by_sample_id(args.intervention_pred_jsonl, text_key=args.pred_text_key)
     label_map = read_label_map(args.label_rows_csv)
 
     # Reuse the vendor schema materializer so field defaults match actual VGA runs.
@@ -251,7 +282,7 @@ def main() -> None:
     n_errors = 0
 
     for idx, q in enumerate(question_rows):
-        sid = safe_id(q)
+        sid = sample_id(q)
         image_file = str(q.get("image", "")).strip()
         question = str(q.get("question", q.get("text", ""))).strip()
         caption = pred_map.get(sid, "")
@@ -272,6 +303,8 @@ def main() -> None:
             else:
                 qs_for_model = DEFAULT_IMAGE_TOKEN + "\n" + question
             conv = copy.deepcopy(conv_templates[str(args.conv_mode)])
+            if getattr(conv, "tokenizer", None) is None:
+                conv.tokenizer = tokenizer
             conv.append_message(conv.roles[0], qs_for_model)
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt() + "\n\n"
