@@ -178,10 +178,28 @@ def main() -> None:
 
     patch_transformers_compat()
 
+    import transformers
     from transformers import set_seed
-    from vcd_utils.greedy_sample_next import evolve_greedy_sampling
 
-    evolve_greedy_sampling()
+    original_from_pretrained = transformers.AutoTokenizer.from_pretrained
+    tokenizer_placeholders = {
+        "/path/to/llama3-llava-next-8b",
+        "/path/to/Meta-Llama-3-8B-Instruct",
+        "/path/to/Meta-Llama-3-8B",
+    }
+
+    def patched_from_pretrained(pretrained_model_name_or_path: Any, *a: Any, **kw: Any) -> Any:
+        if str(pretrained_model_name_or_path) in tokenizer_placeholders:
+            return original_from_pretrained(args.model_path, *a, **kw)
+        return original_from_pretrained(pretrained_model_name_or_path, *a, **kw)
+
+    transformers.AutoTokenizer.from_pretrained = patched_from_pretrained
+    try:
+        from vcd_utils.greedy_sample_next import evolve_greedy_sampling
+
+        evolve_greedy_sampling()
+    finally:
+        transformers.AutoTokenizer.from_pretrained = original_from_pretrained
 
     from llava_next.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN, IMAGE_TOKEN_INDEX
     from llava_next.conversation import SeparatorStyle, conv_templates
