@@ -136,6 +136,78 @@ def object_ids_for_row(tokenizer: Any, row: Dict[str, Any]) -> List[torch.Tensor
     return ids
 
 
+def parse_yes_no(text: object) -> str:
+    s = str(text or "").strip().lower()
+    if not s:
+        return ""
+    first = s.split(".", 1)[0].replace(",", " ")
+    words = {w.strip() for w in first.split()}
+    if "no" in words or "not" in words:
+        return "no"
+    if "yes" in words:
+        return "yes"
+    if s.startswith("no"):
+        return "no"
+    if s.startswith("yes"):
+        return "yes"
+    return ""
+
+
+def yes_no_token_sets(tokenizer: Any) -> Dict[str, List[int]]:
+    variants = {
+        "yes": ["yes", "Yes", " yes", " Yes", "\nyes", "\nYes"],
+        "no": ["no", "No", " no", " No", "\nno", "\nNo"],
+    }
+    out: Dict[str, List[int]] = {}
+    for label, texts in variants.items():
+        ids: List[int] = []
+        for text in texts:
+            token_ids = tokenizer(text, add_special_tokens=False, return_tensors="pt").input_ids[0].tolist()
+            if token_ids:
+                ids.append(int(token_ids[0]))
+        out[label] = sorted(set(ids))
+    return out
+
+
+def logsumexp_token_set(logp: torch.Tensor, token_ids: Sequence[int]) -> float:
+    ids = [int(x) for x in token_ids if 0 <= int(x) < int(logp.numel())]
+    if not ids:
+        return float("nan")
+    idx = torch.tensor(ids, dtype=torch.long, device=logp.device)
+    return float(torch.logsumexp(logp[idx].float(), dim=0).item())
+
+
+def label_force_features(
+    *,
+    no_logp: torch.Tensor,
+    ad_logp: torch.Tensor,
+    token_sets: Dict[str, List[int]],
+    candidate_label: str,
+) -> Dict[str, float]:
+    cand = str(candidate_label or "").strip().lower()
+    if cand not in {"yes", "no"}:
+        return {}
+    alt = "no" if cand == "yes" else "yes"
+    no_cand = logsumexp_token_set(no_logp, token_sets.get(cand, []))
+    no_alt = logsumexp_token_set(no_logp, token_sets.get(alt, []))
+    ad_cand = logsumexp_token_set(ad_logp, token_sets.get(cand, []))
+    ad_alt = logsumexp_token_set(ad_logp, token_sets.get(alt, []))
+    no_margin = no_cand - no_alt
+    ad_margin = ad_cand - ad_alt
+    return {
+        "proc_label_noadd_candidate_lp": no_cand,
+        "proc_label_noadd_alt_lp": no_alt,
+        "proc_label_add_candidate_lp": ad_cand,
+        "proc_label_add_alt_lp": ad_alt,
+        "proc_label_noadd_candidate_minus_alt": no_margin,
+        "proc_label_add_candidate_minus_alt": ad_margin,
+        "proc_label_candidate_lp_boost": ad_cand - no_cand,
+        "proc_label_alt_lp_boost": ad_alt - no_alt,
+        "proc_label_margin_boost": ad_margin - no_margin,
+        "proc_label_add_kl_times_margin_boost": (ad_margin - no_margin) * kl_from_logp(ad_logp, no_logp),
+    }
+
+
 def entropy_guidance(vis_logits: torch.Tensor, *, topk: int) -> torch.Tensor:
     k = min(int(topk), int(vis_logits.shape[-1]))
     top_k_scores, _ = torch.topk(vis_logits, k, dim=-1)
@@ -295,6 +367,7 @@ def main() -> None:
     model.model.lm_head = model.lm_head
     ensure_generation_config(model, tokenizer)
     eos_id = first_token_id(model.generation_config.eos_token_id)
+    yn_token_sets = yes_no_token_sets(tokenizer)
 
     step_rows: List[Dict[str, Any]] = []
     feature_rows: List[Dict[str, Any]] = []
@@ -306,6 +379,7 @@ def main() -> None:
         question = str(q.get("question", q.get("text", ""))).strip()
         caption = pred_map.get(sid, "")
         sample_step_rows: List[Dict[str, Any]] = []
+        sample_label_trace: Dict[str, float] = {}
 
         try:
             if not sid:
@@ -453,6 +527,17 @@ def main() -> None:
                             prefix="add_top1",
                         )
                     )
+                    if step == 0:
+                        label_row = label_map.get(sid, {})
+                        candidate_label = str(label_row.get("intervention_label", "")).strip().lower()
+                        if candidate_label not in {"yes", "no"}:
+                            candidate_label = parse_yes_no(caption)
+                        sample_label_trace = label_force_features(
+                            no_logp=no_logp,
+                            ad_logp=ad_logp,
+                            token_sets=yn_token_sets,
+                            candidate_label=candidate_label,
+                        )
 
                     if float(args.cd_alpha) > 0 and boundary_token(actual_token_text):
                         token_visual = sum_norm(vis_logits[:, actual_id].float().clamp_min(0.0))
@@ -477,6 +562,7 @@ def main() -> None:
                         break
 
             feature = summarize_sample(sample_step_rows, sid=sid, image=image_file, caption=caption)
+            feature.update(sample_label_trace)
             feature.update(label_map.get(sid, {}))
             feature_rows.append(feature)
         except Exception as exc:
