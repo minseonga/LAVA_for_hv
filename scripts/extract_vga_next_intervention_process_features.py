@@ -177,6 +177,38 @@ def logsumexp_token_set(logp: torch.Tensor, token_ids: Sequence[int]) -> float:
     return float(torch.logsumexp(logp[idx].float(), dim=0).item())
 
 
+def finite_values(values: Sequence[Any]) -> List[float]:
+    out: List[float] = []
+    for value in values:
+        x = safe_float(value, None)
+        if x is not None:
+            out.append(float(x))
+    return out
+
+
+def finite_mean(values: Sequence[Any]) -> float:
+    vals = finite_values(values)
+    return float(sum(vals) / float(len(vals))) if vals else 0.0
+
+
+def finite_min(values: Sequence[Any]) -> float:
+    vals = finite_values(values)
+    return float(min(vals)) if vals else 0.0
+
+
+def finite_max(values: Sequence[Any]) -> float:
+    vals = finite_values(values)
+    return float(max(vals)) if vals else 0.0
+
+
+def finite_std(values: Sequence[Any]) -> float:
+    vals = finite_values(values)
+    if len(vals) < 2:
+        return 0.0
+    mu = sum(vals) / float(len(vals))
+    return float((sum((v - mu) ** 2 for v in vals) / float(len(vals))) ** 0.5)
+
+
 def label_force_features(
     *,
     no_logp: torch.Tensor,
@@ -206,6 +238,124 @@ def label_force_features(
         "proc_label_margin_boost": ad_margin - no_margin,
         "proc_label_add_kl_times_margin_boost": (ad_margin - no_margin) * kl_from_logp(ad_logp, no_logp),
     }
+
+
+def parse_layer_indices(value: str) -> List[int]:
+    out: List[int] = []
+    for item in str(value or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        out.append(int(item))
+    return out
+
+
+def layer_label_margins(
+    *,
+    outputs: Any,
+    model: Any,
+    token_sets: Dict[str, List[int]],
+    candidate_label: str,
+    layers: Sequence[int],
+    prefix: str,
+) -> Dict[str, float]:
+    cand = str(candidate_label or "").strip().lower()
+    if cand not in {"yes", "no"}:
+        return {}
+    hidden_states = getattr(outputs, "hidden_states", None)
+    if not hidden_states:
+        return {}
+    alt = "no" if cand == "yes" else "yes"
+    last_idx = len(hidden_states) - 1
+    margins: List[float] = []
+    out: Dict[str, float] = {}
+    for layer in layers:
+        idx = int(layer)
+        if idx < 0:
+            idx = last_idx + idx + 1
+        if idx < 0 or idx > last_idx:
+            continue
+        h = hidden_states[idx][:, -1, :]
+        if idx != last_idx and hasattr(model, "model") and hasattr(model.model, "norm"):
+            h = model.model.norm(h)
+        logits = model.lm_head(h).float()[0]
+        logp = torch.log_softmax(logits, dim=-1)
+        cand_lp = logsumexp_token_set(logp, token_sets.get(cand, []))
+        alt_lp = logsumexp_token_set(logp, token_sets.get(alt, []))
+        margin = cand_lp - alt_lp
+        margins.append(float(margin))
+        out[f"{prefix}_layer_l{int(layer)}_candidate_minus_alt"] = float(margin)
+        out[f"{prefix}_layer_l{int(layer)}_candidate_supported"] = float(margin > 0.0)
+
+    if margins:
+        out[f"{prefix}_layer_candidate_margin_mean"] = finite_mean(margins)
+        out[f"{prefix}_layer_candidate_margin_min"] = finite_min(margins)
+        out[f"{prefix}_layer_candidate_margin_max"] = finite_max(margins)
+        out[f"{prefix}_layer_candidate_margin_std"] = finite_std(margins)
+        out[f"{prefix}_layer_candidate_supported_rate"] = finite_mean([float(v > 0.0) for v in margins])
+        out[f"{prefix}_layer_candidate_margin_slope"] = float(margins[-1] - margins[0]) if len(margins) >= 2 else 0.0
+        out[f"{prefix}_layer_candidate_sign_flip_count"] = float(
+            sum(int((margins[i - 1] > 0.0) != (margins[i] > 0.0)) for i in range(1, len(margins)))
+        )
+    return out
+
+
+def attention_step_stats(attentions: Any, img_idx: Sequence[int], *, prefix: str, topk: int = 10) -> Dict[str, float]:
+    if not attentions:
+        return {}
+    start, end = int(img_idx[0]), int(img_idx[1])
+    masses: List[float] = []
+    top_fracs: List[float] = []
+    for attn in attentions:
+        if attn is None:
+            continue
+        # Expected shape: [batch, heads, q_len, kv_len].
+        if not torch.is_tensor(attn) or attn.ndim < 4:
+            continue
+        vec = attn[0, :, -1, :].detach().float()
+        if vec.numel() == 0 or vec.shape[-1] <= start:
+            continue
+        ee = min(end, int(vec.shape[-1]))
+        if ee <= start:
+            continue
+        visual_mass_per_head = vec[:, start:ee].sum(-1)
+        masses.extend(float(x) for x in visual_mass_per_head.detach().cpu().tolist())
+        kk = min(int(topk), int(vec.shape[-1]))
+        if kk > 0:
+            top_idx = torch.topk(vec, kk, dim=-1).indices
+            is_visual = ((top_idx >= start) & (top_idx < ee)).float().mean(-1)
+            top_fracs.extend(float(x) for x in is_visual.detach().cpu().tolist())
+    if not masses:
+        return {}
+    return {
+        f"{prefix}_vision_mass_mean": finite_mean(masses),
+        f"{prefix}_vision_mass_min": finite_min(masses),
+        f"{prefix}_vision_mass_max": finite_max(masses),
+        f"{prefix}_top{int(topk)}_visual_frac_mean": finite_mean(top_fracs),
+        f"{prefix}_top{int(topk)}_visual_frac_min": finite_min(top_fracs),
+    }
+
+
+def add_process_summary_extras(feature: Dict[str, Any], step_rows: Sequence[Dict[str, Any]]) -> None:
+    add_ranks = finite_values([row.get("actual_add_rank") for row in step_rows])
+    noadd_ranks = finite_values([row.get("actual_noadd_rank") for row in step_rows])
+    feature["proc_actual_add_top1_match_rate"] = finite_mean([float(v == 1.0) for v in add_ranks])
+    feature["proc_actual_noadd_top1_match_rate"] = finite_mean([float(v == 1.0) for v in noadd_ranks])
+    feature["proc_actual_add_rank_mean"] = finite_mean(add_ranks)
+    feature["proc_actual_noadd_rank_mean"] = finite_mean(noadd_ranks)
+    feature["proc_actual_rank_improve_mean"] = finite_mean([n - a for n, a in zip(noadd_ranks, add_ranks)])
+
+    for kind in ("add_attn", "noadd_attn"):
+        mass = [row.get(f"{kind}_vision_mass_mean") for row in step_rows]
+        top_frac = [row.get(f"{kind}_top10_visual_frac_mean") for row in step_rows]
+        feature[f"proc_{kind}_vision_mass_mean"] = finite_mean(mass)
+        feature[f"proc_{kind}_vision_mass_min"] = finite_min(mass)
+        feature[f"proc_{kind}_vision_mass_max"] = finite_max(mass)
+        feature[f"proc_{kind}_top10_visual_frac_mean"] = finite_mean(top_frac)
+        feature[f"proc_{kind}_top10_visual_frac_min"] = finite_min(top_frac)
+    add_mass = finite_values([row.get("add_attn_vision_mass_mean") for row in step_rows])
+    noadd_mass = finite_values([row.get("noadd_attn_vision_mass_mean") for row in step_rows])
+    feature["proc_attn_add_minus_noadd_vision_mass_mean"] = finite_mean([a - n for a, n in zip(add_mass, noadd_mass)])
 
 
 def entropy_guidance(vis_logits: torch.Tensor, *, topk: int) -> torch.Tensor:
@@ -283,6 +433,9 @@ def main() -> None:
     ap.add_argument("--torch-type", default="fp16", choices=["fp16", "fp32", "bf16"])
     ap.add_argument("--attn-type", default="sdpa", choices=["eager", "sdpa"])
     ap.add_argument("--topk", type=int, default=10)
+    ap.add_argument("--collect-attention-features", type=parse_bool, default=False)
+    ap.add_argument("--collect-layer-features", type=parse_bool, default=True)
+    ap.add_argument("--trace-layers", default="8,16,24,32")
     ap.add_argument("--seed", type=int, default=17)
     ap.add_argument("--out-steps-csv", required=True)
     ap.add_argument("--out-features-csv", required=True)
@@ -368,6 +521,9 @@ def main() -> None:
     ensure_generation_config(model, tokenizer)
     eos_id = first_token_id(model.generation_config.eos_token_id)
     yn_token_sets = yes_no_token_sets(tokenizer)
+    trace_layers = parse_layer_indices(args.trace_layers)
+    collect_attention = bool(args.collect_attention_features)
+    collect_layer = bool(args.collect_layer_features)
 
     step_rows: List[Dict[str, Any]] = []
     feature_rows: List[Dict[str, Any]] = []
@@ -446,6 +602,8 @@ def main() -> None:
                         "use_cache": True,
                         "return_dict": True,
                         "img_idx": img_idx,
+                        "output_attentions": collect_attention,
+                        "output_hidden_states": collect_layer,
                     }
                     noadd_outputs = model(
                         pvg_input,
@@ -527,6 +685,9 @@ def main() -> None:
                             prefix="add_top1",
                         )
                     )
+                    if collect_attention:
+                        row.update(attention_step_stats(noadd_outputs.attentions, img_idx, prefix="noadd_attn", topk=10))
+                        row.update(attention_step_stats(add_outputs.attentions, img_idx, prefix="add_attn", topk=10))
                     if step == 0:
                         label_row = label_map.get(sid, {})
                         candidate_label = str(label_row.get("intervention_label", "")).strip().lower()
@@ -538,6 +699,27 @@ def main() -> None:
                             token_sets=yn_token_sets,
                             candidate_label=candidate_label,
                         )
+                        if collect_layer:
+                            sample_label_trace.update(
+                                layer_label_margins(
+                                    outputs=noadd_outputs,
+                                    model=model,
+                                    token_sets=yn_token_sets,
+                                    candidate_label=candidate_label,
+                                    layers=trace_layers,
+                                    prefix="proc_label_noadd",
+                                )
+                            )
+                            sample_label_trace.update(
+                                layer_label_margins(
+                                    outputs=add_outputs,
+                                    model=model,
+                                    token_sets=yn_token_sets,
+                                    candidate_label=candidate_label,
+                                    layers=trace_layers,
+                                    prefix="proc_label_add",
+                                )
+                            )
 
                     if float(args.cd_alpha) > 0 and boundary_token(actual_token_text):
                         token_visual = sum_norm(vis_logits[:, actual_id].float().clamp_min(0.0))
@@ -562,6 +744,7 @@ def main() -> None:
                         break
 
             feature = summarize_sample(sample_step_rows, sid=sid, image=image_file, caption=caption)
+            add_process_summary_extras(feature, sample_step_rows)
             feature.update(sample_label_trace)
             feature.update(label_map.get(sid, {}))
             feature_rows.append(feature)

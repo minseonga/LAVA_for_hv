@@ -30,6 +30,9 @@ VGA_HEAD_BALANCING="${VGA_HEAD_BALANCING:-simg}"
 VGA_ATTN_NORM="${VGA_ATTN_NORM:-false}"
 VGA_TORCH_TYPE="${VGA_TORCH_TYPE:-fp16}"
 VGA_ATTN_TYPE="${VGA_ATTN_TYPE:-sdpa}"
+TRACE_COLLECT_ATTENTION_FEATURES="${TRACE_COLLECT_ATTENTION_FEATURES:-false}"
+TRACE_COLLECT_LAYER_FEATURES="${TRACE_COLLECT_LAYER_FEATURES:-true}"
+TRACE_LAYERS="${TRACE_LAYERS:-8,16,24,32}"
 
 CANDIDATE_FILTER="${CANDIDATE_FILTER:-changed_answer}"
 TOP_K="${TOP_K:-40}"
@@ -76,6 +79,7 @@ echo "[trace] question=$QUESTION_FILE"
 echo "[trace] pred=$INTERVENTION_PRED_JSONL key=$INTERVENTION_PRED_KEY"
 echo "[trace] labels=$LABEL_ROWS_CSV"
 echo "[trace] out=$OUT_DIR"
+echo "[trace] attention_features=$TRACE_COLLECT_ATTENTION_FEATURES layer_features=$TRACE_COLLECT_LAYER_FEATURES layers=$TRACE_LAYERS"
 
 if [[ "$BACKBONE" == "llava_next" ]]; then
   model_base_args=()
@@ -103,6 +107,9 @@ if [[ "$BACKBONE" == "llava_next" ]]; then
     --attn-norm "$VGA_ATTN_NORM" \
     --torch-type "$VGA_TORCH_TYPE" \
     --attn-type "$VGA_ATTN_TYPE" \
+    --collect-attention-features "$TRACE_COLLECT_ATTENTION_FEATURES" \
+    --collect-layer-features "$TRACE_COLLECT_LAYER_FEATURES" \
+    --trace-layers "$TRACE_LAYERS" \
     --out-steps-csv "$STEPS_CSV" \
     --out-features-csv "$FEATURES_CSV" \
     --out-summary-json "$TRACE_SUMMARY_JSON"
