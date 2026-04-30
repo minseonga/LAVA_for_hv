@@ -162,6 +162,25 @@ def boundary_token(token_text: str) -> bool:
     return str(token_text).startswith(("▁", "Ġ"))
 
 
+def first_token_id(value: Any) -> int | None:
+    if value is None:
+        return None
+    if torch.is_tensor(value):
+        if value.numel() == 0:
+            return None
+        return int(value.reshape(-1)[0].item())
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            token_id = first_token_id(item)
+            if token_id is not None:
+                return token_id
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=(
@@ -275,7 +294,7 @@ def main() -> None:
     model.eval()
     model.model.lm_head = model.lm_head
     ensure_generation_config(model, tokenizer)
-    eos_id = model.generation_config.eos_token_id
+    eos_id = first_token_id(model.generation_config.eos_token_id)
 
     step_rows: List[Dict[str, Any]] = []
     feature_rows: List[Dict[str, Any]] = []
