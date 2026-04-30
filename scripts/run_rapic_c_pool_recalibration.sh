@@ -13,7 +13,7 @@ cd "$ROOT_DIR"
 PY_BIN="${PY_BIN:-python3}"
 ROWS_CSV="${ROWS_CSV:-}"
 OUT_DIR="${OUT_DIR:-}"
-C_POOL_PRESET="${C_POOL_PRESET:-next_content_v2}"  # compact | next_content_v2 | next_hidden_object
+C_POOL_PRESET="${C_POOL_PRESET:-next_content_v2}"  # compact | next_content_v2 | next_hidden_object | next_hidden_object_trace
 CANDIDATE_FILTER="${CANDIDATE_FILTER:-changed_answer}"
 TAU_OBJECTIVE="${TAU_OBJECTIVE:-net}"
 MIN_PRESENT_RATE="${MIN_PRESENT_RATE:-0.8}"
@@ -41,6 +41,11 @@ case "$C_POOL_PRESET" in
     # extractor enabled. Missing columns are ignored by build_pcp_c_d_controller via
     # min_present_rate, so this preset is also safe on content-only rows.
     C_FEATURE_COLS="cheap_entropy_content_mean,cheap_first_target_gap,cheap_target_gap_content_min,cheap_lp_all_mean,cheap_lp_content_tail_gap,cheap_lp_content_min,cheap_margin_all_mean,cheap_margin_content_mean,cheap_conflict_gap_minus_entropy,cheap_target_gap_content_mean,cheap_entropy_content_max,cheap_hidden_answer_to_prompt_cos,cheap_hidden_answer_mean_norm,cheap_hidden_answer_vision_minus_prompt,cheap_hidden_answer_to_vision_cos,cheap_hidden_first_answer_to_prompt_cos,cheap_hidden_first_answer_norm,cheap_hidden_first_answer_to_vision_cos,cheap_margin_object_max,cheap_target_gap_object_max,cheap_object_gap_minus_entropy,cheap_margin_object_mean,cheap_target_gap_object_mean,cheap_first_object_target_gap,cheap_first_object_top1_margin,cheap_hidden_object_to_prompt_cos,cheap_hidden_object_mean_norm,cheap_hidden_object_to_vision_cos"
+    ;;
+  next_hidden_object_trace)
+    # Adds VGA process-trace features joined from process_trace_features.csv.
+    # These are still intervention-run features, not GT or baseline-answer features.
+    C_FEATURE_COLS="cheap_entropy_content_mean,cheap_first_target_gap,cheap_target_gap_content_min,cheap_lp_all_mean,cheap_lp_content_tail_gap,cheap_lp_content_min,cheap_margin_all_mean,cheap_margin_content_mean,cheap_conflict_gap_minus_entropy,cheap_target_gap_content_mean,cheap_entropy_content_max,cheap_hidden_answer_to_prompt_cos,cheap_hidden_answer_mean_norm,cheap_hidden_answer_vision_minus_prompt,cheap_hidden_answer_to_vision_cos,cheap_hidden_first_answer_to_prompt_cos,cheap_hidden_first_answer_norm,cheap_hidden_first_answer_to_vision_cos,cheap_margin_object_max,cheap_target_gap_object_max,cheap_object_gap_minus_entropy,cheap_margin_object_mean,cheap_target_gap_object_mean,cheap_first_object_target_gap,cheap_first_object_top1_margin,cheap_hidden_object_to_prompt_cos,cheap_hidden_object_mean_norm,cheap_hidden_object_to_vision_cos,proc_label_add_candidate_minus_alt,proc_label_noadd_candidate_minus_alt,proc_label_add_candidate_lp,proc_label_noadd_candidate_lp,proc_label_margin_boost,proc_label_candidate_lp_boost,proc_label_add_kl_times_margin_boost,proc_eos_boost_max,proc_early_kl_add_to_noadd_mean,proc_kl_add_to_noadd_mean,proc_entropy_delta_max,proc_actual_visual_prob_max_max"
     ;;
   *)
     echo "[error] unknown C_POOL_PRESET=$C_POOL_PRESET" >&2
