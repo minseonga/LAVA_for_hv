@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import json
 import os
 import runpy
@@ -79,6 +80,29 @@ def preload_greedy_sampler(vga_root: str, model_path: str) -> None:
         AutoTokenizer.from_pretrained = original_from_pretrained
 
 
+def patch_generation_cache_position_compat() -> None:
+    from transformers.generation.utils import GenerationMixin
+
+    original = GenerationMixin._get_initial_cache_position
+    if getattr(original, "_qwen25_vga_compat", False):
+        return
+
+    params = list(inspect.signature(original).parameters)
+    if len(params) != 4:
+        return
+
+    def patched(self, *args, **kwargs):
+        if len(args) == 2 and not kwargs:
+            input_ids, model_kwargs = args
+            seq_length = input_ids.shape[-1]
+            device = input_ids.device
+            return original(self, seq_length, device, model_kwargs)
+        return original(self, *args, **kwargs)
+
+    patched._qwen25_vga_compat = True  # type: ignore[attr-defined]
+    GenerationMixin._get_initial_cache_position = patched
+
+
 def normalize_answers_file(path: str) -> None:
     rows = []
     with open(path, "r", encoding="utf-8") as f:
@@ -123,6 +147,7 @@ def main() -> None:
     argv = rewrite_arg(argv, "--model-path", os.path.expanduser(known.model_path))
 
     preload_greedy_sampler(vga_root, os.path.expanduser(known.model_path))
+    patch_generation_cache_position_compat()
 
     old_argv = sys.argv
     try:
