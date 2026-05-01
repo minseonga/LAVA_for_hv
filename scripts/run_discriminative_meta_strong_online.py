@@ -160,29 +160,45 @@ def object_token_indices(tokenizer: Any, cont_ids: torch.Tensor, object_terms: S
     return sorted(selected)
 
 
-_YESNO_TOKEN_ID_CACHE: Dict[int, Dict[str, List[int]]] = {}
+_YESNO_TOKEN_ID_CACHE: Dict[tuple[int, str], Dict[str, List[int]]] = {}
 
 
 def yesno_token_id_sets(tokenizer: Any) -> Dict[str, List[int]]:
-    cache_key = id(tokenizer)
+    mode = str(os.environ.get("YESNO_TOKEN_MODE", "strict")).strip().lower()
+    if mode not in {"strict", "canonical", "legacy_first"}:
+        raise ValueError(
+            f"Unsupported YESNO_TOKEN_MODE={mode!r}; expected strict, canonical, or legacy_first"
+        )
+    cache_key = (id(tokenizer), mode)
     cached = _YESNO_TOKEN_ID_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
-    variants = {
-        "yes": ["yes", "Yes", "YES", " yes", " Yes", " YES"],
-        "no": ["no", "No", "NO", " no", " No", " NO"],
+    canonical_variants = {
+        "yes": ["yes", "Yes", "YES"],
+        "no": ["no", "No", "NO"],
     }
+    variants = canonical_variants
+    if mode != "canonical":
+        variants = {
+            "yes": [*canonical_variants["yes"], " yes", " Yes", " YES"],
+            "no": [*canonical_variants["no"], " no", " No", " NO"],
+        }
     out: Dict[str, List[int]] = {}
     for label, texts in variants.items():
         ids: List[int] = []
         for text in texts:
             encoded = tokenizer(str(text), add_special_tokens=False)
             token_ids = getattr(encoded, "input_ids", encoded)
+            if mode == "legacy_first":
+                token_ids = list(token_ids or [])[:1]
             for token_id in list(token_ids or []):
                 try:
                     tid = int(token_id)
                 except Exception:
+                    continue
+                if mode == "legacy_first":
+                    ids.append(tid)
                     continue
                 try:
                     decoded = str(tokenizer.decode([tid])).strip().lower()
@@ -192,10 +208,11 @@ def yesno_token_id_sets(tokenizer: Any) -> Dict[str, List[int]]:
                     ids.append(tid)
         out[label] = sorted(set(ids))
 
-    overlap = set(out.get("yes", [])) & set(out.get("no", []))
-    if overlap:
-        out["yes"] = [tid for tid in out.get("yes", []) if tid not in overlap]
-        out["no"] = [tid for tid in out.get("no", []) if tid not in overlap]
+    if mode != "legacy_first":
+        overlap = set(out.get("yes", [])) & set(out.get("no", []))
+        if overlap:
+            out["yes"] = [tid for tid in out.get("yes", []) if tid not in overlap]
+            out["no"] = [tid for tid in out.get("no", []) if tid not in overlap]
 
     _YESNO_TOKEN_ID_CACHE[cache_key] = out
     return out
