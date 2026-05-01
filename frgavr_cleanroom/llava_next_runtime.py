@@ -42,8 +42,44 @@ def _install_llava_next_root(llava_next_root: str) -> None:
     sys.path.insert(0, root_s)
 
 
+def _patch_transformers_attn_implementation() -> Any:
+    """Temporarily ignore attn_implementation for older Transformers/LLaVA stacks."""
+    try:
+        from transformers.modeling_utils import PreTrainedModel
+    except Exception:
+        return None
+
+    original = PreTrainedModel.from_pretrained
+    original_func = getattr(original, "__func__", original)
+
+    @classmethod
+    def compat_from_pretrained(cls: Any, pretrained_model_name_or_path: Any, *model_args: Any, **kwargs: Any) -> Any:
+        kwargs.pop("attn_implementation", None)
+        kwargs["low_cpu_mem_usage"] = False
+        return original_func(cls, pretrained_model_name_or_path, *model_args, **kwargs)
+
+    PreTrainedModel.from_pretrained = compat_from_pretrained
+    return original
+
+
+def _restore_transformers_from_pretrained(original: Any) -> None:
+    if original is None:
+        return
+    try:
+        from transformers.modeling_utils import PreTrainedModel
+    except Exception:
+        return
+    PreTrainedModel.from_pretrained = original
+
+
 class OfficialLlavaNextRuntime:
-    """Runtime adapter exposing the CleanroomLlavaRuntime interface for official LLaVA-NeXT."""
+    """Cleanroom-style runtime adapter for LLaVA-NeXT.
+
+    This class deliberately keeps prompt formatting, image preprocessing, and
+    teacher-forced replay in this repo while still using the official
+    LLaVA-NeXT model definitions. That avoids version-sensitive generation
+    helpers during feature extraction.
+    """
 
     def __init__(
         self,
@@ -85,15 +121,19 @@ class OfficialLlavaNextRuntime:
                 **load_kwargs,
             )
         except TypeError as exc:
-            if "attn_implementation" not in str(exc) or "attn_implementation" not in load_kwargs:
+            if "attn_implementation" not in str(exc):
                 raise
             load_kwargs.pop("attn_implementation", None)
-            self.tokenizer, self.model, self.image_processor, _ = load_pretrained_model(
-                model_path,
-                model_base,
-                model_name,
-                **load_kwargs,
-            )
+            patch = _patch_transformers_attn_implementation()
+            try:
+                self.tokenizer, self.model, self.image_processor, _ = load_pretrained_model(
+                    model_path,
+                    model_base,
+                    model_name,
+                    **load_kwargs,
+                )
+            finally:
+                _restore_transformers_from_pretrained(patch)
         self.tokenizer.padding_side = "right"
         self.model.eval()
         self.conv_mode = str(conv_mode)
@@ -105,16 +145,37 @@ class OfficialLlavaNextRuntime:
     def load_image(self, image_path: str) -> Image.Image:
         return Image.open(image_path).convert("RGB")
 
+    def _static_llama3_prompt(self, question: str) -> str:
+        from llava.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN
+
+        image_token = DEFAULT_IMAGE_TOKEN
+        if bool(getattr(self.model.config, "mm_use_im_start_end", False)):
+            image_token = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
+        user = image_token + "\n" + str(question or "").strip()
+        return (
+            "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n"
+            f"{user}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+        )
+
     def prompt_text(self, question: str) -> str:
-        from llava.constants import DEFAULT_IMAGE_TOKEN
+        from llava.constants import DEFAULT_IMAGE_TOKEN, DEFAULT_IM_END_TOKEN, DEFAULT_IM_START_TOKEN
         from llava.conversation import SeparatorStyle, conv_templates
 
         conv = conv_templates[self.conv_mode].copy()
-        if conv.sep_style == SeparatorStyle.LLAMA_3 and conv.tokenizer is None:
-            conv.tokenizer = self.tokenizer
-        conv.append_message(conv.roles[0], DEFAULT_IMAGE_TOKEN + "\n" + str(question or "").strip())
+        if conv.sep_style == SeparatorStyle.LLAMA_3:
+            return self._static_llama3_prompt(question)
+        image_token = DEFAULT_IMAGE_TOKEN
+        if bool(getattr(self.model.config, "mm_use_im_start_end", False)):
+            image_token = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN
+        conv.append_message(conv.roles[0], image_token + "\n" + str(question or "").strip())
         conv.append_message(conv.roles[1], None)
-        return conv.get_prompt()
+        try:
+            return conv.get_prompt()
+        except (AttributeError, ValueError) as exc:
+            msg = str(exc)
+            if "apply_chat_template" not in msg and "Llama 3 tokenizer" not in msg:
+                raise
+            return self._static_llama3_prompt(question)
 
     def _to_device_images(self, images: Any) -> Any:
         if isinstance(images, torch.Tensor):
@@ -203,10 +264,22 @@ class OfficialLlavaNextRuntime:
             if pos_ids_e is not None:
                 forward_kwargs["position_ids"] = pos_ids_e
             if self.teacher_force_forward_mode in {"model", "full", "legacy"}:
-                outputs = self.model(**forward_kwargs)
+                try:
+                    outputs = self.model(**forward_kwargs)
+                except TypeError as exc:
+                    if "position_ids" not in str(exc):
+                        raise
+                    forward_kwargs.pop("position_ids", None)
+                    outputs = self.model(**forward_kwargs)
                 logits = outputs.logits
             else:
-                outputs = backbone(**forward_kwargs)
+                try:
+                    outputs = backbone(**forward_kwargs)
+                except TypeError as exc:
+                    if "position_ids" not in str(exc):
+                        raise
+                    forward_kwargs.pop("position_ids", None)
+                    outputs = backbone(**forward_kwargs)
                 logits = self.model.lm_head(outputs[0])
 
         labels_exp = labels_e[0]
