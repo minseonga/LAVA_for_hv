@@ -179,12 +179,23 @@ def yesno_token_id_sets(tokenizer: Any) -> Dict[str, List[int]]:
         for text in texts:
             encoded = tokenizer(str(text), add_special_tokens=False)
             token_ids = getattr(encoded, "input_ids", encoded)
-            if token_ids:
+            for token_id in list(token_ids or []):
                 try:
-                    ids.append(int(token_ids[0]))
+                    tid = int(token_id)
                 except Exception:
                     continue
+                try:
+                    decoded = str(tokenizer.decode([tid])).strip().lower()
+                except Exception:
+                    decoded = ""
+                if decoded == label:
+                    ids.append(tid)
         out[label] = sorted(set(ids))
+
+    overlap = set(out.get("yes", [])) & set(out.get("no", []))
+    if overlap:
+        out["yes"] = [tid for tid in out.get("yes", []) if tid not in overlap]
+        out["no"] = [tid for tid in out.get("no", []) if tid not in overlap]
 
     _YESNO_TOKEN_ID_CACHE[cache_key] = out
     return out
