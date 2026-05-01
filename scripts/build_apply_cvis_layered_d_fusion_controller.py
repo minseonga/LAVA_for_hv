@@ -6,7 +6,7 @@ import csv
 import json
 import os
 import sys
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -178,16 +178,120 @@ def score_d_rows(rows: Sequence[Dict[str, Any]], d_policy: Mapping[str, Any]) ->
     return rows_by_id, scores
 
 
+def default_object_layer_grid(layers: Sequence[int]) -> List[int]:
+    if not layers:
+        return []
+    final_layer = max(int(x) for x in layers)
+    raw = [(3 * final_layer) // 4, (7 * final_layer) // 8, final_layer]
+    available = sorted(set(int(x) for x in layers))
+    grid: List[int] = []
+    for target in raw:
+        closest = min(available, key=lambda x: (abs(x - target), x))
+        if closest not in grid:
+            grid.append(closest)
+    return grid
+
+
+def parse_object_layer_grid(spec: str, layers: Sequence[int]) -> List[int]:
+    spec = str(spec or "late").strip().lower()
+    available = sorted(set(int(x) for x in layers))
+    if spec in {"late", "late_semantic", "object_default"}:
+        return default_object_layer_grid(available)
+    if spec == "all":
+        return available
+    return parse_layer_grid(spec, available)
+
+
+def load_or_calibrate_object_policy(
+    *,
+    object_rows: Sequence[Dict[str, Any]],
+    object_feature: str,
+    object_layer_grid: str,
+    candidate_filter: str,
+    min_selected_count: int,
+) -> Optional[Dict[str, Any]]:
+    if not object_rows:
+        return None
+    by_layer = group_by_layer(object_rows)
+    available_layers = sorted(by_layer)
+    if not available_layers:
+        raise RuntimeError("No layer_index values were found in object trajectory CSV.")
+    layer_grid = parse_object_layer_grid(object_layer_grid, available_layers)
+    candidates: List[Dict[str, Any]] = []
+    for layer in layer_grid:
+        layer_rows = by_layer.get(int(layer), [])
+        rows_by_id = index_rows_by_id(layer_rows)
+        metric = orient_c_feature(list(rows_by_id.values()), object_feature, candidate_filter)
+        scores = score_c_rows(rows_by_id, metric)
+        best, _ = evaluate_scores(
+            layer_rows,
+            scores,
+            candidate_filter=candidate_filter,
+            min_selected_count=min_selected_count,
+        )
+        candidates.append(
+            {
+                "layer": int(layer),
+                "object_metric": metric,
+                "best": best,
+            }
+        )
+    viable = [x for x in candidates if x.get("best")]
+    if not viable:
+        raise RuntimeError("No viable object-layer candidates were calibrated.")
+    selected = max(
+        viable,
+        key=lambda x: (
+            int(x["best"]["net"]),
+            int(x["best"]["selected_harm"]),
+            -int(x["best"]["selected_help"]),
+            -int(x["layer"]),
+        ),
+    )
+    return {
+        "family": "object_layer_d",
+        "selected_layer": int(selected["layer"]),
+        "object_feature": object_feature,
+        "object_metric": selected["object_metric"],
+        "selected_policy": {
+            "family": "object_layer_d",
+            "layer": int(selected["layer"]),
+            **dict(selected["best"]),
+        },
+        "layer_grid": [int(x) for x in layer_grid],
+        "layer_candidates": candidates,
+    }
+
+
+def score_object_rows(
+    rows: Sequence[Dict[str, Any]],
+    object_policy: Optional[Mapping[str, Any]],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, float]]:
+    if not object_policy:
+        return {}, {}
+    layer = int(object_policy["selected_layer"])
+    metric = dict(object_policy["object_metric"])
+    layer_rows = group_by_layer(rows).get(layer, [])
+    rows_by_id = index_rows_by_id(layer_rows)
+    return rows_by_id, score_c_rows(rows_by_id, metric)
+
+
 def merge_rows(
     c_rows_by_id: Mapping[str, Mapping[str, Any]],
     d_rows_by_id: Mapping[str, Mapping[str, Any]],
+    object_rows_by_id: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    ids = sorted(set(c_rows_by_id) | set(d_rows_by_id), key=lambda x: (len(str(x)), str(x)))
+    object_rows_by_id = object_rows_by_id or {}
+    ids = sorted(set(c_rows_by_id) | set(d_rows_by_id) | set(object_rows_by_id), key=lambda x: (len(str(x)), str(x)))
     merged: Dict[str, Dict[str, Any]] = {}
     for sid in ids:
         row: Dict[str, Any] = {}
         if sid in d_rows_by_id:
             row.update(dict(d_rows_by_id[sid]))
+        if sid in object_rows_by_id:
+            for key, value in object_rows_by_id[sid].items():
+                if key not in row or str(row.get(key, "")).strip() == "":
+                    row[key] = value
         if sid in c_rows_by_id:
             for key, value in c_rows_by_id[sid].items():
                 if key not in row or str(row.get(key, "")).strip() == "":
@@ -219,17 +323,22 @@ def parse_fusion_specs(modes: str, alpha_grid: str) -> List[Dict[str, Any]]:
     return specs
 
 
-def fusion_score(c_score: float, d_score: float, spec: Mapping[str, Any]) -> float:
+def fusion_score(values: Sequence[float], spec: Mapping[str, Any]) -> float:
+    vals = [float(x) for x in values]
+    if not vals:
+        raise ValueError("Cannot fuse an empty score list.")
     mode = str(spec.get("mode", "mean"))
     if mode == "mean":
-        return float((c_score + d_score) / 2.0)
+        return float(sum(vals) / len(vals))
     if mode == "min":
-        return float(min(c_score, d_score))
+        return float(min(vals))
     if mode == "max":
-        return float(max(c_score, d_score))
+        return float(max(vals))
     if mode == "alpha":
+        if len(vals) != 2:
+            raise ValueError("alpha fusion is only defined for two score streams: C and D.")
         c_weight = float(spec.get("c_weight", 0.5))
-        return float(c_weight * c_score + (1.0 - c_weight) * d_score)
+        return float(c_weight * vals[0] + (1.0 - c_weight) * vals[1])
     raise ValueError(f"Unsupported fusion mode={mode!r}")
 
 
@@ -240,14 +349,15 @@ def fusion_name(spec: Mapping[str, Any]) -> str:
     return mode
 
 
-def build_fusion_scores(
-    c_scores: Mapping[str, float],
-    d_scores: Mapping[str, float],
-    spec: Mapping[str, Any],
-) -> Dict[str, float]:
+def build_fusion_scores(score_maps: Sequence[Mapping[str, float]], spec: Mapping[str, Any]) -> Dict[str, float]:
+    if not score_maps:
+        return {}
+    common = set(score_maps[0])
+    for scores in score_maps[1:]:
+        common &= set(scores)
     out: Dict[str, float] = {}
-    for sid in sorted(set(c_scores) & set(d_scores), key=lambda x: (len(str(x)), str(x))):
-        out[str(sid)] = fusion_score(float(c_scores[sid]), float(d_scores[sid]), spec)
+    for sid in sorted(common, key=lambda x: (len(str(x)), str(x))):
+        out[str(sid)] = fusion_score([float(scores[sid]) for scores in score_maps], spec)
     return out
 
 
@@ -279,10 +389,13 @@ def calibrate_fusion(
     *,
     c_rows: Sequence[Dict[str, Any]],
     d_rows: Sequence[Dict[str, Any]],
+    object_rows: Sequence[Dict[str, Any]],
     c_feature: str,
     c_layer: str,
     d_policy_json: str,
     d_layer_grid: str,
+    object_feature: str,
+    object_layer_grid: str,
     candidate_filter: str,
     min_selected_count: int,
     score_space: str,
@@ -308,12 +421,31 @@ def calibrate_fusion(
         min_selected_count=min_selected_count,
     )
     d_rows_by_id, d_scores = score_d_rows(d_rows, d_policy)
-    merged_rows_by_id = merge_rows(c_rows_by_id, d_rows_by_id)
-    eval_rows = [merged_rows_by_id[sid] for sid in sorted(set(c_scores) & set(d_scores), key=lambda x: (len(str(x)), str(x)))]
+
+    object_policy = load_or_calibrate_object_policy(
+        object_rows=object_rows,
+        object_feature=object_feature,
+        object_layer_grid=object_layer_grid,
+        candidate_filter=candidate_filter,
+        min_selected_count=min_selected_count,
+    )
+    object_rows_by_id, object_scores = score_object_rows(object_rows, object_policy)
+
+    score_maps: List[Mapping[str, float]] = [c_scores, d_scores]
+    if object_policy:
+        score_maps.append(object_scores)
+    common_ids = set(score_maps[0])
+    for score_map in score_maps[1:]:
+        common_ids &= set(score_map)
+    merged_rows_by_id = merge_rows(c_rows_by_id, d_rows_by_id, object_rows_by_id)
+    eval_rows = [merged_rows_by_id[sid] for sid in sorted(common_ids, key=lambda x: (len(str(x)), str(x)))]
 
     candidates: List[Dict[str, Any]] = []
     for spec in parse_fusion_specs(fusion_modes, alpha_grid):
-        scores = build_fusion_scores(c_scores, d_scores, spec)
+        try:
+            scores = build_fusion_scores(score_maps, spec)
+        except ValueError:
+            continue
         best, sweep = evaluate_scores(
             eval_rows,
             scores,
@@ -336,6 +468,8 @@ def calibrate_fusion(
                 "sweep": sweep,
             }
         )
+    if not candidates:
+        raise RuntimeError("No viable fusion candidates. alpha_grid is only available for two score streams.")
 
     selected = max(
         candidates,
@@ -346,7 +480,7 @@ def calibrate_fusion(
         ),
     )
     selected_policy = {
-        "family": "cvis_layered_d_fusion",
+        "family": "cvis_layered_d_object_fusion" if object_policy else "cvis_layered_d_fusion",
         "fusion": selected["fusion"],
         "fusion_name": selected["fusion_name"],
         **selected["selected_policy"],
@@ -365,6 +499,17 @@ def calibrate_fusion(
             "selected_policy": d_policy.get("selected_policy"),
             "layer_grid": d_policy.get("layer_grid"),
         },
+        "object_policy": (
+            None
+            if not object_policy
+            else {
+                "selected_layer": object_policy.get("selected_layer"),
+                "object_feature": object_policy.get("object_feature"),
+                "object_metric": object_policy.get("object_metric"),
+                "selected_policy": object_policy.get("selected_policy"),
+                "layer_grid": object_policy.get("layer_grid"),
+            }
+        ),
         "selected_policy": selected_policy,
         "calibration_score_cdf": selected["calibration_score_cdf"],
         "fusion_candidates": [
@@ -423,6 +568,7 @@ def apply_fusion(
     *,
     c_rows: Sequence[Dict[str, Any]],
     d_rows: Sequence[Dict[str, Any]],
+    object_rows: Sequence[Dict[str, Any]],
     policy: Mapping[str, Any],
     candidate_filter: str,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
@@ -430,10 +576,15 @@ def apply_fusion(
     c_rows_by_id = index_rows_by_id(c_rows_f)
     c_scores = score_c_rows(c_rows_by_id, policy["c_metric"])
     d_rows_by_id, d_scores = score_d_rows(d_rows, policy["d_policy"])
-    merged_rows_by_id = merge_rows(c_rows_by_id, d_rows_by_id)
+    object_policy = policy.get("object_policy")
+    object_rows_by_id, object_scores = score_object_rows(object_rows, object_policy)
+    merged_rows_by_id = merge_rows(c_rows_by_id, d_rows_by_id, object_rows_by_id)
 
     spec = dict(policy["selected_policy"]["fusion"])
-    raw_scores = build_fusion_scores(c_scores, d_scores, spec)
+    score_maps: List[Mapping[str, float]] = [c_scores, d_scores]
+    if object_policy:
+        score_maps.append(object_scores)
+    raw_scores = build_fusion_scores(score_maps, spec)
     eval_rows = [merged_rows_by_id[sid] for sid in sorted(raw_scores, key=lambda x: (len(str(x)), str(x)))]
     route_scores, tau_route, tau_meta = routed_scores(raw_scores, eval_rows, policy, candidate_filter=candidate_filter)
     evaluation, _ = evaluate_scores(eval_rows, route_scores, candidate_filter=candidate_filter, tau=tau_route)
@@ -465,7 +616,7 @@ def apply_fusion(
                 "question": str(row.get("question", row.get("text", ""))),
                 "category": str(row.get("category", "")),
                 "route": route,
-                "family": "cvis_layered_d_fusion",
+                "family": "cvis_layered_d_object_fusion" if object_policy else "cvis_layered_d_fusion",
                 "fusion_name": policy["selected_policy"].get("fusion_name"),
                 "score_space": tau_meta.get("score_space"),
                 "tau": tau_route,
@@ -475,6 +626,7 @@ def apply_fusion(
                 "raw_score": raw_score,
                 "c_score": c_scores.get(sid),
                 "d_score": d_scores.get(sid),
+                "object_score": object_scores.get(sid) if object_policy else None,
                 "route_candidate": int(can_route),
                 "harm": int(maybe_int(row.get("harm")) or 0),
                 "help": int(maybe_int(row.get("help")) or 0),
@@ -493,7 +645,7 @@ def apply_fusion(
                 "image": str(row.get("image", row.get("image_id", ""))),
                 "text": final_text,
                 "route": route,
-                "family": "cvis_layered_d_fusion",
+                "family": "cvis_layered_d_object_fusion" if object_policy else "cvis_layered_d_fusion",
                 "fusion_name": policy["selected_policy"].get("fusion_name"),
                 "source": final_source,
             }
@@ -505,8 +657,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Calibrate/apply fixed C_vis + layered-D fusion controller.")
     ap.add_argument("--calibration_c_rows_csv", default="")
     ap.add_argument("--calibration_d_trajectory_long_csv", default="")
+    ap.add_argument("--calibration_object_trajectory_long_csv", default="")
     ap.add_argument("--apply_c_rows_csv", default="")
     ap.add_argument("--apply_d_trajectory_long_csv", default="")
+    ap.add_argument("--apply_object_trajectory_long_csv", default="")
     ap.add_argument("--policy_json", default="")
     ap.add_argument("--d_policy_json", default="")
     ap.add_argument("--out_dir", required=True)
@@ -514,6 +668,12 @@ def main() -> None:
     ap.add_argument("--c_feature", default="abl_black_rel_delta_orig_minus_blind__cheap_decision_margin_abs")
     ap.add_argument("--c_layer", default="", help="Optional layer_index for layer-wise C rows; use 'final' for max layer.")
     ap.add_argument("--d_layer_grid", default="quartiles", help="'quartiles', 'all', or comma-separated layer indices.")
+    ap.add_argument("--object_feature", default="obj_target_gap_mean")
+    ap.add_argument(
+        "--object_layer_grid",
+        default="late",
+        help="'late' maps to {3L/4,7L/8,L}; also accepts 'all' or comma-separated layer indices.",
+    )
     ap.add_argument("--min_selected_count", type=int, default=5)
     ap.add_argument("--score_space", default="raw", choices=["raw", "percentile", "discovery_percentile", "batch_percentile"])
     ap.add_argument("--fusion_modes", default="mean", help="Comma list of mean,min,max,alpha_grid.")
@@ -530,13 +690,21 @@ def main() -> None:
             raise RuntimeError("--calibration_c_rows_csv and --calibration_d_trajectory_long_csv are required without --policy_json.")
         c_rows = read_csv_rows(os.path.abspath(args.calibration_c_rows_csv))
         d_rows = read_d_rows(os.path.abspath(args.calibration_d_trajectory_long_csv))
+        object_rows = (
+            read_csv_rows(os.path.abspath(args.calibration_object_trajectory_long_csv))
+            if str(args.calibration_object_trajectory_long_csv or "").strip()
+            else []
+        )
         policy = calibrate_fusion(
             c_rows=c_rows,
             d_rows=d_rows,
+            object_rows=object_rows,
             c_feature=str(args.c_feature),
             c_layer=str(args.c_layer),
             d_policy_json=str(args.d_policy_json),
             d_layer_grid=str(args.d_layer_grid),
+            object_feature=str(args.object_feature),
+            object_layer_grid=str(args.object_layer_grid),
             candidate_filter=str(args.candidate_filter),
             min_selected_count=int(args.min_selected_count),
             score_space=str(args.score_space),
@@ -546,11 +714,16 @@ def main() -> None:
         policy["inputs"] = {
             "calibration_c_rows_csv": os.path.abspath(args.calibration_c_rows_csv),
             "calibration_d_trajectory_long_csv": os.path.abspath(args.calibration_d_trajectory_long_csv),
+            "calibration_object_trajectory_long_csv": os.path.abspath(args.calibration_object_trajectory_long_csv)
+            if str(args.calibration_object_trajectory_long_csv or "").strip()
+            else "",
             "d_policy_json": os.path.abspath(args.d_policy_json) if str(args.d_policy_json or "").strip() else "",
             "candidate_filter": str(args.candidate_filter),
             "c_feature": str(args.c_feature),
             "c_layer": str(args.c_layer),
             "d_layer_grid": str(args.d_layer_grid),
+            "object_feature": str(args.object_feature),
+            "object_layer_grid": str(args.object_layer_grid),
             "min_selected_count": int(args.min_selected_count),
             "score_space": str(args.score_space),
             "fusion_modes": str(args.fusion_modes),
@@ -583,9 +756,17 @@ def main() -> None:
     if str(args.apply_c_rows_csv or "").strip() and str(args.apply_d_trajectory_long_csv or "").strip():
         apply_c_rows = read_csv_rows(os.path.abspath(args.apply_c_rows_csv))
         apply_d_rows = read_d_rows(os.path.abspath(args.apply_d_trajectory_long_csv))
+        if policy.get("object_policy") and not str(args.apply_object_trajectory_long_csv or "").strip():
+            raise RuntimeError("--apply_object_trajectory_long_csv is required by this policy.")
+        apply_object_rows = (
+            read_csv_rows(os.path.abspath(args.apply_object_trajectory_long_csv))
+            if str(args.apply_object_trajectory_long_csv or "").strip()
+            else []
+        )
         route_rows, pred_rows, evaluation = apply_fusion(
             c_rows=apply_c_rows,
             d_rows=apply_d_rows,
+            object_rows=apply_object_rows,
             policy=policy,
             candidate_filter=str(policy.get("candidate_filter") or args.candidate_filter),
         )
@@ -600,12 +781,16 @@ def main() -> None:
             "inputs": {
                 "apply_c_rows_csv": os.path.abspath(args.apply_c_rows_csv),
                 "apply_d_trajectory_long_csv": os.path.abspath(args.apply_d_trajectory_long_csv),
+                "apply_object_trajectory_long_csv": os.path.abspath(args.apply_object_trajectory_long_csv)
+                if str(args.apply_object_trajectory_long_csv or "").strip()
+                else "",
                 "policy_json": os.path.abspath(args.policy_json) if str(args.policy_json or "").strip() else os.path.join(out_dir, "selected_policy.json"),
             },
             "policy": {
                 "c_feature": policy.get("c_feature"),
                 "c_metric": policy.get("c_metric"),
                 "d_policy": policy.get("d_policy"),
+                "object_policy": policy.get("object_policy"),
                 "selected_policy": policy.get("selected_policy"),
             },
             "evaluation_from_cached_labels": evaluation,
