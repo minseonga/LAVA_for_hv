@@ -349,15 +349,23 @@ def fusion_name(spec: Mapping[str, Any]) -> str:
     return mode
 
 
-def build_fusion_scores(score_maps: Sequence[Mapping[str, float]], spec: Mapping[str, Any]) -> Dict[str, float]:
+def build_fusion_scores(
+    score_maps: Sequence[Mapping[str, float]],
+    spec: Mapping[str, Any],
+    *,
+    required_streams: Optional[int] = None,
+) -> Dict[str, float]:
     if not score_maps:
         return {}
+    n_required = len(score_maps) if required_streams is None else int(required_streams)
+    n_required = max(1, min(n_required, len(score_maps)))
     common = set(score_maps[0])
-    for scores in score_maps[1:]:
+    for scores in score_maps[1:n_required]:
         common &= set(scores)
     out: Dict[str, float] = {}
     for sid in sorted(common, key=lambda x: (len(str(x)), str(x))):
-        out[str(sid)] = fusion_score([float(scores[sid]) for scores in score_maps], spec)
+        values = [float(scores[sid]) for scores in score_maps if sid in scores]
+        out[str(sid)] = fusion_score(values, spec)
     return out
 
 
@@ -434,16 +442,16 @@ def calibrate_fusion(
     score_maps: List[Mapping[str, float]] = [c_scores, d_scores]
     if object_policy:
         score_maps.append(object_scores)
-    common_ids = set(score_maps[0])
-    for score_map in score_maps[1:]:
-        common_ids &= set(score_map)
+    common_ids = set(c_scores) & set(d_scores)
     merged_rows_by_id = merge_rows(c_rows_by_id, d_rows_by_id, object_rows_by_id)
     eval_rows = [merged_rows_by_id[sid] for sid in sorted(common_ids, key=lambda x: (len(str(x)), str(x)))]
 
     candidates: List[Dict[str, Any]] = []
     for spec in parse_fusion_specs(fusion_modes, alpha_grid):
+        if object_policy and str(spec.get("mode")) == "alpha":
+            continue
         try:
-            scores = build_fusion_scores(score_maps, spec)
+            scores = build_fusion_scores(score_maps, spec, required_streams=2)
         except ValueError:
             continue
         best, sweep = evaluate_scores(
@@ -584,7 +592,7 @@ def apply_fusion(
     score_maps: List[Mapping[str, float]] = [c_scores, d_scores]
     if object_policy:
         score_maps.append(object_scores)
-    raw_scores = build_fusion_scores(score_maps, spec)
+    raw_scores = build_fusion_scores(score_maps, spec, required_streams=2)
     eval_rows = [merged_rows_by_id[sid] for sid in sorted(raw_scores, key=lambda x: (len(str(x)), str(x)))]
     route_scores, tau_route, tau_meta = routed_scores(raw_scores, eval_rows, policy, candidate_filter=candidate_filter)
     evaluation, _ = evaluate_scores(eval_rows, route_scores, candidate_filter=candidate_filter, tau=tau_route)

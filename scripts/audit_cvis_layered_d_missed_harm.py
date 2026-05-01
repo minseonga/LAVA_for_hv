@@ -122,8 +122,6 @@ def main() -> None:
     merged_by_id = merge_rows(c_rows_by_id, d_rows_by_id, object_rows_by_id)
 
     common_ids = set(c_scores_all) & set(d_scores_all)
-    if object_policy:
-        common_ids &= set(object_scores_all)
     valid_ids = [
         sid
         for sid in sorted(common_ids, key=lambda x: (len(str(x)), str(x)))
@@ -131,12 +129,12 @@ def main() -> None:
     ]
     c_scores = {sid: float(c_scores_all[sid]) for sid in valid_ids}
     d_scores = {sid: float(d_scores_all[sid]) for sid in valid_ids}
-    object_scores = {sid: float(object_scores_all[sid]) for sid in valid_ids} if object_policy else {}
+    object_scores = {sid: float(object_scores_all[sid]) for sid in valid_ids if sid in object_scores_all} if object_policy else {}
     fusion_spec = dict(policy["selected_policy"]["fusion"])
     score_maps: List[Mapping[str, float]] = [c_scores, d_scores]
     if object_policy:
         score_maps.append(object_scores)
-    fusion_scores = build_fusion_scores(score_maps, fusion_spec)
+    fusion_scores = build_fusion_scores(score_maps, fusion_spec, required_streams=2)
 
     c_pct = percentile_ranks(c_scores)
     d_pct = percentile_ranks(d_scores)
