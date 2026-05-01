@@ -66,21 +66,34 @@ class OfficialLlavaNextRuntime:
         if torch_type not in TORCH_TYPE_ARG:
             raise ValueError(f"Unsupported torch_type={torch_type!r}; expected one of {sorted(TORCH_TYPE_ARG)}")
         attn_implementation = str(attn_implementation or "eager")
-        if attn_implementation == "none":
-            attn_implementation = "eager"
 
         disable_torch_init()
         model_path = os.path.expanduser(str(model_path))
         model_base = None if not str(model_base or "").strip() else os.path.expanduser(str(model_base))
         model_name = get_model_name_from_path(model_path)
-        self.tokenizer, self.model, self.image_processor, _ = load_pretrained_model(
-            model_path,
-            model_base,
-            model_name,
-            device_map=str(device or "cuda"),
-            torch_dtype=TORCH_TYPE_ARG[torch_type],
-            attn_implementation=attn_implementation,
-        )
+        load_kwargs = {
+            "device_map": str(device or "cuda"),
+            "torch_dtype": TORCH_TYPE_ARG[torch_type],
+        }
+        if attn_implementation != "none":
+            load_kwargs["attn_implementation"] = attn_implementation
+        try:
+            self.tokenizer, self.model, self.image_processor, _ = load_pretrained_model(
+                model_path,
+                model_base,
+                model_name,
+                **load_kwargs,
+            )
+        except TypeError as exc:
+            if "attn_implementation" not in str(exc) or "attn_implementation" not in load_kwargs:
+                raise
+            load_kwargs.pop("attn_implementation", None)
+            self.tokenizer, self.model, self.image_processor, _ = load_pretrained_model(
+                model_path,
+                model_base,
+                model_name,
+                **load_kwargs,
+            )
         self.tokenizer.padding_side = "right"
         self.model.eval()
         self.conv_mode = str(conv_mode)
