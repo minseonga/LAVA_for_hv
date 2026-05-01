@@ -201,7 +201,7 @@ def logit_lens_features(
             idx = resolve_hidden_index(int(layer), len(hidden_states))
             tag = layer_tag(int(layer), len(hidden_states))
             h = hidden_states[idx][:, first_decision_pos, :]
-            if norm is not None:
+            if norm is not None and idx != len(hidden_states) - 1:
                 h = norm(h)
             logits = runtime.model.lm_head(h).float()[0]
             vals = label_margin_from_logits(logits, token_ids=token_ids, candidate_label=candidate_label)
