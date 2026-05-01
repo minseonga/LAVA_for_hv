@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import json
 import math
@@ -180,6 +181,34 @@ def threshold_grid(values: Sequence[float]) -> List[float]:
     return sorted(set(finite))
 
 
+def empirical_cdf(value: float, sorted_values: Sequence[float]) -> float:
+    if not sorted_values:
+        return 0.0
+    return float(bisect.bisect_right(sorted_values, float(value)) / float(len(sorted_values)))
+
+
+def candidate_score_distribution(
+    rows: Sequence[Mapping[str, Any]],
+    scores_by_id: Mapping[str, float],
+    *,
+    candidate_filter: str,
+) -> List[float]:
+    values = [
+        float(scores_by_id[str(row.get("id", ""))])
+        for row in rows
+        if str(row.get("id", "")) in scores_by_id and is_candidate(row, candidate_filter)
+    ]
+    return sorted(float(v) for v in values if math.isfinite(float(v)))
+
+
+def percentile_scores(
+    scores_by_id: Mapping[str, float],
+    calibration_cdf: Sequence[float],
+) -> Dict[str, float]:
+    sorted_cdf = sorted(float(v) for v in calibration_cdf if math.isfinite(float(v)))
+    return {str(sid): empirical_cdf(float(score), sorted_cdf) for sid, score in scores_by_id.items()}
+
+
 def group_by_layer(rows: Sequence[Mapping[str, Any]]) -> Dict[int, List[Dict[str, Any]]]:
     out: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -309,7 +338,15 @@ def calibrate(
     layer_grid: Sequence[int],
     candidate_filter: str,
     min_selected_count: int,
+    score_space: str,
 ) -> Dict[str, Any]:
+    score_space = str(score_space or "raw").strip().lower()
+    if score_space not in {"raw", "percentile", "discovery_percentile", "batch_percentile"}:
+        raise ValueError(
+            f"Unsupported score_space={score_space!r}; expected raw, discovery_percentile, percentile, or batch_percentile"
+        )
+    if score_space == "percentile":
+        score_space = "discovery_percentile"
     by_layer = group_by_layer(rows)
     candidates: List[Dict[str, Any]] = []
     for layer in layer_grid:
@@ -327,12 +364,32 @@ def calibrate(
             candidate_filter=candidate_filter,
             min_selected_count=min_selected_count,
         )
+        calibration_cdf = candidate_score_distribution(layer_rows, scores, candidate_filter=candidate_filter)
+        raw_tau = maybe_float(best.get("tau")) if best else None
+        tau_percentile = None if raw_tau is None else empirical_cdf(float(raw_tau), calibration_cdf)
+        if best:
+            best = {
+                **best,
+                "tau_raw": float(raw_tau),
+                "tau_percentile": tau_percentile,
+                "score_space": score_space,
+                "calibration_score_count": int(len(calibration_cdf)),
+            }
+        sweep = [
+            {
+                **row,
+                "tau_raw": row.get("tau"),
+                "tau_percentile": empirical_cdf(float(row["tau"]), calibration_cdf) if "tau" in row else None,
+            }
+            for row in sweep
+        ]
         candidates.append(
             {
                 "layer": int(layer),
                 "selected_d_features": metrics,
                 "best": best,
                 "sweep": sweep,
+                "calibration_score_cdf": calibration_cdf,
             }
         )
     viable = [x for x in candidates if x.get("best")]
@@ -347,23 +404,31 @@ def calibrate(
             -int(x["layer"]),
         ),
     )
+    selected_policy = {
+        "family": "layered_d",
+        "layer": int(selected["layer"]),
+        **selected["best"],
+    }
+    if score_space in {"discovery_percentile", "batch_percentile"}:
+        selected_policy["route_tau"] = float(selected_policy["tau_percentile"])
+    else:
+        selected_policy["route_tau"] = float(selected_policy["tau_raw"])
+
     return {
         "mode": "layered_d_family_controller",
         "candidate_filter": candidate_filter,
+        "score_space": score_space,
         "layer_grid": [int(x) for x in layer_grid],
         "selected_layer": int(selected["layer"]),
         "selected_d_features": selected["selected_d_features"],
-        "selected_policy": {
-            "family": "layered_d",
-            "layer": int(selected["layer"]),
-            "tau": float(selected["best"]["tau"]),
-            **selected["best"],
-        },
+        "selected_policy": selected_policy,
+        "calibration_score_cdf": selected.get("calibration_score_cdf", []),
         "layer_candidates": [
             {
                 "layer": int(x["layer"]),
                 "selected_d_features": x["selected_d_features"],
                 "best": x["best"],
+                "calibration_score_count": int(len(x.get("calibration_score_cdf", []))),
             }
             for x in candidates
         ],
@@ -378,21 +443,56 @@ def apply_policy(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     layer = int(policy["selected_layer"])
     metrics = list(policy.get("selected_d_features") or [])
-    tau = float((policy.get("selected_policy") or {}).get("tau"))
+    selected_policy = dict(policy.get("selected_policy") or {})
+    score_space = str(selected_policy.get("score_space") or policy.get("score_space") or "raw").strip().lower()
+    if score_space == "percentile":
+        score_space = "discovery_percentile"
+    if score_space not in {"raw", "discovery_percentile", "batch_percentile"}:
+        raise ValueError(f"Unsupported score_space={score_space!r}; expected raw, discovery_percentile, or batch_percentile")
+    tau_raw = maybe_float(selected_policy.get("tau_raw", selected_policy.get("tau")))
+    tau_percentile = maybe_float(selected_policy.get("tau_percentile"))
+    if tau_raw is None:
+        raise RuntimeError("Policy is missing a raw tau.")
     layer_rows = group_by_layer(rows).get(layer, [])
-    scores = {
+    raw_scores = {
         str(row.get("id", "")): score
         for row in layer_rows
         if (score := score_row(row, metrics)) is not None
     }
-    evaluation, _ = evaluate_scores(layer_rows, scores, candidate_filter=candidate_filter, tau=tau)
+    if score_space == "discovery_percentile":
+        calibration_cdf = policy.get("calibration_score_cdf") or selected_policy.get("calibration_score_cdf") or []
+        if not calibration_cdf:
+            raise RuntimeError("discovery_percentile score_space requires calibration_score_cdf in the policy.")
+        route_scores = percentile_scores(raw_scores, calibration_cdf)
+        tau_route = float(tau_percentile if tau_percentile is not None else empirical_cdf(float(tau_raw), sorted(calibration_cdf)))
+    elif score_space == "batch_percentile":
+        if tau_percentile is None:
+            calibration_cdf = policy.get("calibration_score_cdf") or selected_policy.get("calibration_score_cdf") or []
+            if not calibration_cdf:
+                raise RuntimeError("batch_percentile score_space requires tau_percentile or calibration_score_cdf in the policy.")
+            tau_percentile = empirical_cdf(float(tau_raw), sorted(calibration_cdf))
+        batch_cdf = candidate_score_distribution(layer_rows, raw_scores, candidate_filter=candidate_filter)
+        route_scores = percentile_scores(raw_scores, batch_cdf)
+        tau_route = float(tau_percentile)
+    else:
+        route_scores = dict(raw_scores)
+        tau_route = float(tau_raw)
+    evaluation, _ = evaluate_scores(layer_rows, route_scores, candidate_filter=candidate_filter, tau=tau_route)
+    evaluation = {
+        **evaluation,
+        "score_space": score_space,
+        "tau_raw": float(tau_raw),
+        "tau_percentile": tau_percentile,
+        "route_tau": float(tau_route),
+    }
     route_rows: List[Dict[str, Any]] = []
     pred_rows: List[Dict[str, Any]] = []
     for row in layer_rows:
         sid = str(row.get("id", ""))
-        score = scores.get(sid)
+        raw_score = raw_scores.get(sid)
+        route_score = route_scores.get(sid)
         can_route = is_candidate(row, candidate_filter)
-        route = "baseline" if can_route and score is not None and float(score) >= tau else "method"
+        route = "baseline" if can_route and route_score is not None and float(route_score) >= tau_route else "method"
         final_text = str(row.get("intervention_text", ""))
         final_source = "method"
         if route == "baseline":
@@ -406,8 +506,13 @@ def apply_policy(
                 "route": route,
                 "family": "layered_d",
                 "layer": layer,
-                "tau": tau,
-                "score": score,
+                "score_space": score_space,
+                "tau": tau_route,
+                "tau_raw": tau_raw,
+                "tau_percentile": tau_percentile,
+                "score": route_score,
+                "raw_score": raw_score,
+                "score_percentile": route_score if score_space in {"discovery_percentile", "batch_percentile"} else None,
                 "route_candidate": int(can_route),
                 "harm": int(maybe_int(row.get("harm")) or 0),
                 "help": int(maybe_int(row.get("help")) or 0),
@@ -428,6 +533,7 @@ def apply_policy(
                 "route": route,
                 "family": "layered_d",
                 "layer": layer,
+                "score_space": score_space,
                 "source": final_source,
             }
         )
@@ -443,6 +549,15 @@ def main() -> None:
     ap.add_argument("--candidate_filter", default="changed_answer", choices=["all", "changed_answer", "yes_to_no"])
     ap.add_argument("--layer_grid", default="quartiles", help="'quartiles', 'all', or comma-separated layer indices.")
     ap.add_argument("--min_selected_count", type=int, default=5)
+    ap.add_argument(
+        "--score_space",
+        default="raw",
+        choices=["raw", "percentile", "discovery_percentile", "batch_percentile"],
+        help=(
+            "Route with raw scores, discovery-CDF percentiles, or apply-batch percentiles. "
+            "Calibration objective is unchanged. 'percentile' is kept as an alias for discovery_percentile."
+        ),
+    )
     args = ap.parse_args()
 
     out_dir = os.path.abspath(args.out_dir)
@@ -463,12 +578,14 @@ def main() -> None:
             layer_grid=layer_grid,
             candidate_filter=str(args.candidate_filter),
             min_selected_count=int(args.min_selected_count),
+            score_space=str(args.score_space),
         )
         policy["inputs"] = {
             "calibration_trajectory_long_csv": os.path.abspath(args.calibration_trajectory_long_csv),
             "candidate_filter": str(args.candidate_filter),
             "layer_grid": str(args.layer_grid),
             "min_selected_count": int(args.min_selected_count),
+            "score_space": str(args.score_space),
         }
         write_json(os.path.join(out_dir, "selected_policy.json"), policy)
         write_csv(
@@ -477,6 +594,10 @@ def main() -> None:
                 {
                     "layer": row["layer"],
                     "tau": row["best"].get("tau"),
+                    "tau_raw": row["best"].get("tau_raw"),
+                    "tau_percentile": row["best"].get("tau_percentile"),
+                    "score_space": row["best"].get("score_space"),
+                    "calibration_score_count": row.get("calibration_score_count"),
                     "selected_count": row["best"].get("selected_count"),
                     "selected_harm": row["best"].get("selected_harm"),
                     "selected_help": row["best"].get("selected_help"),
