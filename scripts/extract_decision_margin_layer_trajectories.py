@@ -196,6 +196,7 @@ def layer_trajectory(
     import torch
     from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX
     from llava.mm_utils import tokenizer_image_token
+    from frgavr_cleanroom.runtime import select_content_indices
     from run_discriminative_meta_strong_online import final_label_from_text, yesno_token_id_sets
 
     prompt = runtime.prompt_text(question)
@@ -262,6 +263,11 @@ def layer_trajectory(
         if int(decision_positions.min().item()) < 0:
             raise RuntimeError("Invalid decision positions after expansion.")
         first_decision_pos = int(decision_positions[0].item())
+        target_ids = labels_exp[cont_label_positions].long()
+        content_indices = select_content_indices(runtime.tokenizer, cont_ids.detach().cpu())
+        content_indices = [int(i) for i in content_indices if 0 <= int(i) < int(target_ids.numel())]
+        if not content_indices:
+            content_indices = list(range(int(target_ids.numel())))
 
         norm = None
         if bool(apply_final_norm):
@@ -277,6 +283,24 @@ def layer_trajectory(
                 h = norm(h)
             logits = runtime.model.lm_head(h).float()[0]
             vals = label_margin_from_logits(logits, token_ids=token_ids, candidate_label=candidate_label)
+
+            h_cont = hidden[:, decision_positions, :]
+            if norm is not None and idx != n_hidden - 1:
+                h_cont = norm(h_cont)
+            token_logits = runtime.model.lm_head(h_cont).float()[0]
+            log_probs = torch.log_softmax(token_logits, dim=-1)
+            probs = torch.softmax(token_logits, dim=-1)
+            token_ent = -(probs * log_probs).sum(dim=-1)
+            top2_vals, top2_idx = torch.topk(token_logits, k=2, dim=-1)
+            top1_logit = top2_vals[:, 0]
+            top2_logit = top2_vals[:, 1]
+            top1_id = top2_idx[:, 0]
+            target_logit = token_logits.gather(1, target_ids.unsqueeze(-1)).squeeze(-1)
+            best_other_logit = torch.where(top1_id == target_ids, top2_logit, top1_logit)
+            target_gap = target_logit - best_other_logit
+            pick = torch.tensor(content_indices, dtype=torch.long, device=target_gap.device)
+            target_gap_content = target_gap.index_select(0, pick)
+            entropy_content = token_ent.index_select(0, pick)
             rows.append(
                 {
                     "layer_index": int(idx),
@@ -284,57 +308,81 @@ def layer_trajectory(
                     "is_final_layer": int(idx == n_hidden - 1),
                     "candidate_label": candidate_label,
                     **vals,
+                    "c_target_gap_content_min": float(target_gap_content.min().item()),
+                    "c_entropy_content_mean": float(entropy_content.mean().item()),
+                    "c_first_target_gap": float(target_gap[0].item()),
+                    "c_n_content_tokens": int(len(content_indices)),
                 }
             )
     return rows
 
 
+SUMMARY_FEATURES = [
+    ("candidate_margin", "candidate_minus_alt"),
+    ("c_target_gap_content_min", "c_target_gap_content_min"),
+    ("c_entropy_content_mean", "c_entropy_content_mean"),
+    ("c_first_target_gap", "c_first_target_gap"),
+]
+
+
 def summarize_layers(long_rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
-    by_layer: Dict[int, Dict[str, List[float]]] = {}
+    by_layer: Dict[int, Dict[str, Any]] = {}
     for row in long_rows:
         try:
             layer = int(row["layer_index"])
             harm = int(float(row.get("harm", 0) or 0))
             help_ = int(float(row.get("help", 0) or 0))
-            margin = float(row["candidate_minus_alt"])
-            yes_minus_no = float(row["yes_minus_no"])
         except Exception:
             continue
         if harm not in {0, 1} or help_ not in {0, 1}:
             continue
-        item = by_layer.setdefault(layer, {"harm_margin": [], "help_margin": [], "ys": [], "margins": [], "yes_minus_no": []})
-        if harm == 1:
-            item["harm_margin"].append(margin)
-        if help_ == 1:
-            item["help_margin"].append(margin)
+        item = by_layer.setdefault(
+            layer,
+            {
+                "ys": [],
+                **{f"{name}_values": [] for name, _ in SUMMARY_FEATURES},
+                **{f"{name}_harm": [] for name, _ in SUMMARY_FEATURES},
+                **{f"{name}_help": [] for name, _ in SUMMARY_FEATURES},
+            },
+        )
         if harm == 1 or help_ == 1:
             item["ys"].append(harm)
-            item["margins"].append(margin)
-            item["yes_minus_no"].append(yes_minus_no)
+            for name, key in SUMMARY_FEATURES:
+                try:
+                    value = float(row[key])
+                except Exception:
+                    continue
+                item[f"{name}_values"].append(value)
+                if harm == 1:
+                    item[f"{name}_harm"].append(value)
+                if help_ == 1:
+                    item[f"{name}_help"].append(value)
     out: List[Dict[str, Any]] = []
     for layer in sorted(by_layer):
         item = by_layer[layer]
-        margins = item["margins"]
         ys = [int(x) for x in item["ys"]]
-        if not margins:
+        if not ys:
             continue
-        auc_high = binary_auroc(margins, ys)
-        auc_low = binary_auroc([-x for x in margins], ys)
-        out.append(
-            {
-                "layer_index": layer,
-                "n": len(margins),
-                "n_harm": sum(ys),
-                "n_help": len(ys) - sum(ys),
-                "harm_candidate_margin_mean": mean(item["harm_margin"]),
-                "harm_candidate_margin_std": std(item["harm_margin"]),
-                "help_candidate_margin_mean": mean(item["help_margin"]),
-                "help_candidate_margin_std": std(item["help_margin"]),
-                "candidate_margin_auroc": max(auc_high, auc_low),
-                "candidate_margin_direction": "high" if auc_high >= auc_low else "low",
-                "raw_auroc_high": auc_high,
-            }
-        )
+        summary: Dict[str, Any] = {
+            "layer_index": layer,
+            "n": len(ys),
+            "n_harm": sum(ys),
+            "n_help": len(ys) - sum(ys),
+        }
+        for name, _ in SUMMARY_FEATURES:
+            values = [float(x) for x in item[f"{name}_values"]]
+            if len(values) != len(ys):
+                continue
+            auc_high = binary_auroc(values, ys)
+            auc_low = binary_auroc([-x for x in values], ys)
+            summary[f"harm_{name}_mean"] = mean(item[f"{name}_harm"])
+            summary[f"harm_{name}_std"] = std(item[f"{name}_harm"])
+            summary[f"help_{name}_mean"] = mean(item[f"{name}_help"])
+            summary[f"help_{name}_std"] = std(item[f"{name}_help"])
+            summary[f"{name}_auroc"] = max(auc_high, auc_low)
+            summary[f"{name}_direction"] = "high" if auc_high >= auc_low else "low"
+            summary[f"{name}_raw_auroc_high"] = auc_high
+        out.append(summary)
     return out
 
 
