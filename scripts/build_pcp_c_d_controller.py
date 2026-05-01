@@ -43,6 +43,21 @@ def add_decision_kl_features(row: Dict[str, Any]) -> None:
         row["cheap_decision_candidate_entropy"] = float(-(p * math.log(p) + q * math.log(q)))
         row["cheap_decision_candidate_conf_abs"] = float(abs(p - 0.5))
 
+    suffix = "cheap_decision_candidate_prob_binary"
+    for key, value in list(row.items()):
+        if key == suffix or not key.endswith(suffix):
+            continue
+        prefixed_p = base.maybe_float(value)
+        if prefixed_p is None:
+            continue
+        prefix = key[: -len(suffix)]
+        eps = 1e-12
+        p = min(1.0 - eps, max(eps, float(prefixed_p)))
+        q = 1.0 - p
+        row[f"{prefix}cheap_decision_candidate_kl_uniform"] = float(p * math.log(2.0 * p) + q * math.log(2.0 * q))
+        row[f"{prefix}cheap_decision_candidate_entropy"] = float(-(p * math.log(p) + q * math.log(q)))
+        row[f"{prefix}cheap_decision_candidate_conf_abs"] = float(abs(p - 0.5))
+
 
 def load_rows(rows_csv: str, *, derive_decision_kl: bool) -> List[Dict[str, Any]]:
     rows = base.read_csv_rows(os.path.abspath(rows_csv))
