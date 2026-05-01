@@ -567,6 +567,9 @@ def main() -> None:
             "mode": "decision_margin_layer_trajectory",
             "inputs": {
                 "runtime_backend": str(args.runtime_backend),
+                "cleanroom_image_preprocess_mode": str(os.environ.get("CLEANROOM_IMAGE_PREPROCESS_MODE", "direct")).strip().lower(),
+                "cleanroom_tf_forward_mode": str(os.environ.get("CLEANROOM_TF_FORWARD_MODE", "backbone")).strip().lower(),
+                "yesno_token_mode": str(os.environ.get("YESNO_TOKEN_MODE", "strict")).strip().lower(),
                 "question_file": os.path.abspath(args.question_file),
                 "image_folder": os.path.abspath(args.image_folder),
                 "intervention_pred_jsonl": os.path.abspath(args.intervention_pred_jsonl)
