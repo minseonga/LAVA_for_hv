@@ -38,15 +38,25 @@ def write_csv(path: str, rows: Sequence[Dict[str, Any]], fieldnames: Sequence[st
         wr.writerows(rows)
 
 
+def extract_image_id_token(value: str) -> str:
+    groups = re.findall(r"\d+", str(value or ""))
+    if not groups:
+        return ""
+    for group in reversed(groups):
+        if len(group) == 12:
+            return group
+    return groups[-1]
+
+
 def normalize_image_refs(value: Any) -> Set[str]:
     s = str("" if value is None else value).strip()
     if not s:
         return set()
     base = os.path.basename(s)
     out = {s, base}
-    m = re.search(r"(\d{1,12})", base)
-    if m:
-        image_id = int(m.group(1))
+    image_id_token = extract_image_id_token(base)
+    if image_id_token:
+        image_id = int(image_id_token)
         out.add(str(image_id))
         out.add(f"{image_id:012d}")
         out.add(f"COCO_val2014_{image_id:012d}.jpg")
