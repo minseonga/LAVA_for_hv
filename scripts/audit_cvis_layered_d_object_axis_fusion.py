@@ -321,10 +321,12 @@ def main() -> None:
     ap.add_argument("--candidate_filter", default="yes_to_no", choices=["all", "changed_answer", "yes_to_no"])
     ap.add_argument("--c_feature", default="abl_black_rel_delta_orig_minus_blind__cheap_decision_margin_abs")
     ap.add_argument("--c_layer", default="")
+    ap.add_argument("--c_direction", default="auto", choices=["auto", "high", "low"])
     ap.add_argument("--d_policy_json", default="")
     ap.add_argument("--d_layer_grid", default="all")
     ap.add_argument("--object_feature", default="obj_target_gap_mean")
     ap.add_argument("--object_layer_grid", default="late")
+    ap.add_argument("--object_direction", default="auto", choices=["auto", "high", "low"])
     ap.add_argument("--fusion_modes", default="mean,min,max")
     ap.add_argument("--alpha_grid", default="0,0.25,0.5,0.75,1")
     ap.add_argument("--score_space", default="raw", choices=["raw", "percentile", "discovery_percentile", "batch_percentile"])
@@ -362,7 +364,12 @@ def main() -> None:
     apply_c_rows_f = filter_c_rows(apply_c_rows, str(args.c_layer))
     cal_c_rows_by_id = index_rows_by_id(cal_c_rows_f)
     apply_c_rows_by_id = index_rows_by_id(apply_c_rows_f)
-    c_metric = orient_c_feature(list(cal_c_rows_by_id.values()), str(args.c_feature), str(args.candidate_filter))
+    c_metric = orient_c_feature(
+        list(cal_c_rows_by_id.values()),
+        str(args.c_feature),
+        str(args.candidate_filter),
+        str(args.c_direction),
+    )
     cal_c_scores = score_c_rows(cal_c_rows_by_id, c_metric)
     apply_c_scores = score_c_rows(apply_c_rows_by_id, c_metric)
 
@@ -386,6 +393,7 @@ def main() -> None:
             object_rows=cal_object_rows,
             object_feature=str(args.object_feature),
             object_layer_grid=str(args.object_layer_grid),
+            object_direction=str(args.object_direction),
             candidate_filter=str(args.candidate_filter),
             min_selected_count=int(args.min_selected_count),
         )

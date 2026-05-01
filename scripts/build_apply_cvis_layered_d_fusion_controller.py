@@ -90,7 +90,12 @@ def index_rows_by_id(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Dict[str, A
     return out
 
 
-def orient_c_feature(rows: Sequence[Mapping[str, Any]], feature: str, candidate_filter: str) -> Dict[str, Any]:
+def orient_c_feature(
+    rows: Sequence[Mapping[str, Any]],
+    feature: str,
+    candidate_filter: str,
+    direction_override: str = "auto",
+) -> Dict[str, Any]:
     xs: List[float] = []
     ys: List[int] = []
     for row in rows:
@@ -111,12 +116,17 @@ def orient_c_feature(rows: Sequence[Mapping[str, Any]], feature: str, candidate_
     auc_low = binary_auroc([-x for x in xs], ys)
     if auc_high is None or auc_low is None:
         raise RuntimeError(f"C feature={feature!r} has no positive/negative labels.")
-    direction = "high" if auc_high >= auc_low else "low"
+    direction_override = str(direction_override or "auto").strip().lower()
+    if direction_override not in {"auto", "high", "low"}:
+        raise ValueError(f"Unsupported direction_override={direction_override!r}; expected auto, high, or low.")
+    direction = direction_override if direction_override in {"high", "low"} else ("high" if auc_high >= auc_low else "low")
     oriented = [x if direction == "high" else -x for x in xs]
     return {
         "feature": feature,
         "direction": direction,
-        "auroc": max(float(auc_high), float(auc_low)),
+        "direction_source": direction_override,
+        "auroc": float(auc_high if direction == "high" else auc_low),
+        "best_auto_auroc": max(float(auc_high), float(auc_low)),
         "raw_auroc_high": float(auc_high),
         "mu": mean(oriented),
         "sd": std(oriented),
@@ -207,6 +217,7 @@ def load_or_calibrate_object_policy(
     object_rows: Sequence[Dict[str, Any]],
     object_feature: str,
     object_layer_grid: str,
+    object_direction: str,
     candidate_filter: str,
     min_selected_count: int,
 ) -> Optional[Dict[str, Any]]:
@@ -221,7 +232,7 @@ def load_or_calibrate_object_policy(
     for layer in layer_grid:
         layer_rows = by_layer.get(int(layer), [])
         rows_by_id = index_rows_by_id(layer_rows)
-        metric = orient_c_feature(list(rows_by_id.values()), object_feature, candidate_filter)
+        metric = orient_c_feature(list(rows_by_id.values()), object_feature, candidate_filter, object_direction)
         scores = score_c_rows(rows_by_id, metric)
         best, _ = evaluate_scores(
             layer_rows,
@@ -400,10 +411,12 @@ def calibrate_fusion(
     object_rows: Sequence[Dict[str, Any]],
     c_feature: str,
     c_layer: str,
+    c_direction: str,
     d_policy_json: str,
     d_layer_grid: str,
     object_feature: str,
     object_layer_grid: str,
+    object_direction: str,
     candidate_filter: str,
     min_selected_count: int,
     score_space: str,
@@ -418,7 +431,7 @@ def calibrate_fusion(
 
     c_rows_f = filter_c_rows(c_rows, c_layer)
     c_rows_by_id = index_rows_by_id(c_rows_f)
-    c_metric = orient_c_feature(list(c_rows_by_id.values()), c_feature, candidate_filter)
+    c_metric = orient_c_feature(list(c_rows_by_id.values()), c_feature, candidate_filter, c_direction)
     c_scores = score_c_rows(c_rows_by_id, c_metric)
 
     d_policy = load_or_calibrate_d_policy(
@@ -434,6 +447,7 @@ def calibrate_fusion(
         object_rows=object_rows,
         object_feature=object_feature,
         object_layer_grid=object_layer_grid,
+        object_direction=object_direction,
         candidate_filter=candidate_filter,
         min_selected_count=min_selected_count,
     )
@@ -500,6 +514,7 @@ def calibrate_fusion(
         "score_space": score_space,
         "c_feature": c_feature,
         "c_layer": c_layer,
+        "c_direction": c_direction,
         "c_metric": c_metric,
         "d_policy": {
             "selected_layer": d_policy.get("selected_layer"),
@@ -675,6 +690,7 @@ def main() -> None:
     ap.add_argument("--candidate_filter", default="changed_answer", choices=["all", "changed_answer", "yes_to_no"])
     ap.add_argument("--c_feature", default="abl_black_rel_delta_orig_minus_blind__cheap_decision_margin_abs")
     ap.add_argument("--c_layer", default="", help="Optional layer_index for layer-wise C rows; use 'final' for max layer.")
+    ap.add_argument("--c_direction", default="auto", choices=["auto", "high", "low"])
     ap.add_argument("--d_layer_grid", default="quartiles", help="'quartiles', 'all', or comma-separated layer indices.")
     ap.add_argument("--object_feature", default="obj_target_gap_mean")
     ap.add_argument(
@@ -682,6 +698,7 @@ def main() -> None:
         default="late",
         help="'late' maps to {3L/4,7L/8,L}; also accepts 'all' or comma-separated layer indices.",
     )
+    ap.add_argument("--object_direction", default="auto", choices=["auto", "high", "low"])
     ap.add_argument("--min_selected_count", type=int, default=5)
     ap.add_argument("--score_space", default="raw", choices=["raw", "percentile", "discovery_percentile", "batch_percentile"])
     ap.add_argument("--fusion_modes", default="mean", help="Comma list of mean,min,max,alpha_grid.")
@@ -709,10 +726,12 @@ def main() -> None:
             object_rows=object_rows,
             c_feature=str(args.c_feature),
             c_layer=str(args.c_layer),
+            c_direction=str(args.c_direction),
             d_policy_json=str(args.d_policy_json),
             d_layer_grid=str(args.d_layer_grid),
             object_feature=str(args.object_feature),
             object_layer_grid=str(args.object_layer_grid),
+            object_direction=str(args.object_direction),
             candidate_filter=str(args.candidate_filter),
             min_selected_count=int(args.min_selected_count),
             score_space=str(args.score_space),
@@ -729,9 +748,11 @@ def main() -> None:
             "candidate_filter": str(args.candidate_filter),
             "c_feature": str(args.c_feature),
             "c_layer": str(args.c_layer),
+            "c_direction": str(args.c_direction),
             "d_layer_grid": str(args.d_layer_grid),
             "object_feature": str(args.object_feature),
             "object_layer_grid": str(args.object_layer_grid),
+            "object_direction": str(args.object_direction),
             "min_selected_count": int(args.min_selected_count),
             "score_space": str(args.score_space),
             "fusion_modes": str(args.fusion_modes),
