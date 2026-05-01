@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import json
 import math
 import os
@@ -270,9 +271,10 @@ def attention_trajectory(
     tail_decisions = content_decisions[-n_tail:]
     vision_positions = [int(x) for x in pack.vision_positions.tolist()]
 
+    attentions = pack.attentions
     rows: List[Dict[str, Any]] = []
-    n_layers = len(pack.attentions)
-    for idx, attn in enumerate(pack.attentions):
+    n_layers = len(attentions)
+    for idx, attn in enumerate(attentions):
         first = summarize_attention(attn, first_decisions, vision_positions, top_k)
         content = summarize_attention(attn, content_decisions, vision_positions, top_k)
         tail = summarize_attention(attn, tail_decisions, vision_positions, top_k)
@@ -301,6 +303,7 @@ def attention_trajectory(
                 "attn_n_vision_tokens": int(len(vision_positions)),
             }
         )
+    del pack
     return rows
 
 
@@ -384,6 +387,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--top_k", type=int, default=10)
     ap.add_argument("--tail_fraction", type=float, default=0.25)
+    ap.add_argument("--empty_cache_every", type=int, default=1)
     ap.add_argument("--reuse_if_exists", type=parse_bool, default=False)
     ap.add_argument("--log_every", type=int, default=10)
     args = ap.parse_args()
@@ -466,6 +470,17 @@ def main() -> None:
             err = {**meta, "layer_index": "", "score_error": str(exc), "score_error_traceback": traceback.format_exc()}
             long_rows.append(err)
             print(f"[error] id={sid} {exc!r}", flush=True)
+        finally:
+            if int(args.empty_cache_every) > 0 and (idx + 1) % int(args.empty_cache_every) == 0:
+                gc.collect()
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        torch.cuda.ipc_collect()
+                except Exception:
+                    pass
         if (idx + 1) % max(1, int(args.log_every)) == 0:
             print(f"[layer-attn] {idx + 1}/{len(questions)}", flush=True)
 
