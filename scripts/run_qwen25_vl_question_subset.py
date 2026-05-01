@@ -78,6 +78,9 @@ def load_model(args: argparse.Namespace):
         torch_dtype=torch_dtype[str(args.torch_type)],
         device_map=str(args.device_map),
     ).eval()
+    # VGA's local Qwen2.5-VL fork stores the image-token span on the model
+    # during forward. Vanilla baseline generation must initialize/reset it.
+    model.img_idx = None
     processor = AutoProcessor.from_pretrained(
         model_path,
         min_pixels=int(args.min_pixels),
@@ -167,6 +170,7 @@ def main() -> None:
             import torch
 
             with torch.inference_mode():
+                model.img_idx = None
                 generated_ids = model.generate(**inputs, **gen_kwargs)
 
             trimmed = [
