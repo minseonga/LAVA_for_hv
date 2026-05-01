@@ -45,6 +45,27 @@ OBJECT_SUMMARY_FEATURES = [
 ]
 
 
+OBJECT_ALIASES = {
+    "airplane": ["plane", "aircraft", "aeroplane"],
+    "baseball bat": ["bat"],
+    "baseball glove": ["glove"],
+    "cell phone": ["phone", "mobile phone", "cellphone", "smartphone"],
+    "couch": ["sofa"],
+    "dining table": ["table"],
+    "fire hydrant": ["hydrant"],
+    "hair drier": ["hair dryer", "dryer"],
+    "motorcycle": ["motorbike", "bike"],
+    "potted plant": ["plant"],
+    "remote": ["remote control"],
+    "sports ball": ["ball"],
+    "stop sign": ["sign"],
+    "tennis racket": ["racket", "racquet"],
+    "traffic light": ["light"],
+    "tv": ["television", "tv monitor", "monitor", "screen"],
+    "wine glass": ["glass"],
+}
+
+
 def extract_object_phrase(sample: Mapping[str, Any], question: str) -> str:
     obj = sample.get("object", "")
     if isinstance(obj, list) and obj:
@@ -63,20 +84,32 @@ def extract_object_phrase(sample: Mapping[str, Any], question: str) -> str:
 
 def unique_variants(text: str) -> List[str]:
     raw = str(text or "").strip()
+    forms = [raw]
+    if raw and not raw.endswith("s"):
+        forms.append(raw + "s")
+    if raw.endswith("y") and len(raw) > 1:
+        forms.append(raw[:-1] + "ies")
+    if raw.endswith("s") and len(raw) > 1:
+        forms.append(raw[:-1])
     variants: List[str] = []
-    for item in (
-        raw,
-        " " + raw,
-        raw.lower(),
-        " " + raw.lower(),
-        raw.capitalize(),
-        " " + raw.capitalize(),
-        raw.title(),
-        " " + raw.title(),
-    ):
-        if item and item not in variants:
-            variants.append(item)
+    for form in forms:
+        for cased in (form, form.lower(), form.upper(), form.capitalize(), form.title()):
+            for item in (cased, " " + cased):
+                if item and item not in variants:
+                    variants.append(item)
     return variants
+
+
+def object_phrase_candidates(object_phrase: str) -> List[str]:
+    phrase = str(object_phrase or "").strip()
+    candidates: List[str] = []
+    for item in [phrase, phrase.lower()]:
+        if item and item not in candidates:
+            candidates.append(item)
+    for alias in OBJECT_ALIASES.get(phrase.lower(), []):
+        if alias not in candidates:
+            candidates.append(alias)
+    return candidates
 
 
 def find_subsequence(haystack: Sequence[int], needle: Sequence[int]) -> Optional[int]:
@@ -101,17 +134,19 @@ def find_object_token_indices(tokenizer: Any, cont_ids: Sequence[int], object_ph
         return [], "empty_object"
 
     tried: List[List[int]] = []
-    for variant in unique_variants(phrase):
-        ids = token_ids_for(tokenizer, variant)
-        if not ids or ids in tried:
-            continue
-        tried.append(ids)
-        start = find_subsequence(cont, ids)
-        if start is not None:
-            return list(range(start, start + len(ids))), "phrase_exact"
+    for phrase_candidate in object_phrase_candidates(phrase):
+        for variant in unique_variants(phrase_candidate):
+            ids = token_ids_for(tokenizer, variant)
+            if not ids or ids in tried:
+                continue
+            tried.append(ids)
+            start = find_subsequence(cont, ids)
+            if start is not None:
+                mode = "phrase_exact" if phrase_candidate == phrase else "phrase_alias"
+                return list(range(start, start + len(ids))), mode
 
     matched: List[int] = []
-    for word in [w for w in re.split(r"\s+", phrase) if w]:
+    for word in [w for cand in object_phrase_candidates(phrase) for w in re.split(r"\s+", cand) if w]:
         found_word = False
         for variant in unique_variants(word):
             ids = token_ids_for(tokenizer, variant)
