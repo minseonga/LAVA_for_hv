@@ -45,23 +45,33 @@ def drop_arg_with_value(args: List[str], key: str) -> List[str]:
     return out
 
 
-def read_gt_labels(path: str) -> dict[str, str]:
-    labels: dict[str, str] = {}
+def read_gt_metadata(path: str) -> dict[str, dict[str, str]]:
+    metadata: dict[str, dict[str, str]] = {}
     if not path:
-        return labels
+        return metadata
     with open(os.path.abspath(path), "r", encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
             qid = str(row.get("id", row.get("question_id", ""))).strip()
             answer = str(row.get("answer", row.get("label", ""))).strip()
-            if qid and answer:
-                labels[qid] = answer
-    return labels
+            image_id = str(row.get("image_id", "")).strip()
+            if qid:
+                metadata[qid] = {"label": answer, "image_id": image_id}
+    return metadata
+
+
+def infer_image_id(row: dict) -> str:
+    image_id = str(row.get("image_id", "")).strip()
+    if image_id:
+        return image_id
+    image_name = os.path.basename(str(row.get("image", "")).strip())
+    stem, _ = os.path.splitext(image_name)
+    return stem
 
 
 def materialize_question_jsonl(path: str, limit: int, gt_csv: str = "") -> str:
     fd, out_path = tempfile.mkstemp(prefix="qwen25_vga_limit_", suffix=".jsonl")
     os.close(fd)
-    labels = read_gt_labels(gt_csv)
+    gt_metadata = read_gt_metadata(gt_csv)
     n = 0
     with open(os.path.abspath(path), "r", encoding="utf-8") as src, open(out_path, "w", encoding="utf-8") as dst:
         for line in src:
@@ -69,8 +79,11 @@ def materialize_question_jsonl(path: str, limit: int, gt_csv: str = "") -> str:
                 continue
             row = json.loads(line)
             qid = str(row.get("question_id", row.get("id", ""))).strip()
-            if labels and not str(row.get("label", "")).strip() and qid in labels:
-                row["label"] = labels[qid]
+            gt_row = gt_metadata.get(qid, {})
+            if gt_row and not str(row.get("label", "")).strip() and gt_row.get("label"):
+                row["label"] = gt_row["label"]
+            if not str(row.get("image_id", "")).strip():
+                row["image_id"] = gt_row.get("image_id") or infer_image_id(row)
             dst.write(json.dumps(row, ensure_ascii=False) + "\n")
             n += 1
             if n >= int(limit):
