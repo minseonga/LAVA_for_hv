@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib
 import inspect
 import json
@@ -44,15 +45,33 @@ def drop_arg_with_value(args: List[str], key: str) -> List[str]:
     return out
 
 
-def materialize_limited_jsonl(path: str, limit: int) -> str:
+def read_gt_labels(path: str) -> dict[str, str]:
+    labels: dict[str, str] = {}
+    if not path:
+        return labels
+    with open(os.path.abspath(path), "r", encoding="utf-8", newline="") as f:
+        for row in csv.DictReader(f):
+            qid = str(row.get("id", row.get("question_id", ""))).strip()
+            answer = str(row.get("answer", row.get("label", ""))).strip()
+            if qid and answer:
+                labels[qid] = answer
+    return labels
+
+
+def materialize_question_jsonl(path: str, limit: int, gt_csv: str = "") -> str:
     fd, out_path = tempfile.mkstemp(prefix="qwen25_vga_limit_", suffix=".jsonl")
     os.close(fd)
+    labels = read_gt_labels(gt_csv)
     n = 0
     with open(os.path.abspath(path), "r", encoding="utf-8") as src, open(out_path, "w", encoding="utf-8") as dst:
         for line in src:
             if not line.strip():
                 continue
-            dst.write(line)
+            row = json.loads(line)
+            qid = str(row.get("question_id", row.get("id", ""))).strip()
+            if labels and not str(row.get("label", "")).strip() and qid in labels:
+                row["label"] = labels[qid]
+            dst.write(json.dumps(row, ensure_ascii=False) + "\n")
             n += 1
             if n >= int(limit):
                 break
@@ -128,6 +147,7 @@ def main() -> None:
     ap.add_argument("--model-path", required=True)
     ap.add_argument("--question-file", required=True)
     ap.add_argument("--answers-file", required=True)
+    ap.add_argument("--gt-csv", default="")
     ap.add_argument("--limit", type=int, default=0)
     known, _ = ap.parse_known_args()
 
@@ -138,11 +158,12 @@ def main() -> None:
 
     argv = sys.argv[1:]
     tmp_question_file = ""
-    if int(known.limit) > 0:
-        tmp_question_file = materialize_limited_jsonl(known.question_file, int(known.limit))
+    if int(known.limit) > 0 or str(known.gt_csv).strip():
+        tmp_question_file = materialize_question_jsonl(known.question_file, int(known.limit) or 10**18, known.gt_csv)
         argv = rewrite_arg(argv, "--question-file", tmp_question_file)
 
     argv = drop_arg_with_value(argv, "--vga-root")
+    argv = drop_arg_with_value(argv, "--gt-csv")
     argv = drop_arg_with_value(argv, "--limit")
     argv = rewrite_arg(argv, "--model-path", os.path.expanduser(known.model_path))
 
