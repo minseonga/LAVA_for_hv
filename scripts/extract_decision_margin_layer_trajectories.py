@@ -253,6 +253,13 @@ def layer_trajectory(
         hidden_states = getattr(outputs, "hidden_states", None)
         if not hidden_states:
             raise RuntimeError("Forward did not return hidden_states.")
+        if runtime.teacher_force_forward_mode in {"model", "full", "legacy"}:
+            final_logits = getattr(outputs, "logits", None)
+            if final_logits is None:
+                raise RuntimeError("Model forward did not return logits.")
+        else:
+            final_logits = runtime.model.lm_head(outputs[0])
+        final_logits = final_logits.float()[0]
 
         labels_exp = labels_e[0]
         text_positions = torch.where(labels_exp != int(IGNORE_INDEX))[0]
@@ -278,16 +285,23 @@ def layer_trajectory(
         rows: List[Dict[str, Any]] = []
         n_hidden = int(len(hidden_states))
         for idx, hidden in enumerate(hidden_states):
-            h = hidden[:, first_decision_pos, :]
-            if norm is not None and idx != n_hidden - 1:
-                h = norm(h)
-            logits = runtime.model.lm_head(h).float()[0]
+            is_final = idx == n_hidden - 1
+            if is_final:
+                logits = final_logits[first_decision_pos]
+            else:
+                h = hidden[:, first_decision_pos, :]
+                if norm is not None:
+                    h = norm(h)
+                logits = runtime.model.lm_head(h).float()[0]
             vals = label_margin_from_logits(logits, token_ids=token_ids, candidate_label=candidate_label)
 
-            h_cont = hidden[:, decision_positions, :]
-            if norm is not None and idx != n_hidden - 1:
-                h_cont = norm(h_cont)
-            token_logits = runtime.model.lm_head(h_cont).float()[0]
+            if is_final:
+                token_logits = final_logits[decision_positions]
+            else:
+                h_cont = hidden[:, decision_positions, :]
+                if norm is not None:
+                    h_cont = norm(h_cont)
+                token_logits = runtime.model.lm_head(h_cont).float()[0]
             log_probs = torch.log_softmax(token_logits, dim=-1)
             probs = torch.softmax(token_logits, dim=-1)
             token_ent = -(probs * log_probs).sum(dim=-1)
@@ -305,7 +319,7 @@ def layer_trajectory(
                 {
                     "layer_index": int(idx),
                     "layer_frac": float(idx / max(1, n_hidden - 1)),
-                    "is_final_layer": int(idx == n_hidden - 1),
+                    "is_final_layer": int(is_final),
                     "candidate_label": candidate_label,
                     **vals,
                     "c_target_gap_content_min": float(target_gap_content.min().item()),
