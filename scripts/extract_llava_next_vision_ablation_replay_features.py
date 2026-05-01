@@ -231,8 +231,9 @@ def feature_pack(
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Extract LLaVA-NeXT intervention-answer replay features under original vs vision-ablated images."
+        description="Extract LLaVA intervention-answer replay features under original vs vision-ablated images."
     )
+    ap.add_argument("--runtime_backend", choices=["llava15_cleanroom", "llava_next_official"], default="llava_next_official")
     ap.add_argument("--question_file", required=True)
     ap.add_argument("--image_folder", required=True)
     ap.add_argument("--intervention_pred_jsonl", required=True)
@@ -266,9 +267,6 @@ def main() -> None:
         print("[reuse]", summary_json, flush=True)
         return
 
-    modes = parse_modes(str(args.ablation_modes))
-    from frgavr_cleanroom.llava_next_runtime import OfficialLlavaNextRuntime
-
     questions = read_jsonl_rows(os.path.abspath(args.question_file), limit=int(args.limit))
     intervention_map = load_prediction_text_map(
         os.path.abspath(args.intervention_pred_jsonl),
@@ -276,15 +274,28 @@ def main() -> None:
     )
     label_map = read_label_rows(str(args.label_rows_csv))
 
-    runtime = OfficialLlavaNextRuntime(
-        llava_next_root=str(args.llava_next_root),
-        model_path=str(args.model_path),
-        model_base=(None if not str(args.model_base).strip() else str(args.model_base)),
-        conv_mode=str(args.conv_mode),
-        device=str(args.device),
-        torch_type=str(args.llava_next_torch_type),
-        attn_implementation=str(args.llava_next_attn_implementation),
-    )
+    modes = parse_modes(str(args.ablation_modes))
+    if str(args.runtime_backend) == "llava_next_official":
+        from frgavr_cleanroom.llava_next_runtime import OfficialLlavaNextRuntime
+
+        runtime = OfficialLlavaNextRuntime(
+            llava_next_root=str(args.llava_next_root),
+            model_path=str(args.model_path),
+            model_base=(None if not str(args.model_base).strip() else str(args.model_base)),
+            conv_mode=str(args.conv_mode),
+            device=str(args.device),
+            torch_type=str(args.llava_next_torch_type),
+            attn_implementation=str(args.llava_next_attn_implementation),
+        )
+    else:
+        from frgavr_cleanroom.runtime import CleanroomLlavaRuntime
+
+        runtime = CleanroomLlavaRuntime(
+            model_path=str(args.model_path),
+            model_base=(None if not str(args.model_base).strip() else str(args.model_base)),
+            conv_mode=str(args.conv_mode),
+            device=str(args.device),
+        )
 
     rows: List[Dict[str, Any]] = []
     n_errors = 0
@@ -373,6 +384,7 @@ def main() -> None:
         {
             "mode": "llava_next_vision_ablation_replay",
             "inputs": {
+                "runtime_backend": str(args.runtime_backend),
                 "question_file": os.path.abspath(args.question_file),
                 "image_folder": os.path.abspath(args.image_folder),
                 "intervention_pred_jsonl": os.path.abspath(args.intervention_pred_jsonl),
