@@ -210,7 +210,9 @@ def summarize_attention(attn: Any, query_positions: Sequence[int], vision_positi
         }
     q = torch.tensor(q_idx, dtype=torch.long, device=attn.device)
     v = torch.tensor(v_idx, dtype=torch.long, device=attn.device)
-    selected = attn[0].index_select(1, q)
+    # Runtime stores attentions on CPU in fp16 to save memory. CPU topk does not
+    # support half, so cast only the queried rows instead of the full matrix.
+    selected = attn[0].index_select(1, q).float()
     visual_mass = selected.index_select(2, v).sum(dim=-1).float()
     # visual_mass: [heads, queries]
     token_mean = visual_mass.mean(dim=0)
