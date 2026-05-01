@@ -7,7 +7,7 @@ set -euo pipefail
 # backbones currently represented in this repository:
 #   - llava15:    LLaVA-1.5 style runner
 #   - llava_next: official LLaVA-NeXT baseline runner; legacy VGA runner for VGA
-#   - qwen25_vl:  VGA_origin/Qwen2.5-VL runner
+#   - qwen25_vl:  Qwen2.5-VL baseline runner; VGA_origin/Qwen2.5-VL runner for VGA
 #   - qwen35_vl:  Qwen3.5-VL raw baseline runner
 #
 # It intentionally runs raw methods only. Post-hoc "ours" controllers should
@@ -22,6 +22,7 @@ CAL_PYTHON_BIN="${CAL_PYTHON_BIN:-python}"
 VGA_PYTHON_BIN="${VGA_PYTHON_BIN:-/home/kms/miniconda3/envs/vga_base/bin/python}"
 LLAVA_NEXT_PYTHON_BIN="${LLAVA_NEXT_PYTHON_BIN:-$VGA_PYTHON_BIN}"
 QWEN35_PYTHON_BIN="${QWEN35_PYTHON_BIN:-$CAL_PYTHON_BIN}"
+QWEN25_PYTHON_BIN="${QWEN25_PYTHON_BIN:-$VGA_PYTHON_BIN}"
 PAI_PYTHON_BIN="${PAI_PYTHON_BIN:-/home/kms/miniconda3/envs/pai_base/bin/python}"
 
 GPU="${GPU:-${CUDA_VISIBLE_DEVICES:-0}}"
@@ -66,6 +67,9 @@ VGA_SAMPLING="${VGA_SAMPLING:-false}"
 VGA_ATTN_NORM="${VGA_ATTN_NORM:-false}"
 VGA_TORCH_TYPE="${VGA_TORCH_TYPE:-bf16}"
 VGA_ATTN_TYPE="${VGA_ATTN_TYPE:-eager}"
+QWEN25_DEVICE_MAP="${QWEN25_DEVICE_MAP:-cuda}"
+QWEN25_MIN_PIXELS="${QWEN25_MIN_PIXELS:-250880}"
+QWEN25_MAX_PIXELS="${QWEN25_MAX_PIXELS:-1003520}"
 LLAVA_NEXT_MODEL_NAME="${LLAVA_NEXT_MODEL_NAME:-}"
 LLAVA_NEXT_ATTN_IMPLEMENTATION="${LLAVA_NEXT_ATTN_IMPLEMENTATION:-eager}"
 LLAVA_NEXT_TORCH_TYPE="${LLAVA_NEXT_TORCH_TYPE:-fp16}"
@@ -149,7 +153,7 @@ vga_runner() {
   case "$BACKBONE" in
     llava15) echo "$CAL_ROOT/scripts/run_vga_origin_llava_caption_compat.py" ;;
     llava_next) echo "$CAL_ROOT/scripts/run_vga_origin_llava_next_compat.py" ;;
-    qwen25_vl) echo "$VGA_ROOT/eval/object_hallucination_vqa_qwen25-vl.py" ;;
+    qwen25_vl) echo "$CAL_ROOT/scripts/run_qwen25_vl_vga_question_subset.py" ;;
     qwen35_vl)
       echo "[error] VGA for BACKBONE=qwen35_vl requires porting the VGA attention/generation hooks." >&2
       exit 2
@@ -253,6 +257,7 @@ run_vga_like() {
       --seed "$SEED"
   else
     "$VGA_PYTHON_BIN" "$runner" \
+      --vga-root "$VGA_ROOT" \
       --model-path "$MODEL_PATH" \
       "${MODEL_BASE_ARGS[@]}" \
       --image-folder "$IMAGE_FOLDER" \
@@ -270,6 +275,7 @@ run_vga_like() {
       --sampling "$VGA_SAMPLING" \
       --torch_type "$VGA_TORCH_TYPE" \
       --attn_type "$VGA_ATTN_TYPE" \
+      --limit "$LIMIT" \
       --seed "$SEED"
   fi
 }
@@ -328,7 +334,22 @@ if ! reuse_file "$PRED_JSONL"; then
   remove_if_overwrite "$PRED_JSONL"
   case "$METHOD" in
     baseline)
-      if [[ "$BACKBONE" == "qwen35_vl" ]]; then
+      if [[ "$BACKBONE" == "qwen25_vl" ]]; then
+        "$QWEN25_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen25_vl_question_subset.py" \
+          --vga-root "$VGA_ROOT" \
+          --model-path "$MODEL_PATH" \
+          --image-folder "$IMAGE_FOLDER" \
+          --question-file "$QUESTION_FILE" \
+          --answers-file "$PRED_JSONL" \
+          --max-new-tokens "$MAX_NEW_TOKENS" \
+          --torch-type "$VGA_TORCH_TYPE" \
+          --attn-type "$VGA_ATTN_TYPE" \
+          --device-map "$QWEN25_DEVICE_MAP" \
+          --min-pixels "$QWEN25_MIN_PIXELS" \
+          --max-pixels "$QWEN25_MAX_PIXELS" \
+          --limit "$LIMIT" \
+          --seed "$SEED"
+      elif [[ "$BACKBONE" == "qwen35_vl" ]]; then
         "$QWEN35_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen35_vl_question_subset.py" \
           --model-path "$MODEL_PATH" \
           --image-folder "$IMAGE_FOLDER" \

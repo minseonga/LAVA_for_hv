@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import importlib
+import json
+import os
+import runpy
+import sys
+import tempfile
+from typing import List
+
+
+PLACEHOLDER_MODEL_PATH = "/path/to/Qwen2.5-VL-7B-Instruct"
+
+
+def rewrite_arg(args: List[str], key: str, value: str) -> List[str]:
+    out: List[str] = []
+    i = 0
+    replaced = False
+    while i < len(args):
+        if args[i] == key:
+            out.extend([key, value])
+            i += 2
+            replaced = True
+        else:
+            out.append(args[i])
+            i += 1
+    if not replaced:
+        out.extend([key, value])
+    return out
+
+
+def drop_arg_with_value(args: List[str], key: str) -> List[str]:
+    out: List[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == key:
+            i += 2
+        else:
+            out.append(args[i])
+            i += 1
+    return out
+
+
+def materialize_limited_jsonl(path: str, limit: int) -> str:
+    fd, out_path = tempfile.mkstemp(prefix="qwen25_vga_limit_", suffix=".jsonl")
+    os.close(fd)
+    n = 0
+    with open(os.path.abspath(path), "r", encoding="utf-8") as src, open(out_path, "w", encoding="utf-8") as dst:
+        for line in src:
+            if not line.strip():
+                continue
+            dst.write(line)
+            n += 1
+            if n >= int(limit):
+                break
+    return out_path
+
+
+def preload_greedy_sampler(vga_root: str, model_path: str) -> None:
+    if vga_root not in sys.path:
+        sys.path.insert(0, vga_root)
+
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+    original_from_pretrained = AutoTokenizer.from_pretrained
+
+    def patched_from_pretrained(path, *args, **kwargs):
+        if str(path) == PLACEHOLDER_MODEL_PATH:
+            return tokenizer
+        return original_from_pretrained(path, *args, **kwargs)
+
+    AutoTokenizer.from_pretrained = patched_from_pretrained
+    try:
+        importlib.import_module("vcd_utils.greedy_sample_qwen2")
+    finally:
+        AutoTokenizer.from_pretrained = original_from_pretrained
+
+
+def normalize_answers_file(path: str) -> None:
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("question_id") is None:
+                continue
+            output = str(row.get("output", "")).strip()
+            row.setdefault("text", output)
+            row.setdefault("caption", output)
+            rows.append(row)
+
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Run VGA Qwen2.5-VL while injecting the real tokenizer into VGA_origin.")
+    ap.add_argument("--vga-root", required=True)
+    ap.add_argument("--model-path", required=True)
+    ap.add_argument("--question-file", required=True)
+    ap.add_argument("--answers-file", required=True)
+    ap.add_argument("--limit", type=int, default=0)
+    known, _ = ap.parse_known_args()
+
+    vga_root = os.path.abspath(os.path.expanduser(known.vga_root))
+    target = os.path.join(vga_root, "eval", "object_hallucination_vqa_qwen25-vl.py")
+    if not os.path.isfile(target):
+        raise FileNotFoundError(f"missing VGA Qwen2.5 runner: {target}")
+
+    argv = sys.argv[1:]
+    tmp_question_file = ""
+    if int(known.limit) > 0:
+        tmp_question_file = materialize_limited_jsonl(known.question_file, int(known.limit))
+        argv = rewrite_arg(argv, "--question-file", tmp_question_file)
+
+    argv = drop_arg_with_value(argv, "--vga-root")
+    argv = drop_arg_with_value(argv, "--limit")
+    argv = rewrite_arg(argv, "--model-path", os.path.expanduser(known.model_path))
+
+    preload_greedy_sampler(vga_root, os.path.expanduser(known.model_path))
+
+    old_argv = sys.argv
+    try:
+        sys.argv = [target] + argv
+        runpy.run_path(target, run_name="__main__")
+    finally:
+        sys.argv = old_argv
+        if tmp_question_file:
+            try:
+                os.unlink(tmp_question_file)
+            except OSError:
+                pass
+
+    normalize_answers_file(os.path.expanduser(known.answers_file))
+
+
+if __name__ == "__main__":
+    main()
