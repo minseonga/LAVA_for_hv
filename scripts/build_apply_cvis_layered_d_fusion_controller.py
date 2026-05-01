@@ -749,12 +749,16 @@ def main() -> None:
                     "tau_percentile": row["selected_policy"].get("tau_percentile"),
                     "score_space": row["selected_policy"].get("score_space"),
                     "calibration_score_count": row.get("calibration_score_count"),
+                    "n_route_candidates": row["selected_policy"].get("n_route_candidates"),
+                    "n_route_candidate_harm": row["selected_policy"].get("n_route_candidate_harm"),
+                    "n_route_candidate_help": row["selected_policy"].get("n_route_candidate_help"),
                     "selected_count": row["selected_policy"].get("selected_count"),
                     "selected_harm": row["selected_policy"].get("selected_harm"),
                     "selected_help": row["selected_policy"].get("selected_help"),
                     "net": row["selected_policy"].get("net"),
                     "selected_harm_precision": row["selected_policy"].get("selected_harm_precision"),
                     "selected_harm_recall": row["selected_policy"].get("selected_harm_recall"),
+                    "selected_harm_recall_in_scope": row["selected_policy"].get("selected_harm_recall_in_scope"),
                 }
                 for row in policy.get("fusion_candidates", [])
             ],

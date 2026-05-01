@@ -158,12 +158,16 @@ def evaluate_policy(
     candidate_filter: str = "all",
 ) -> Dict[str, Any]:
     n = 0
+    n_route_candidates = 0
     selected = 0
     baseline_correct_total = 0
     intervention_correct_total = 0
     final_correct_total = 0
     total_harm = 0
     total_help = 0
+    route_candidate_harm = 0
+    route_candidate_help = 0
+    route_candidate_neutral = 0
     selected_harm = 0
     selected_help = 0
     selected_neutral = 0
@@ -196,6 +200,11 @@ def evaluate_policy(
         intervention_correct_total += int(ic)
 
         can_route = is_route_candidate(row, str(candidate_filter))
+        if can_route:
+            n_route_candidates += 1
+            route_candidate_harm += harm
+            route_candidate_help += help_
+            route_candidate_neutral += int((harm == 0) and (help_ == 0))
         use_baseline = bool(can_route and float(score) >= float(tau))
         if use_baseline:
             selected += 1
@@ -224,6 +233,11 @@ def evaluate_policy(
         "selected_count": int(selected),
         "total_harm": int(total_harm),
         "total_help": int(total_help),
+        "n_route_candidates": int(n_route_candidates),
+        "n_route_candidate_harm": int(route_candidate_harm),
+        "n_route_candidate_help": int(route_candidate_help),
+        "n_route_candidate_neutral": int(route_candidate_neutral),
+        "route_candidate_baseline_rate": base.safe_div(float(selected), float(max(1, n_route_candidates))),
         "selected_harm": int(selected_harm),
         "selected_help": int(selected_help),
         "selected_neutral": int(selected_neutral),
@@ -231,6 +245,8 @@ def evaluate_policy(
         "selected_harm_precision": precision,
         "selected_help_precision": base.safe_div(float(selected_help), float(max(1, selected))),
         "selected_harm_recall": recall,
+        "selected_harm_recall_in_scope": base.safe_div(float(selected_harm), float(max(1, route_candidate_harm))),
+        "selected_help_recall_in_scope": base.safe_div(float(selected_help), float(max(1, route_candidate_help))),
         "selected_harm_f1": f1,
     }
 

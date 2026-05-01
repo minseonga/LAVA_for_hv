@@ -264,8 +264,12 @@ def evaluate_scores(
     sweep: List[Dict[str, Any]] = []
     for value in taus:
         n_eval = 0
+        n_route_candidates = 0
         total_harm = 0
         total_help = 0
+        route_candidate_harm = 0
+        route_candidate_help = 0
+        route_candidate_neutral = 0
         selected = 0
         selected_harm = 0
         selected_help = 0
@@ -283,12 +287,18 @@ def evaluate_scores(
                 continue
             harm = int(maybe_int(row.get("harm")) or 0)
             help_ = int(maybe_int(row.get("help")) or 0)
-            route_baseline = is_candidate(row, candidate_filter) and float(scores_by_id[sid]) >= float(value)
+            can_route = is_candidate(row, candidate_filter)
+            route_baseline = can_route and float(scores_by_id[sid]) >= float(value)
             n_eval += 1
             baseline_correct_total += int(bc)
             intervention_correct_total += int(ic)
             total_harm += harm
             total_help += help_
+            if can_route:
+                n_route_candidates += 1
+                route_candidate_harm += harm
+                route_candidate_help += help_
+                route_candidate_neutral += int(harm == 0 and help_ == 0)
             if route_baseline:
                 selected += 1
                 selected_harm += harm
@@ -309,12 +319,19 @@ def evaluate_scores(
             "selected_count": int(selected),
             "total_harm": int(total_harm),
             "total_help": int(total_help),
+            "n_route_candidates": int(n_route_candidates),
+            "n_route_candidate_harm": int(route_candidate_harm),
+            "n_route_candidate_help": int(route_candidate_help),
+            "n_route_candidate_neutral": int(route_candidate_neutral),
+            "route_candidate_baseline_rate": float(selected / max(1, n_route_candidates)),
             "selected_harm": int(selected_harm),
             "selected_help": int(selected_help),
             "selected_neutral": int(selected_neutral),
             "net": int(selected_harm - selected_help),
             "selected_harm_precision": float(selected_harm / max(1, selected)),
             "selected_harm_recall": float(selected_harm / max(1, total_harm)),
+            "selected_harm_recall_in_scope": float(selected_harm / max(1, route_candidate_harm)),
+            "selected_help_recall_in_scope": float(selected_help / max(1, route_candidate_help)),
         }
         sweep.append(result)
         if selected < int(min_selected_count):
