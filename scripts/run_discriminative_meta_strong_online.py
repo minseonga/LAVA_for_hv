@@ -574,10 +574,20 @@ def main() -> None:
     ap.add_argument("--model_base", type=str, default="")
     ap.add_argument("--conv_mode", type=str, default="llava_v1")
     ap.add_argument("--device", type=str, default="cuda")
-    ap.add_argument("--runtime_backend", type=str, default="llava15_cleanroom", choices=["llava15_cleanroom", "llava_next_official"])
+    ap.add_argument(
+        "--runtime_backend",
+        type=str,
+        default="llava15_cleanroom",
+        choices=["llava15_cleanroom", "llava_next_official", "qwen25_vl_official"],
+    )
     ap.add_argument("--llava_next_root", type=str, default="/home/kms/LLaVA-NeXT")
     ap.add_argument("--llava_next_torch_type", type=str, default="fp16", choices=["fp16", "bf16"])
     ap.add_argument("--llava_next_attn_implementation", type=str, default="eager", choices=["none", "flash_attention_2", "sdpa", "eager"])
+    ap.add_argument("--qwen25_torch_type", type=str, default="bf16", choices=["fp16", "float16", "bf16", "bfloat16", "fp32", "float32"])
+    ap.add_argument("--qwen25_attn_implementation", type=str, default="eager", choices=["flash_attention_2", "sdpa", "eager"])
+    ap.add_argument("--qwen25_device_map", type=str, default="cuda")
+    ap.add_argument("--qwen25_min_pixels", type=int, default=14 * 14 * 1280)
+    ap.add_argument("--qwen25_max_pixels", type=int, default=28 * 28 * 1280)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--intervention_pred_key", type=str, default="auto")
     ap.add_argument("--baseline_pred_key", type=str, default="auto")
@@ -705,6 +715,18 @@ def main() -> None:
             device=str(args.device),
             torch_type=str(args.llava_next_torch_type),
             attn_implementation=str(args.llava_next_attn_implementation),
+        )
+    elif str(args.runtime_backend) == "qwen25_vl_official":
+        from frgavr_cleanroom.qwen25_vl_runtime import Qwen25VLRuntime
+
+        runtime = Qwen25VLRuntime(
+            model_path=str(args.model_path),
+            device=str(args.device),
+            torch_type=str(args.qwen25_torch_type),
+            attn_implementation=str(args.qwen25_attn_implementation),
+            device_map=str(args.qwen25_device_map),
+            min_pixels=int(args.qwen25_min_pixels),
+            max_pixels=int(args.qwen25_max_pixels),
         )
     else:
         runtime = CleanroomLlavaRuntime(
@@ -1034,10 +1056,21 @@ def main() -> None:
                 "runtime_backend": str(args.runtime_backend),
                 "yesno_token_mode": str(os.environ.get("YESNO_TOKEN_MODE", "strict")).strip().lower(),
                 "cleanroom_image_preprocess_mode": str(os.environ.get("CLEANROOM_IMAGE_PREPROCESS_MODE", "direct")).strip().lower(),
+                "llava_next_image_preprocess_mode": str(
+                    os.environ.get(
+                        "LLAVA_NEXT_IMAGE_PREPROCESS_MODE",
+                        os.environ.get("CLEANROOM_IMAGE_PREPROCESS_MODE", "process_images"),
+                    )
+                ).strip().lower(),
                 "cleanroom_tf_forward_mode": str(os.environ.get("CLEANROOM_TF_FORWARD_MODE", "backbone")).strip().lower(),
                 "llava_next_root": str(args.llava_next_root),
                 "llava_next_torch_type": str(args.llava_next_torch_type),
                 "llava_next_attn_implementation": str(args.llava_next_attn_implementation),
+                "qwen25_torch_type": str(args.qwen25_torch_type),
+                "qwen25_attn_implementation": str(args.qwen25_attn_implementation),
+                "qwen25_device_map": str(args.qwen25_device_map),
+                "qwen25_min_pixels": int(args.qwen25_min_pixels),
+                "qwen25_max_pixels": int(args.qwen25_max_pixels),
                 "beta": float(args.beta),
                 "lambda_a": float(args.lambda_a),
                 "late_start": int(args.late_start),
