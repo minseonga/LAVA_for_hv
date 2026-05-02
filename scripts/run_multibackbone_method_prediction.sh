@@ -319,27 +319,93 @@ run_pai() {
   if [[ "$PAI_SAMPLE" == "1" ]]; then
     flags+=(--sample)
   fi
-  "$PAI_PYTHON_BIN" "$CAL_ROOT/scripts/run_pai_question_subset.py" \
-    --pai_root "$PAI_ROOT" \
-    --question_file "$QUESTION_FILE" \
-    --image_folder "$IMAGE_FOLDER" \
-    --answers_file "$PRED_JSONL" \
-    --model "$PAI_MODEL" \
-    --model_path "$MODEL_PATH" \
-    --gpu_id 0 \
-    --beam "$PAI_BEAM" \
-    --alpha "$PAI_ALPHA" \
-    --gamma "$PAI_GAMMA" \
-    --start_layer "$PAI_START_LAYER" \
-    --end_layer "$PAI_END_LAYER" \
-    --max_new_tokens "$MAX_NEW_TOKENS" \
-    "${flags[@]}" \
-    --seed "$SEED"
+  if [[ "$BACKBONE" == "llava_next" ]]; then
+    if [[ "$PAI_USE_CFG" == "1" ]]; then
+      echo "[error] PAI CFG/CD is not ported for BACKBONE=llava_next; use METHOD=pai_attn." >&2
+      exit 2
+    fi
+    "$LLAVA_NEXT_PYTHON_BIN" "$CAL_ROOT/scripts/run_llava_next_visual_attn_question_subset.py" \
+      --llava-next-root "$LLAVA_NEXT_ROOT" \
+      --model-path "$MODEL_PATH" \
+      "${MODEL_BASE_ARGS[@]}" \
+      --image-folder "$IMAGE_FOLDER" \
+      --question-file "$QUESTION_FILE" \
+      --answers-file "$PRED_JSONL" \
+      --conv-mode "$CONV_MODE" \
+      --max-new-tokens "$MAX_NEW_TOKENS" \
+      --torch-type "$LLAVA_NEXT_TORCH_TYPE" \
+      --attn-implementation "$LLAVA_NEXT_ATTN_IMPLEMENTATION" \
+      --limit "$LIMIT" \
+      --seed "$SEED" \
+      --mode pai_attn \
+      --start-layer "$PAI_START_LAYER" \
+      --end-layer "$PAI_END_LAYER" \
+      --pai-alpha "$PAI_ALPHA"
+  elif [[ "$BACKBONE" == "qwen25_vl" ]]; then
+    if [[ "$PAI_USE_CFG" == "1" ]]; then
+      echo "[error] PAI CFG/CD is not ported for BACKBONE=qwen25_vl; use METHOD=pai_attn." >&2
+      exit 2
+    fi
+    "$QWEN25_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen25_vl_vaf_question_subset.py" \
+      --model-path "$MODEL_PATH" \
+      --image-folder "$IMAGE_FOLDER" \
+      --question-file "$QUESTION_FILE" \
+      --answers-file "$PRED_JSONL" \
+      --max-new-tokens "$MAX_NEW_TOKENS" \
+      --torch-type "$VGA_TORCH_TYPE" \
+      --device-map "$QWEN25_DEVICE_MAP" \
+      --min-pixels "$QWEN25_MIN_PIXELS" \
+      --max-pixels "$QWEN25_MAX_PIXELS" \
+      --limit "$LIMIT" \
+      --seed "$SEED" \
+      --mode pai_attn \
+      --start-layer "$PAI_START_LAYER" \
+      --end-layer "$PAI_END_LAYER" \
+      --pai-alpha "$PAI_ALPHA"
+  else
+    "$PAI_PYTHON_BIN" "$CAL_ROOT/scripts/run_pai_question_subset.py" \
+      --pai_root "$PAI_ROOT" \
+      --question_file "$QUESTION_FILE" \
+      --image_folder "$IMAGE_FOLDER" \
+      --answers_file "$PRED_JSONL" \
+      --model "$PAI_MODEL" \
+      --model_path "$MODEL_PATH" \
+      --gpu_id 0 \
+      --beam "$PAI_BEAM" \
+      --alpha "$PAI_ALPHA" \
+      --gamma "$PAI_GAMMA" \
+      --start_layer "$PAI_START_LAYER" \
+      --end_layer "$PAI_END_LAYER" \
+      --max_new_tokens "$MAX_NEW_TOKENS" \
+      "${flags[@]}" \
+      --seed "$SEED"
+  fi
 }
 
 run_vaf() {
+  if [[ "$BACKBONE" == "llava_next" ]]; then
+    "$LLAVA_NEXT_PYTHON_BIN" "$CAL_ROOT/scripts/run_llava_next_visual_attn_question_subset.py" \
+      --llava-next-root "$LLAVA_NEXT_ROOT" \
+      --model-path "$MODEL_PATH" \
+      "${MODEL_BASE_ARGS[@]}" \
+      --image-folder "$IMAGE_FOLDER" \
+      --question-file "$QUESTION_FILE" \
+      --answers-file "$PRED_JSONL" \
+      --conv-mode "$CONV_MODE" \
+      --max-new-tokens "$MAX_NEW_TOKENS" \
+      --torch-type "$LLAVA_NEXT_TORCH_TYPE" \
+      --attn-implementation "$LLAVA_NEXT_ATTN_IMPLEMENTATION" \
+      --limit "$LIMIT" \
+      --seed "$SEED" \
+      --mode vaf \
+      --start-layer "$VAF_START_LAYER" \
+      --end-layer "$VAF_END_LAYER" \
+      --enh-para "$VAF_ENH_PARA" \
+      --sup-para "$VAF_SUP_PARA"
+    return
+  fi
   if [[ "$BACKBONE" != "qwen25_vl" ]]; then
-    echo "[error] METHOD=vaf is currently implemented for BACKBONE=qwen25_vl only." >&2
+    echo "[error] METHOD=vaf is implemented for BACKBONE=llava_next and BACKBONE=qwen25_vl. Use native ClearSight for LLaVA-1.5." >&2
     exit 2
   fi
   "$QWEN25_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen25_vl_vaf_question_subset.py" \
@@ -354,6 +420,7 @@ run_vaf() {
     --max-pixels "$QWEN25_MAX_PIXELS" \
     --limit "$LIMIT" \
     --seed "$SEED" \
+    --mode vaf \
     --start-layer "$VAF_START_LAYER" \
     --end-layer "$VAF_END_LAYER" \
     --enh-para "$VAF_ENH_PARA" \

@@ -102,7 +102,7 @@ def import_qwen_attention_helpers():
         return apply_multimodal_rotary_pos_emb, repeat_kv
 
 
-def make_vaf_forward(original_forward: Any):
+def make_visual_attention_forward(original_forward: Any):
     import torch
     import torch.nn as nn
 
@@ -186,20 +186,30 @@ def make_vaf_forward(original_forward: Any):
         key_len = int(attn_weights.shape[-1])
         img_start = max(0, min(img_start, key_len))
         img_end = max(img_start, min(img_end, key_len))
-        enh_para = float(getattr(self, "_vaf_enh_para", 1.15))
-        sup_para = float(getattr(self, "_vaf_sup_para", 0.95))
-        if img_end > img_start:
-            if q_len > img_end:
-                query_slice = slice(img_end, None)
-            else:
-                query_slice = slice(None)
-            attn_weights[:, :, query_slice, img_start:img_end] = (
-                enh_para * attn_weights[:, :, query_slice, img_start:img_end]
+        mode = str(getattr(self, "_vaf_mode", "vaf"))
+        if mode == "pai_attn":
+            alpha = float(getattr(self, "_pai_alpha", 0.2))
+            attn_weights[:, :, -1:, img_start:img_end] = (
+                attn_weights[:, :, -1:, img_start:img_end].abs() * alpha
+                + attn_weights[:, :, -1:, img_start:img_end]
             )
-            if img_start > 0:
-                attn_weights[:, :, query_slice, :img_start] = (
-                    sup_para * attn_weights[:, :, query_slice, :img_start]
+        elif mode == "vaf":
+            enh_para = float(getattr(self, "_vaf_enh_para", 1.15))
+            sup_para = float(getattr(self, "_vaf_sup_para", 0.95))
+            if img_end > img_start:
+                if q_len > img_end:
+                    query_slice = slice(img_end, None)
+                else:
+                    query_slice = slice(None)
+                attn_weights[:, :, query_slice, img_start:img_end] = (
+                    enh_para * attn_weights[:, :, query_slice, img_start:img_end]
                 )
+                if img_start > 0:
+                    attn_weights[:, :, query_slice, :img_start] = (
+                        sup_para * attn_weights[:, :, query_slice, :img_start]
+                    )
+        else:
+            raise ValueError(f"Unsupported visual attention mode: {mode!r}")
 
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
@@ -223,11 +233,25 @@ def make_vaf_forward(original_forward: Any):
     return forward
 
 
-def install_vaf(model: Any, start_layer: int, end_layer: int, enh_para: float, sup_para: float) -> List[int]:
+def install_visual_attention_patch(
+    model: Any,
+    start_layer: int,
+    end_layer: int,
+    *,
+    mode: str,
+    enh_para: float,
+    sup_para: float,
+    pai_alpha: float,
+) -> List[int]:
+    mode = str(mode)
     patched: List[int] = []
     layers = list(getattr(getattr(model, "model", None), "layers", []))
     for idx, layer in enumerate(layers):
-        if idx < int(start_layer) or idx > int(end_layer):
+        if mode == "pai_attn":
+            in_range = int(start_layer) <= idx < int(end_layer)
+        else:
+            in_range = int(start_layer) <= idx <= int(end_layer)
+        if not in_range:
             continue
         attn = getattr(layer, "self_attn", None)
         if attn is None:
@@ -235,13 +259,15 @@ def install_vaf(model: Any, start_layer: int, end_layer: int, enh_para: float, s
         original_forward = attn.forward
         attn._vaf_original_forward = original_forward
         attn._vaf_enabled = True
+        attn._vaf_mode = mode
         attn._vaf_enh_para = float(enh_para)
         attn._vaf_sup_para = float(sup_para)
+        attn._pai_alpha = float(pai_alpha)
         attn._vaf_img_idx = None
-        attn.forward = types.MethodType(make_vaf_forward(original_forward), attn)
+        attn.forward = types.MethodType(make_visual_attention_forward(original_forward), attn)
         patched.append(idx)
     if not patched:
-        raise RuntimeError("No Qwen2.5-VL decoder attention layers were patched for VAF.")
+        raise RuntimeError(f"No Qwen2.5-VL decoder attention layers were patched for mode={mode!r}.")
     return patched
 
 
@@ -262,7 +288,7 @@ def set_vaf_image_span(model: Any, input_ids: Any) -> Tuple[int, int]:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Run ClearSight/VAF-style Qwen2.5-VL POPE inference.")
+    ap = argparse.ArgumentParser(description="Run visual-attention intervention for Qwen2.5-VL POPE inference.")
     ap.add_argument("--model-path", type=str, required=True)
     ap.add_argument("--image-folder", type=str, required=True)
     ap.add_argument("--question-file", type=str, required=True)
@@ -279,8 +305,10 @@ def main() -> None:
     ap.add_argument("--top-p", type=float, default=1.0)
     ap.add_argument("--start-layer", type=int, default=9)
     ap.add_argument("--end-layer", type=int, default=14)
+    ap.add_argument("--mode", type=str, default="vaf", choices=["vaf", "pai_attn"])
     ap.add_argument("--enh-para", type=float, default=1.15)
     ap.add_argument("--sup-para", type=float, default=0.95)
+    ap.add_argument("--pai-alpha", type=float, default=0.2)
     args = ap.parse_args()
 
     answers_file = os.path.abspath(os.path.expanduser(str(args.answers_file)))
@@ -290,12 +318,14 @@ def main() -> None:
 
     setup_seed(int(args.seed))
     model, processor, _tokenizer, process_vision_info = load_model(args)
-    patched_layers = install_vaf(
+    patched_layers = install_visual_attention_patch(
         model,
         start_layer=int(args.start_layer),
         end_layer=int(args.end_layer),
+        mode=str(args.mode),
         enh_para=float(args.enh_para),
         sup_para=float(args.sup_para),
+        pai_alpha=float(args.pai_alpha),
     )
     rows = read_jsonl(args.question_file, limit=int(args.limit))
 
@@ -310,7 +340,7 @@ def main() -> None:
         gen_kwargs["top_p"] = float(args.top_p)
 
     with open(answers_file, "w", encoding="utf-8") as f:
-        for row in tqdm(rows, desc="qwen25-vl-vaf", unit="sample"):
+        for row in tqdm(rows, desc=f"qwen25-vl-{args.mode}", unit="sample"):
             qid = str(row.get("question_id", row.get("id", ""))).strip()
             question = str(row.get("question", row.get("text", ""))).strip()
             image_name = str(row.get("image", "")).strip()
@@ -373,12 +403,13 @@ def main() -> None:
                         "label": row.get("label", ""),
                         "prompt": text[0] if isinstance(text, list) else str(text),
                         "model_id": os.path.basename(str(args.model_path).rstrip("/")),
-                        "method": "vaf",
+                        "method": str(args.mode),
                         "vaf_layers": patched_layers,
                         "vaf_img_start": img_start,
                         "vaf_img_end": img_end,
                         "vaf_enh_para": float(args.enh_para),
                         "vaf_sup_para": float(args.sup_para),
+                        "pai_alpha": float(args.pai_alpha),
                     },
                     ensure_ascii=False,
                 )
