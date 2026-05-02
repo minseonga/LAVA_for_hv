@@ -70,6 +70,7 @@ VGA_ATTN_TYPE="${VGA_ATTN_TYPE:-eager}"
 QWEN25_DEVICE_MAP="${QWEN25_DEVICE_MAP:-cuda}"
 QWEN25_MIN_PIXELS="${QWEN25_MIN_PIXELS:-250880}"
 QWEN25_MAX_PIXELS="${QWEN25_MAX_PIXELS:-1003520}"
+QWEN25_MODEL_BACKEND="${QWEN25_MODEL_BACKEND:-official}"
 LLAVA_NEXT_MODEL_NAME="${LLAVA_NEXT_MODEL_NAME:-}"
 LLAVA_NEXT_ATTN_IMPLEMENTATION="${LLAVA_NEXT_ATTN_IMPLEMENTATION:-eager}"
 LLAVA_NEXT_TORCH_TYPE="${LLAVA_NEXT_TORCH_TYPE:-fp16}"
@@ -133,8 +134,8 @@ default_end_layer() {
   case "$BACKBONE" in
     llava15) echo "15" ;;
     llava_next) echo "15" ;;
-    qwen25_vl) echo "15" ;;
-    qwen35_vl) echo "15" ;;
+    qwen25_vl) echo "16" ;;
+    qwen35_vl) echo "16" ;;
     *) echo "[error] unsupported BACKBONE=$BACKBONE" >&2; exit 2 ;;
   esac
 }
@@ -364,6 +365,7 @@ if ! reuse_file "$PRED_JSONL"; then
           --image-folder "$IMAGE_FOLDER" \
           --question-file "$QUESTION_FILE" \
           --answers-file "$PRED_JSONL" \
+          --model-backend "$QWEN25_MODEL_BACKEND" \
           --max-new-tokens "$MAX_NEW_TOKENS" \
           --torch-type "$VGA_TORCH_TYPE" \
           --attn-type "$VGA_ATTN_TYPE" \

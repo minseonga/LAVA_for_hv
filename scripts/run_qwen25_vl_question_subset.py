@@ -54,11 +54,6 @@ def setup_seed(seed: int) -> None:
 def load_model(args: argparse.Namespace):
     import torch
 
-    vga_root = os.path.abspath(os.path.expanduser(str(args.vga_root)))
-    if vga_root not in sys.path:
-        sys.path.insert(0, vga_root)
-
-    from qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration  # type: ignore
     from qwen_vl_utils import process_vision_info  # type: ignore
     from transformers import AutoProcessor, AutoTokenizer
 
@@ -72,22 +67,45 @@ def load_model(args: argparse.Namespace):
     }
     model_path = os.path.expanduser(str(args.model_path))
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+    backend = str(args.model_backend).strip().lower()
+    if backend == "auto":
+        try:
+            from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
+
+            backend = "official"
+        except Exception:
+            backend = "vga_fork"
+
+    if backend == "official":
+        from transformers import Qwen2_5_VLForConditionalGeneration  # type: ignore
+    elif backend == "vga_fork":
+        vga_root = os.path.abspath(os.path.expanduser(str(args.vga_root)))
+        if not str(args.vga_root).strip():
+            raise SystemExit("--vga-root is required when --model-backend=vga_fork.")
+        if vga_root not in sys.path:
+            sys.path.insert(0, vga_root)
+        from qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration  # type: ignore
+    else:
+        raise ValueError(f"Unsupported model backend: {args.model_backend}")
+
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_path,
         attn_implementation=str(args.attn_type),
         torch_dtype=torch_dtype[str(args.torch_type)],
         device_map=str(args.device_map),
     ).eval()
-    # VGA's local Qwen2.5-VL fork stores the image-token span on the model
-    # during forward. Vanilla baseline generation must initialize/reset it.
-    model.img_idx = None
+    if backend == "vga_fork":
+        # VGA's local Qwen2.5-VL fork stores the image-token span on the model
+        # during forward. Vanilla baseline generation must initialize/reset it.
+        model.img_idx = None
     processor = AutoProcessor.from_pretrained(
         model_path,
         min_pixels=int(args.min_pixels),
         max_pixels=int(args.max_pixels),
         trust_remote_code=True,
     )
-    return model, processor, tokenizer, process_vision_info
+    return model, processor, tokenizer, process_vision_info, backend
 
 
 def main() -> None:
@@ -97,6 +115,7 @@ def main() -> None:
     ap.add_argument("--image-folder", type=str, required=True)
     ap.add_argument("--question-file", type=str, required=True)
     ap.add_argument("--answers-file", type=str, required=True)
+    ap.add_argument("--model-backend", type=str, default="auto", choices=["auto", "official", "vga_fork"])
     ap.add_argument("--max-new-tokens", type=int, default=128)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--seed", type=int, default=17)
@@ -110,16 +129,13 @@ def main() -> None:
     ap.add_argument("--top-p", type=float, default=1.0)
     args = ap.parse_args()
 
-    if not str(args.vga_root).strip():
-        raise SystemExit("--vga-root is required so the local VGA_origin/qwen2_5_vl model code is importable.")
-
     answers_file = os.path.abspath(os.path.expanduser(str(args.answers_file)))
     if os.path.exists(answers_file):
         raise FileExistsError(f"answers file already exists: {answers_file}")
     os.makedirs(os.path.dirname(answers_file), exist_ok=True)
 
     setup_seed(int(args.seed))
-    model, processor, _tokenizer, process_vision_info = load_model(args)
+    model, processor, _tokenizer, process_vision_info, backend = load_model(args)
     rows = read_jsonl(args.question_file, limit=int(args.limit))
 
     gen_kwargs: Dict[str, Any] = {
@@ -170,7 +186,8 @@ def main() -> None:
             import torch
 
             with torch.inference_mode():
-                model.img_idx = None
+                if backend == "vga_fork":
+                    model.img_idx = None
                 generated_ids = model.generate(**inputs, **gen_kwargs)
 
             trimmed = [
@@ -196,6 +213,7 @@ def main() -> None:
                         "label": row.get("label", ""),
                         "prompt": text[0] if isinstance(text, list) else str(text),
                         "model_id": os.path.basename(str(args.model_path).rstrip("/")),
+                        "model_backend": backend,
                     },
                     ensure_ascii=False,
                 )
