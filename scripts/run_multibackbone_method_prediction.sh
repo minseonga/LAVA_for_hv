@@ -7,7 +7,7 @@ set -euo pipefail
 # backbones currently represented in this repository:
 #   - llava15:    LLaVA-1.5 style runner
 #   - llava_next: official LLaVA-NeXT baseline runner; legacy VGA runner for VGA
-#   - qwen25_vl:  Qwen2.5-VL baseline runner; VGA_origin/Qwen2.5-VL runner for VGA
+#   - qwen25_vl:  Qwen2.5-VL baseline runner; VGA_origin/Qwen2.5-VL runner for VGA; VAF runner
 #   - qwen35_vl:  Qwen3.5-VL raw baseline runner
 #
 # It intentionally runs raw methods only. Post-hoc "ours" controllers should
@@ -33,7 +33,7 @@ export HF_HUB_ENABLE_HF_TRANSFER="${HF_HUB_ENABLE_HF_TRANSFER:-0}"
 
 TASK="${TASK:-pope}"                 # pope | chair
 BACKBONE="${BACKBONE:-llava15}"      # llava15 | llava_next | qwen25_vl | qwen35_vl
-METHOD="${METHOD:-vga}"              # baseline | vga | pai | pai_attn | pai_cd | pai_cfg
+METHOD="${METHOD:-vga}"              # baseline | vga | vaf | pai | pai_attn | pai_cd | pai_cfg
 OUT_ROOT="${OUT_ROOT:-$CAL_ROOT/experiments/multibackbone_raw/${TASK}/${BACKBONE}/${METHOD}}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
 LIMIT="${LIMIT:-0}"
@@ -71,6 +71,10 @@ QWEN25_DEVICE_MAP="${QWEN25_DEVICE_MAP:-cuda}"
 QWEN25_MIN_PIXELS="${QWEN25_MIN_PIXELS:-250880}"
 QWEN25_MAX_PIXELS="${QWEN25_MAX_PIXELS:-1003520}"
 QWEN25_MODEL_BACKEND="${QWEN25_MODEL_BACKEND:-official}"
+VAF_START_LAYER="${VAF_START_LAYER:-9}"
+VAF_END_LAYER="${VAF_END_LAYER:-14}"
+VAF_ENH_PARA="${VAF_ENH_PARA:-1.15}"
+VAF_SUP_PARA="${VAF_SUP_PARA:-0.95}"
 LLAVA_NEXT_MODEL_NAME="${LLAVA_NEXT_MODEL_NAME:-}"
 LLAVA_NEXT_ATTN_IMPLEMENTATION="${LLAVA_NEXT_ATTN_IMPLEMENTATION:-eager}"
 LLAVA_NEXT_TORCH_TYPE="${LLAVA_NEXT_TORCH_TYPE:-fp16}"
@@ -333,6 +337,29 @@ run_pai() {
     --seed "$SEED"
 }
 
+run_vaf() {
+  if [[ "$BACKBONE" != "qwen25_vl" ]]; then
+    echo "[error] METHOD=vaf is currently implemented for BACKBONE=qwen25_vl only." >&2
+    exit 2
+  fi
+  "$QWEN25_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen25_vl_vaf_question_subset.py" \
+    --model-path "$MODEL_PATH" \
+    --image-folder "$IMAGE_FOLDER" \
+    --question-file "$QUESTION_FILE" \
+    --answers-file "$PRED_JSONL" \
+    --max-new-tokens "$MAX_NEW_TOKENS" \
+    --torch-type "$VGA_TORCH_TYPE" \
+    --device-map "$QWEN25_DEVICE_MAP" \
+    --min-pixels "$QWEN25_MIN_PIXELS" \
+    --max-pixels "$QWEN25_MAX_PIXELS" \
+    --limit "$LIMIT" \
+    --seed "$SEED" \
+    --start-layer "$VAF_START_LAYER" \
+    --end-layer "$VAF_END_LAYER" \
+    --enh-para "$VAF_ENH_PARA" \
+    --sup-para "$VAF_SUP_PARA"
+}
+
 configure_pai_variant() {
   case "$METHOD" in
     pai)
@@ -417,6 +444,10 @@ if ! reuse_file "$PRED_JSONL"; then
       ;;
     vga)
       run_vga_like "$VGA_USE_ADD" "$VGA_START_LAYER" "$VGA_END_LAYER"
+      ;;
+    vaf|clearsight)
+      echo "[settings] vaf_layers=$VAF_START_LAYER-$VAF_END_LAYER enh=$VAF_ENH_PARA sup=$VAF_SUP_PARA"
+      run_vaf
       ;;
     pai|pai_attn|pai_no_cd|pai_cd|pai_full|pai_cfg)
       if [[ "$BACKBONE" == "qwen35_vl" ]]; then
