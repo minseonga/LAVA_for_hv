@@ -251,7 +251,20 @@ def evaluate_policy(
     }
 
 
-def selection_key(result: Dict[str, Any], objective: str) -> Tuple[float, float, float, float]:
+def gain_preserving_harm_recall_score(result: Dict[str, Any], lambda_gain: float) -> float:
+    harm_recall = base.safe_div(float(result["selected_harm"]), float(max(1, int(result["total_harm"]))))
+    help_destroy = base.safe_div(float(result["selected_help"]), float(max(1, int(result["total_help"]))))
+    return float(harm_recall - float(lambda_gain) * help_destroy)
+
+
+def selection_key(result: Dict[str, Any], objective: str, lambda_gain: float = 1.0) -> Tuple[float, float, float, float]:
+    if objective == "gain_preserving_harm_recall":
+        return (
+            gain_preserving_harm_recall_score(result, lambda_gain),
+            float(result["net"]),
+            float(result["selected_harm_precision"]),
+            -float(result["baseline_rate"]),
+        )
     if objective == "net":
         return (
             float(result["net"]),
@@ -296,6 +309,7 @@ def search_family(
     family: str,
     alpha_grid: Sequence[float],
     objective: str,
+    lambda_gain: float,
     min_baseline_rate: float,
     max_baseline_rate: float,
     min_selected_count: int,
@@ -348,7 +362,7 @@ def search_family(
                 continue
             if float(result["baseline_rate"]) > float(max_baseline_rate):
                 continue
-            if best is None or selection_key(result, objective) > selection_key(best, objective):
+            if best is None or selection_key(result, objective, lambda_gain) > selection_key(best, objective, lambda_gain):
                 best = result
     return best, candidates
 
@@ -385,7 +399,16 @@ def main() -> None:
         "--tau_objective",
         type=str,
         default="final_acc",
-        choices=["final_acc", "net", "harm_precision", "harm_recall", "harm_f1"],
+        choices=["final_acc", "net", "harm_precision", "harm_recall", "harm_f1", "gain_preserving_harm_recall"],
+    )
+    ap.add_argument(
+        "--lambda_gain",
+        type=float,
+        default=1.0,
+        help=(
+            "Penalty weight for tau_objective=gain_preserving_harm_recall: "
+            "selected_harm/total_harm - lambda_gain * selected_help/total_help."
+        ),
     )
     ap.add_argument("--min_baseline_rate", type=float, default=0.0)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
@@ -441,6 +464,7 @@ def main() -> None:
             family="c_only",
             alpha_grid=alpha_grid,
             objective=str(args.tau_objective),
+            lambda_gain=float(args.lambda_gain),
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
@@ -458,6 +482,7 @@ def main() -> None:
             family="d_only",
             alpha_grid=alpha_grid,
             objective=str(args.tau_objective),
+            lambda_gain=float(args.lambda_gain),
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
@@ -475,6 +500,7 @@ def main() -> None:
             family="cd_fusion",
             alpha_grid=alpha_grid,
             objective=str(args.tau_objective),
+            lambda_gain=float(args.lambda_gain),
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
@@ -486,7 +512,9 @@ def main() -> None:
 
     selected_policy = None
     for result in family_results.values():
-        if selected_policy is None or selection_key(result, str(args.tau_objective)) > selection_key(selected_policy, str(args.tau_objective)):
+        if selected_policy is None or selection_key(result, str(args.tau_objective), float(args.lambda_gain)) > selection_key(
+            selected_policy, str(args.tau_objective), float(args.lambda_gain)
+        ):
             selected_policy = result
 
     out_dir = os.path.abspath(args.out_dir)
@@ -523,6 +551,7 @@ def main() -> None:
                 "top_k_d": int(args.top_k_d),
                 "alpha_grid": alpha_grid,
                 "tau_objective": str(args.tau_objective),
+                "lambda_gain": float(args.lambda_gain),
                 "min_baseline_rate": float(args.min_baseline_rate),
                 "max_baseline_rate": float(args.max_baseline_rate),
                 "min_selected_count": int(args.min_selected_count),
