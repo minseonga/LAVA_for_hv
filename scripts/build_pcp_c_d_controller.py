@@ -313,6 +313,8 @@ def search_family(
     min_baseline_rate: float,
     max_baseline_rate: float,
     min_selected_count: int,
+    min_harm_precision: float,
+    min_harm_recall: float,
     candidate_filter: str,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     candidates: List[Dict[str, Any]] = []
@@ -361,6 +363,10 @@ def search_family(
             if float(result["baseline_rate"]) < float(min_baseline_rate):
                 continue
             if float(result["baseline_rate"]) > float(max_baseline_rate):
+                continue
+            if float(result["selected_harm_precision"]) < float(min_harm_precision):
+                continue
+            if float(result["selected_harm_recall"]) < float(min_harm_recall):
                 continue
             if best is None or selection_key(result, objective, lambda_gain) > selection_key(best, objective, lambda_gain):
                 best = result
@@ -413,6 +419,18 @@ def main() -> None:
     ap.add_argument("--min_baseline_rate", type=float, default=0.0)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
     ap.add_argument("--min_selected_count", type=int, default=0)
+    ap.add_argument(
+        "--min_harm_precision",
+        type=float,
+        default=0.0,
+        help="Minimum selected_harm / selected_count required during tau/family selection.",
+    )
+    ap.add_argument(
+        "--min_harm_recall",
+        type=float,
+        default=0.0,
+        help="Minimum selected_harm / total_harm required during tau/family selection.",
+    )
     ap.add_argument(
         "--candidate_filter",
         type=str,
@@ -468,6 +486,8 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
+            min_harm_precision=float(args.min_harm_precision),
+            min_harm_recall=float(args.min_harm_recall),
             candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
@@ -486,6 +506,8 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
+            min_harm_precision=float(args.min_harm_precision),
+            min_harm_recall=float(args.min_harm_recall),
             candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
@@ -504,6 +526,8 @@ def main() -> None:
             min_baseline_rate=float(args.min_baseline_rate),
             max_baseline_rate=float(args.max_baseline_rate),
             min_selected_count=int(args.min_selected_count),
+            min_harm_precision=float(args.min_harm_precision),
+            min_harm_recall=float(args.min_harm_recall),
             candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
@@ -555,6 +579,8 @@ def main() -> None:
                 "min_baseline_rate": float(args.min_baseline_rate),
                 "max_baseline_rate": float(args.max_baseline_rate),
                 "min_selected_count": int(args.min_selected_count),
+                "min_harm_precision": float(args.min_harm_precision),
+                "min_harm_recall": float(args.min_harm_recall),
                 "candidate_filter": candidate_filter,
             },
             "counts": {
