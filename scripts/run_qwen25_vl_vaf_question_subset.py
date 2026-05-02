@@ -102,6 +102,45 @@ def import_qwen_attention_helpers():
         return apply_multimodal_rotary_pos_emb, repeat_kv
 
 
+def _is_decoder_layer(module: Any) -> bool:
+    attn = getattr(module, "self_attn", None)
+    if attn is None:
+        return False
+    return all(hasattr(attn, name) for name in ("q_proj", "k_proj", "v_proj", "o_proj"))
+
+
+def resolve_decoder_layers(model: Any) -> List[Any]:
+    candidates = [
+        ("model.layers", getattr(getattr(model, "model", None), "layers", None)),
+        ("language_model.layers", getattr(getattr(model, "language_model", None), "layers", None)),
+        (
+            "model.language_model.layers",
+            getattr(getattr(getattr(model, "model", None), "language_model", None), "layers", None),
+        ),
+        ("transformer.layers", getattr(getattr(model, "transformer", None), "layers", None)),
+    ]
+    for _name, layers in candidates:
+        if layers is None:
+            continue
+        layers_list = list(layers)
+        if layers_list and all(_is_decoder_layer(layer) for layer in layers_list):
+            return layers_list
+
+    found: List[Any] = []
+    seen: set[int] = set()
+    for module in model.modules():
+        if not _is_decoder_layer(module):
+            continue
+        ident = id(module)
+        if ident in seen:
+            continue
+        seen.add(ident)
+        found.append(module)
+    if found:
+        return found
+    raise RuntimeError("Could not resolve Qwen2.5-VL decoder layers for visual attention patching.")
+
+
 def make_visual_attention_forward(original_forward: Any):
     import torch
     import torch.nn as nn
@@ -245,8 +284,7 @@ def install_visual_attention_patch(
 ) -> List[int]:
     mode = str(mode)
     patched: List[int] = []
-    layers = list(getattr(getattr(model, "model", None), "layers", []))
-    for idx, layer in enumerate(layers):
+    for idx, layer in enumerate(resolve_decoder_layers(model)):
         if mode == "pai_attn":
             in_range = int(start_layer) <= idx < int(end_layer)
         else:
@@ -280,7 +318,7 @@ def set_vaf_image_span(model: Any, input_ids: Any) -> Tuple[int, int]:
         raise ValueError("No image tokens found in Qwen2.5-VL input_ids.")
     start_pos = int(image_token_indices[0].item())
     end_pos = int(image_token_indices[-1].item()) + 1
-    for layer in getattr(model.model, "layers", []):
+    for layer in resolve_decoder_layers(model):
         attn = getattr(layer, "self_attn", None)
         if attn is not None and bool(getattr(attn, "_vaf_enabled", False)):
             attn._vaf_img_idx = (start_pos, end_pos)
