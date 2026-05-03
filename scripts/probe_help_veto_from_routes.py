@@ -263,6 +263,25 @@ def fit_policy(
     return metrics[0], metrics
 
 
+def fixed_policy(rows: Sequence[Dict[str, Any]], feature: str, direction: str, tau: float) -> Dict[str, Any]:
+    if str(direction) not in {"high", "low"}:
+        raise ValueError("--fixed_direction must be one of: high, low")
+    result = eval_veto(rows, str(feature), str(direction), float(tau))
+    xs: List[float] = []
+    ys: List[int] = []
+    for row in rows:
+        x = maybe_float(row.get(feature))
+        if x is None:
+            continue
+        xs.append(float(x))
+        ys.append(int(maybe_int(row.get("help")) or 0))
+    auc_high = binary_auroc(xs, ys)
+    auc_low = binary_auroc([-x for x in xs], ys) if xs else None
+    result["help_auroc"] = None if auc_high is None or auc_low is None else max(float(auc_high), float(auc_low))
+    result["n_present"] = int(len(xs))
+    return result
+
+
 def apply_policy(rows: Sequence[Dict[str, Any]], policy: Dict[str, Any]) -> Dict[str, Any]:
     return eval_veto(rows, str(policy["feature"]), str(policy["direction"]), float(policy["tau"]))
 
@@ -289,6 +308,9 @@ def main() -> None:
     ap.add_argument("--min_present_rate", type=float, default=0.8)
     ap.add_argument("--min_veto_count", type=int, default=1)
     ap.add_argument("--top_k", type=int, default=50)
+    ap.add_argument("--fixed_feature", default="", help="Skip fitting and evaluate this feature as the help-veto rule.")
+    ap.add_argument("--fixed_direction", default="", choices=["", "high", "low"])
+    ap.add_argument("--fixed_tau", type=float, default=None)
     ap.add_argument("--apply", action="append", default=[], help="Optional name:features_csv:routes_csv")
     args = ap.parse_args()
 
@@ -296,12 +318,23 @@ def main() -> None:
     fit_rows = selected_fallback_rows(args.fit_features_csv, args.fit_routes_csv)
     if not fit_rows:
         raise RuntimeError("No selected baseline fallback rows in fit_routes_csv.")
-    best, metrics = fit_policy(
-        fit_rows,
-        prefixes=prefixes,
-        min_present_rate=float(args.min_present_rate),
-        min_veto_count=int(args.min_veto_count),
-    )
+    if str(args.fixed_feature).strip():
+        if not str(args.fixed_direction).strip() or args.fixed_tau is None:
+            raise ValueError("--fixed_feature requires --fixed_direction and --fixed_tau.")
+        best = fixed_policy(
+            fit_rows,
+            feature=str(args.fixed_feature).strip(),
+            direction=str(args.fixed_direction).strip(),
+            tau=float(args.fixed_tau),
+        )
+        metrics = [best]
+    else:
+        best, metrics = fit_policy(
+            fit_rows,
+            prefixes=prefixes,
+            min_present_rate=float(args.min_present_rate),
+            min_veto_count=int(args.min_veto_count),
+        )
 
     out_dir = os.path.abspath(args.out_dir)
     os.makedirs(out_dir, exist_ok=True)
@@ -319,6 +352,7 @@ def main() -> None:
         "tau": best["tau"],
         "fit_result": best,
         "feature_prefixes": list(prefixes),
+        "fixed": bool(str(args.fixed_feature).strip()),
     }
     write_json(policy_json, policy)
 
@@ -338,6 +372,9 @@ def main() -> None:
                 "feature_prefixes": list(prefixes),
                 "min_present_rate": float(args.min_present_rate),
                 "min_veto_count": int(args.min_veto_count),
+                "fixed_feature": str(args.fixed_feature),
+                "fixed_direction": str(args.fixed_direction),
+                "fixed_tau": args.fixed_tau,
             },
             "selected_policy": policy,
             "apply_summary": apply_rows,
