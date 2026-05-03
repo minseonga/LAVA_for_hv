@@ -412,6 +412,19 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--cal_py", default=os.environ.get("CAL_PY", "/home/kms/miniconda3/envs/vga_base/bin/python"))
     ap.add_argument("--apply_root", action="append", default=None)
     ap.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="Only process these target directory names, e.g. llava_next_vaf. Can be repeated.",
+    )
+    ap.add_argument(
+        "--dataset",
+        action="append",
+        choices=DATASETS,
+        default=None,
+        help="Only process these datasets. Can be repeated.",
+    )
+    ap.add_argument(
         "--out_root",
         default=os.environ.get("OUT_ROOT", ""),
         help="Output root. Defaults to $CAL/experiments/paper_pcp_cd_transition_split_calib_existing.",
@@ -439,6 +452,12 @@ def main() -> None:
             cal / "experiments" / "paper_pcp_cd_finalacc_alpha0p025_pai_vaf_main" / "apply",
         ]
     jobs = discover_apply_jobs(apply_roots)
+    if args.target:
+        targets = set(args.target)
+        jobs = [job for job in jobs if job[0] in targets]
+    if args.dataset:
+        datasets = set(args.dataset)
+        jobs = [job for job in jobs if job[1] in datasets]
     if not jobs:
         raise SystemExit(f"No apply jobs found under: {', '.join(str(p) for p in apply_roots)}")
 
