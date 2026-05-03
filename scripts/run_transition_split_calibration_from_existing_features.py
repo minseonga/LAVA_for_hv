@@ -19,6 +19,8 @@ LABELS = {
     "vga_qwen25_vl_7b": "VGA / Qwen2.5-VL-7B",
     "llava15_vaf": "VAF / LLaVA-1.5",
     "llava15_pai_attn": "PAI-attn / LLaVA-1.5",
+    "llava_next_vaf": "VAF / LLaVA-NeXT",
+    "llava_next_pai_attn": "PAI-attn / LLaVA-NeXT",
     "qwen25_vaf": "VAF / Qwen2.5-VL-7B",
     "qwen25_pai_attn": "PAI-attn / Qwen2.5-VL-7B",
 }

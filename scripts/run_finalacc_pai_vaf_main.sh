@@ -14,6 +14,8 @@ set -euo pipefail
 # Default targets:
 #   llava15_vaf        reuses existing VAF discovery/test feature rows
 #   llava15_pai_attn   generates discovery raw/features, uses existing full raw
+#   llava_next_vaf     generates discovery raw/features, uses existing full raw
+#   llava_next_pai_attn generates discovery raw/features, uses existing full raw
 #   qwen25_vaf         generates discovery raw/features, uses existing full raw
 #   qwen25_pai_attn    generates discovery raw/features, uses existing full raw
 #
@@ -26,8 +28,10 @@ set -euo pipefail
 CAL="${CAL:-/home/kms/LLaVA_calibration}"
 CAL_PY="${CAL_PY:-/home/kms/miniconda3/envs/vga_base/bin/python}"
 QWEN_PY="${QWEN_PY:-/home/kms/miniconda3/envs/qwen25_vl/bin/python}"
+NEXT_PY="${NEXT_PY:-/home/kms/miniconda3/envs/llava_next_official/bin/python}"
 PAI_PY="${PAI_PY:-/home/kms/miniconda3/envs/pai_base/bin/python}"
 PAI_ROOT="${PAI_ROOT:-/home/kms/PAI}"
+LLAVA_NEXT_ROOT="${LLAVA_NEXT_ROOT:-/home/kms/LLaVA-NeXT}"
 
 RAW_GPU="${RAW_GPU:-2}"
 FEAT_GPU="${FEAT_GPU:-2}"
@@ -40,6 +44,7 @@ mkdir -p "$POL_ROOT"
 
 OLD="${OLD:-$CAL/experiments/pope_discovery/tau_c_calibration_adversarial/assets}"
 DISC_BASE="${DISC_BASE:-$CAL/experiments/pope_discovery/tau_c_calibration_adversarial/baseline/pred_baseline.jsonl}"
+DISC_BASE_NEXT="${DISC_BASE_NEXT:-$CAL/experiments/paper_pcp_cd/llava_next/discovery/raw/baseline/pred_baseline.jsonl}"
 DISC_IMG="${DISC_IMG:-}"
 if [[ -z "$DISC_IMG" ]]; then
   DISC_SAMPLE="${DISC_SAMPLE:-COCO_train2014_000000126408.jpg}"
@@ -53,7 +58,10 @@ fi
 
 HEADSET="${HEADSET:-$CAL/experiments/pope_headsets_v1/headset.json}"
 LLAVA15_MODEL="${LLAVA15_MODEL:-liuhaotian/llava-v1.5-7b}"
+LLAVA_NEXT_MODEL="${LLAVA_NEXT_MODEL:-/home/kms/models/llama3-llava-next-8b}"
 QWEN_MODEL="${QWEN_MODEL:-/home/kms/models/Qwen2.5-VL-7B-Instruct}"
+LLAVA_NEXT_TORCH_TYPE="${LLAVA_NEXT_TORCH_TYPE:-bf16}"
+LLAVA_NEXT_ATTN_IMPLEMENTATION="${LLAVA_NEXT_ATTN_IMPLEMENTATION:-sdpa}"
 
 C_COLS="${C_COLS:-cheap_lp_content_min,cheap_lp_content_std,cheap_entropy_content_mean,cheap_first_target_gap,cheap_target_gap_content_min}"
 D_COLS="${D_COLS:-cheap_decision_candidate_minus_alt,cheap_decision_candidate_prob_binary,cheap_decision_candidate_label_lp,cheap_decision_candidate_kl_uniform}"
@@ -112,6 +120,12 @@ base_pred_path() {
     echo "$CAL/experiments/paper_raw/pope/aokvqa/qwen25_vl_7b/baseline_eager_tok8_full9000/pred_baseline.jsonl"
   elif [[ "$backbone" == "qwen25" && "$dataset" == "gqa" ]]; then
     echo "$CAL/experiments/paper_raw/pope/gqa/qwen25_vl_7b/baseline_eager_tok8_full9000/pred_baseline.jsonl"
+  elif [[ "$backbone" == "llava_next" && "$dataset" == "mscoco" ]]; then
+    echo "$CAL/experiments/paper_raw/pope/llava_next_llama3_8b/baseline_sdpa_tok8_full9000/pred_baseline.jsonl"
+  elif [[ "$backbone" == "llava_next" && "$dataset" == "aokvqa" ]]; then
+    echo "$CAL/experiments/paper_raw/pope/aokvqa/llava_next_llama3_8b/baseline_sdpa_tok8_full9000/pred_baseline.jsonl"
+  elif [[ "$backbone" == "llava_next" && "$dataset" == "gqa" ]]; then
+    echo "$CAL/experiments/paper_raw/pope/gqa/llava_next_llama3_8b/baseline_sdpa_tok8_full9000/pred_baseline.jsonl"
   else
     echo "[error] unsupported base path: $backbone $dataset" >&2
     exit 2
@@ -141,6 +155,14 @@ full_method_pred_path() {
     echo "$CAL/experiments/paper_raw/pope/qwen25_vl_7b/pai_attn_eager_tok8_layers4_16_full9000/pred_pai_attn.jsonl"
   elif [[ "$target" == "qwen25_pai_attn" ]]; then
     echo "$CAL/experiments/paper_raw/pope/$dataset/qwen25_vl_7b/pai_attn_eager_tok8_layers4_16_full9000/pred_pai_attn.jsonl"
+  elif [[ "$target" == "llava_next_vaf" && "$dataset" == "mscoco" ]]; then
+    echo "$CAL/experiments/paper_raw/pope/llava_next_llama3_8b/vaf_sdpa_tok8_layers9_14_full9000/pred_vaf.jsonl"
+  elif [[ "$target" == "llava_next_vaf" ]]; then
+    echo "$CAL/experiments/paper_raw/pope/$dataset/llava_next_llama3_8b/vaf_sdpa_tok8_layers9_14_full9000/pred_vaf.jsonl"
+  elif [[ "$target" == "llava_next_pai_attn" && "$dataset" == "mscoco" ]]; then
+    echo "$CAL/experiments/paper_raw/pope/llava_next_llama3_8b/pai_attn_sdpa_tok8_layers0_16_full9000/pred_pai_attn.jsonl"
+  elif [[ "$target" == "llava_next_pai_attn" ]]; then
+    echo "$CAL/experiments/paper_raw/pope/$dataset/llava_next_llama3_8b/pai_attn_sdpa_tok8_layers0_16_full9000/pred_pai_attn.jsonl"
   else
     echo "[error] unsupported method pred path: $target $dataset" >&2
     exit 2
@@ -150,6 +172,7 @@ full_method_pred_path() {
 target_backbone() {
   case "$1" in
     llava15_*) echo "llava15" ;;
+    llava_next_*) echo "llava_next" ;;
     qwen25_*) echo "qwen25" ;;
     *) echo "[error] unsupported target: $1" >&2; exit 2 ;;
   esac
@@ -173,6 +196,7 @@ target_pred_key() {
 target_model_path() {
   case "$1" in
     llava15_*) echo "$LLAVA15_MODEL" ;;
+    llava_next_*) echo "$LLAVA_NEXT_MODEL" ;;
     qwen25_*) echo "$QWEN_MODEL" ;;
   esac
 }
@@ -180,6 +204,7 @@ target_model_path() {
 target_runtime_backend() {
   case "$1" in
     llava15_*) echo "llava15_cleanroom" ;;
+    llava_next_*) echo "llava_next_official" ;;
     qwen25_*) echo "qwen25_vl_official" ;;
   esac
 }
@@ -238,6 +263,35 @@ ensure_discovery_raw() {
       PAI_USE_CFG=0 \
       PAI_START_LAYER=2 \
       PAI_END_LAYER=15 \
+      REUSE_IF_EXISTS=false \
+      bash "$CAL/scripts/run_multibackbone_method_prediction.sh" \
+      > "$out/run.log" 2>&1
+  elif [[ "$backbone" == "llava_next" ]]; then
+    env \
+      GPU="$RAW_GPU" \
+      PYTHONPATH="$CAL:${PYTHONPATH:-}" \
+      CAL_ROOT="$CAL" \
+      CAL_PYTHON_BIN="$CAL_PY" \
+      LLAVA_NEXT_PYTHON_BIN="$NEXT_PY" \
+      LLAVA_NEXT_ROOT="$LLAVA_NEXT_ROOT" \
+      BACKBONE=llava_next \
+      METHOD="$raw_method" \
+      TASK=pope \
+      MODEL_PATH="$LLAVA_NEXT_MODEL" \
+      IMAGE_FOLDER="$DISC_IMG" \
+      QUESTION_FILE="$OLD/discovery_q_with_object.jsonl" \
+      GT_CSV="$OLD/discovery_gt.csv" \
+      OUT_ROOT="$out" \
+      MAX_NEW_TOKENS=8 \
+      LLAVA_NEXT_TORCH_TYPE="$LLAVA_NEXT_TORCH_TYPE" \
+      LLAVA_NEXT_ATTN_IMPLEMENTATION="$LLAVA_NEXT_ATTN_IMPLEMENTATION" \
+      CONV_MODE=llava_llama_3 \
+      VAF_START_LAYER=9 \
+      VAF_END_LAYER=14 \
+      PAI_USE_ATTN=1 \
+      PAI_USE_CFG=0 \
+      PAI_START_LAYER=0 \
+      PAI_END_LAYER=16 \
       REUSE_IF_EXISTS=false \
       bash "$CAL/scripts/run_multibackbone_method_prediction.sh" \
       > "$out/run.log" 2>&1
@@ -335,6 +389,27 @@ extract_features() {
       --qwen25_torch_type bf16 \
       --qwen25_attn_implementation eager \
       --qwen25_device_map cuda \
+      --baseline_pred_key auto \
+      --intervention_pred_key "$pred_key" \
+      --extract_only true \
+      --skip_stage_a true \
+      --reuse_if_exists false \
+      --log_every 50
+  elif [[ "$backend" == "llava_next_official" ]]; then
+    CUDA_VISIBLE_DEVICES="$FEAT_GPU" PYTHONPATH="$CAL:${PYTHONPATH:-}" \
+      "$NEXT_PY" "$CAL/scripts/run_discriminative_meta_strong_online.py" \
+      --question_file "$question_jsonl" \
+      --image_folder "$image_folder" \
+      --intervention_pred_jsonl "$method_pred" \
+      --headset_json "$HEADSET" \
+      --out_dir "$out_dir" \
+      --baseline_pred_jsonl "$base_pred" \
+      --gt_csv "$gt_csv" \
+      --model_path "$model_path" \
+      --runtime_backend llava_next_official \
+      --llava_next_root "$LLAVA_NEXT_ROOT" \
+      --llava_next_torch_type "$LLAVA_NEXT_TORCH_TYPE" \
+      --llava_next_attn_implementation "$LLAVA_NEXT_ATTN_IMPLEMENTATION" \
       --baseline_pred_key auto \
       --intervention_pred_key "$pred_key" \
       --extract_only true \
@@ -446,10 +521,14 @@ apply_policy() {
 
 run_target() {
   local target="$1"
-  local backbone pred_key disc_pred method_root disc_changed disc_features
+  local backbone pred_key disc_pred method_root disc_changed disc_features disc_base_pred
   backbone="$(target_backbone "$target")"
   pred_key="$(target_pred_key "$target")"
   method_root="$METHOD_ROOT/$target"
+  disc_base_pred="$DISC_BASE"
+  if [[ "$backbone" == "llava_next" ]]; then
+    disc_base_pred="$DISC_BASE_NEXT"
+  fi
 
   log "target $target"
   ensure_discovery_raw "$target"
@@ -463,7 +542,7 @@ run_target() {
     build_changed_subset "$target/discovery" \
       "$OLD/discovery_q_with_object.jsonl" \
       "$OLD/discovery_gt.csv" \
-      "$DISC_BASE" \
+      "$disc_base_pred" \
       "$disc_pred" \
       "$pred_key" \
       "$disc_changed"
@@ -473,7 +552,7 @@ run_target() {
       "$disc_changed/changed_q_with_object.jsonl" \
       "$disc_changed/changed_gt.csv" \
       "$DISC_IMG" \
-      "$DISC_BASE" \
+      "$disc_base_pred" \
       "$disc_pred" \
       "$pred_key" \
       "$disc_features"
@@ -485,7 +564,11 @@ run_target() {
   for dataset in mscoco aokvqa gqa; do
     local base_pred method_pred test_changed test_features rows_csv
     dataset_paths "$dataset"
-    base_pred="$(base_pred_path "$backbone" "$dataset")"
+    if [[ "$backbone" == "llava_next" ]]; then
+      base_pred="$(base_pred_path llava_next "$dataset")"
+    else
+      base_pred="$(base_pred_path "$backbone" "$dataset")"
+    fi
     method_pred="$(full_method_pred_path "$target" "$dataset")"
     check_file "$base_pred"
     check_file "$method_pred"
@@ -529,10 +612,12 @@ from pathlib import Path
 run = Path(os.environ["RUN_ROOT"])
 pol = Path(os.environ["POL_ROOT"])
 apply_root = Path(os.environ["APPLY_ROOT"])
-targets = ["llava15_vaf", "llava15_pai_attn", "qwen25_vaf", "qwen25_pai_attn"]
+targets = ["llava15_vaf", "llava15_pai_attn", "llava_next_vaf", "llava_next_pai_attn", "qwen25_vaf", "qwen25_pai_attn"]
 labels = {
     "llava15_vaf": "VAF / LLaVA-1.5",
     "llava15_pai_attn": "PAI-attn / LLaVA-1.5",
+    "llava_next_vaf": "VAF / LLaVA-NeXT",
+    "llava_next_pai_attn": "PAI-attn / LLaVA-NeXT",
     "qwen25_vaf": "VAF / Qwen2.5-VL-7B",
     "qwen25_pai_attn": "PAI-attn / Qwen2.5-VL-7B",
 }
@@ -588,6 +673,9 @@ check_file "$CAL/scripts/build_pcp_c_d_controller.py"
 check_file "$CAL/scripts/apply_pcp_c_d_controller.py"
 check_file "$CAL/scripts/summarize_pcp_deployment_from_routes.py"
 check_file "$DISC_BASE"
+if [[ " $TARGETS " == *" llava_next_"* ]]; then
+  check_file "$DISC_BASE_NEXT"
+fi
 check_file "$OLD/discovery_q_with_object.jsonl"
 check_file "$OLD/discovery_gt.csv"
 check_file "$HEADSET"
