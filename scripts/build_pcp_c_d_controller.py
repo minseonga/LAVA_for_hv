@@ -97,6 +97,8 @@ def is_route_candidate(row: Dict[str, Any], candidate_filter: str) -> bool:
         return baseline_label in {"yes", "no"} and intervention_label in {"yes", "no"} and baseline_label != intervention_label
     if mode == "yes_to_no":
         return baseline_label == "yes" and intervention_label == "no"
+    if mode == "no_to_yes":
+        return baseline_label == "no" and intervention_label == "yes"
     raise ValueError(f"Unsupported candidate_filter={candidate_filter!r}")
 
 
@@ -503,12 +505,13 @@ def main() -> None:
         "--candidate_filter",
         type=str,
         default="all",
-        choices=["all", "changed_answer", "yes_to_no"],
+        choices=["all", "changed_answer", "yes_to_no", "no_to_yes"],
         help=(
             "Rows eligible for fallback during calibration. changed_answer uses only "
             "samples where baseline and intervention yes/no labels differ; yes_to_no "
-            "uses the subset where the intervention suppresses a baseline yes answer. "
-            "Both are deployable because they use predictions, not ground truth."
+            "uses the subset where the intervention suppresses a baseline yes answer; "
+            "no_to_yes uses the subset where the intervention inserts a yes answer. "
+            "These filters are deployable because they use predictions, not ground truth."
         ),
     )
     args = ap.parse_args()
