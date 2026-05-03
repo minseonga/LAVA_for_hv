@@ -21,6 +21,7 @@ set -euo pipefail
 #   bash scripts/run_finalacc_pai_vaf_main.sh
 #   TARGETS="qwen25_vaf qwen25_pai_attn" FEAT_GPU=2 RAW_GPU=2 bash scripts/run_finalacc_pai_vaf_main.sh
 #   MAX_HELP_RECALL=0.25 TARGETS="qwen25_vaf qwen25_pai_attn" bash scripts/run_finalacc_pai_vaf_main.sh
+#   METHOD_ROOT=.../methods POL_ROOT=.../policies_g0p25 APPLY_ROOT=.../apply_g0p25 MAX_HELP_RECALL=0.25 bash scripts/run_finalacc_pai_vaf_main.sh
 
 CAL="${CAL:-/home/kms/LLaVA_calibration}"
 CAL_PY="${CAL_PY:-/home/kms/miniconda3/envs/vga_base/bin/python}"
@@ -32,7 +33,9 @@ RAW_GPU="${RAW_GPU:-2}"
 FEAT_GPU="${FEAT_GPU:-2}"
 
 RUN_ROOT="${RUN_ROOT:-$CAL/experiments/paper_pcp_cd_finalacc_alpha0p025_pai_vaf_main}"
+METHOD_ROOT="${METHOD_ROOT:-$RUN_ROOT/methods}"
 POL_ROOT="${POL_ROOT:-$RUN_ROOT/policies}"
+APPLY_ROOT="${APPLY_ROOT:-$RUN_ROOT/apply}"
 mkdir -p "$POL_ROOT"
 
 OLD="${OLD:-$CAL/experiments/pope_discovery/tau_c_calibration_adversarial/assets}"
@@ -187,9 +190,9 @@ discovery_pred_for_target() {
   if [[ "$target" == "llava15_vaf" ]]; then
     echo "$CAL/experiments/paper_pcp_cd/llava15/pai_vaf_oldcompact/vaf/raw_discovery/pred_vaf.jsonl"
   elif [[ "$raw_method" == "vaf" ]]; then
-    echo "$RUN_ROOT/methods/$target/raw_discovery/pred_vaf.jsonl"
+    echo "$METHOD_ROOT/$target/raw_discovery/pred_vaf.jsonl"
   else
-    echo "$RUN_ROOT/methods/$target/raw_discovery/pred_pai_attn.jsonl"
+    echo "$METHOD_ROOT/$target/raw_discovery/pred_pai_attn.jsonl"
   fi
 }
 
@@ -210,7 +213,7 @@ ensure_discovery_raw() {
     exit 2
   fi
 
-  out="$RUN_ROOT/methods/$target/raw_discovery"
+  out="$METHOD_ROOT/$target/raw_discovery"
   mkdir -p "$out"
   log "generate discovery raw $target on GPU $RAW_GPU"
 
@@ -410,7 +413,7 @@ apply_policy() {
   local base_pred="$5"
   local method_pred="$6"
   local pred_key="$7"
-  local out_dir="$RUN_ROOT/apply/$target/$dataset"
+  local out_dir="$APPLY_ROOT/$target/$dataset"
 
   check_file "$rows_csv"
   check_file "$gt_csv"
@@ -444,7 +447,7 @@ run_target() {
   local backbone pred_key disc_pred method_root disc_changed disc_features
   backbone="$(target_backbone "$target")"
   pred_key="$(target_pred_key "$target")"
-  method_root="$RUN_ROOT/methods/$target"
+  method_root="$METHOD_ROOT/$target"
 
   log "target $target"
   ensure_discovery_raw "$target"
@@ -516,13 +519,14 @@ run_target() {
 
 write_summary_table() {
   log "summary table"
-  RUN_ROOT="$RUN_ROOT" POL_ROOT="$POL_ROOT" "$CAL_PY" - <<'PY'
+  RUN_ROOT="$RUN_ROOT" POL_ROOT="$POL_ROOT" APPLY_ROOT="$APPLY_ROOT" "$CAL_PY" - <<'PY'
 import json
 import os
 from pathlib import Path
 
 run = Path(os.environ["RUN_ROOT"])
 pol = Path(os.environ["POL_ROOT"])
+apply_root = Path(os.environ["APPLY_ROOT"])
 targets = ["llava15_vaf", "llava15_pai_attn", "qwen25_vaf", "qwen25_pai_attn"]
 labels = {
     "llava15_vaf": "VAF / LLaVA-1.5",
@@ -541,7 +545,7 @@ for target in targets:
         continue
     sp = json.load(open(policy_path))["selected_policy"]
     for dataset in ["mscoco", "aokvqa", "gqa"]:
-        p = run / "apply" / target / dataset / "deployment_summary.json"
+        p = apply_root / target / dataset / "deployment_summary.json"
         if not p.exists():
             lines.append(f"| {labels[target]} | {dataset} | missing | | | | | | | | | | | |")
             continue
@@ -566,6 +570,9 @@ PY
 log "config"
 echo "CAL=$CAL"
 echo "RUN_ROOT=$RUN_ROOT"
+echo "METHOD_ROOT=$METHOD_ROOT"
+echo "POL_ROOT=$POL_ROOT"
+echo "APPLY_ROOT=$APPLY_ROOT"
 echo "RAW_GPU=$RAW_GPU FEAT_GPU=$FEAT_GPU"
 echo "DISC_IMG=$DISC_IMG"
 echo "MAX_HELP_RECALL=$MAX_HELP_RECALL"
