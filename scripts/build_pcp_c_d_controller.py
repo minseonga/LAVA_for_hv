@@ -252,6 +252,58 @@ def evaluate_policy(
     }
 
 
+def evaluate_noop_policy(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    n = 0
+    baseline_correct_total = 0
+    intervention_correct_total = 0
+    total_harm = 0
+    total_help = 0
+    for row in rows:
+        bc = row.get("baseline_correct")
+        ic = row.get("intervention_correct")
+        if bc is None or ic is None:
+            continue
+        harm = int(base.maybe_int(row.get("harm")) or 0)
+        help_ = int(base.maybe_int(row.get("help")) or 0)
+        n += 1
+        baseline_correct_total += int(bc)
+        intervention_correct_total += int(ic)
+        total_harm += harm
+        total_help += help_
+    return {
+        "family": "noop",
+        "alpha": 0.0,
+        "tau": 0.0,
+        "disabled": True,
+        "n_eval": int(n),
+        "baseline_rate": 0.0,
+        "method_rate": 1.0,
+        "final_acc": base.safe_div(float(intervention_correct_total), float(max(1, n))),
+        "baseline_acc": base.safe_div(float(baseline_correct_total), float(max(1, n))),
+        "intervention_acc": base.safe_div(float(intervention_correct_total), float(max(1, n))),
+        "delta_vs_intervention": 0.0,
+        "selected_count": 0,
+        "total_harm": int(total_harm),
+        "total_help": int(total_help),
+        "n_route_candidates": 0,
+        "n_route_candidate_harm": 0,
+        "n_route_candidate_help": 0,
+        "n_route_candidate_neutral": 0,
+        "route_candidate_baseline_rate": 0.0,
+        "selected_harm": 0,
+        "selected_help": 0,
+        "selected_neutral": 0,
+        "net": 0,
+        "selected_harm_precision": 0.0,
+        "selected_help_precision": 0.0,
+        "selected_harm_recall": 0.0,
+        "selected_help_recall": 0.0,
+        "selected_harm_recall_in_scope": 0.0,
+        "selected_help_recall_in_scope": 0.0,
+        "selected_harm_f1": 0.0,
+    }
+
+
 def gain_preserving_harm_recall_score(result: Dict[str, Any], lambda_gain: float) -> float:
     harm_recall = base.safe_div(float(result["selected_harm"]), float(max(1, int(result["total_harm"]))))
     help_destroy = base.safe_div(float(result["selected_help"]), float(max(1, int(result["total_help"]))))
@@ -442,6 +494,12 @@ def main() -> None:
         help="Maximum selected_help / total_help allowed during tau/family selection.",
     )
     ap.add_argument(
+        "--allow_noop_policy",
+        type=parse_bool,
+        default=False,
+        help="Allow a disabled policy that routes every sample to the intervention/method output.",
+    )
+    ap.add_argument(
         "--candidate_filter",
         type=str,
         default="all",
@@ -553,6 +611,13 @@ def main() -> None:
             selected_policy, str(args.tau_objective), float(args.lambda_gain)
         ):
             selected_policy = result
+    if bool(args.allow_noop_policy):
+        noop_policy = evaluate_noop_policy(rows)
+        family_results["noop"] = noop_policy
+        if selected_policy is None or selection_key(noop_policy, str(args.tau_objective), float(args.lambda_gain)) >= selection_key(
+            selected_policy, str(args.tau_objective), float(args.lambda_gain)
+        ):
+            selected_policy = noop_policy
 
     out_dir = os.path.abspath(args.out_dir)
     os.makedirs(out_dir, exist_ok=True)
@@ -595,6 +660,7 @@ def main() -> None:
                 "min_harm_precision": float(args.min_harm_precision),
                 "min_harm_recall": float(args.min_harm_recall),
                 "max_help_recall": float(args.max_help_recall),
+                "allow_noop_policy": bool(args.allow_noop_policy),
                 "candidate_filter": candidate_filter,
             },
             "counts": {

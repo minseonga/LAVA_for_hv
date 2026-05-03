@@ -43,6 +43,8 @@ def compute_score(
     family: str,
     alpha: float,
 ) -> Optional[float]:
+    if family == "noop":
+        return None
     c_score = pcp.mean_z_score(row, c_features)
     d_score = pcp.mean_z_score(row, d_features)
     if family == "c_only":
@@ -78,8 +80,9 @@ def main() -> None:
     c_features = list(bundle.get("selected_c_features") or [])
     d_features = list(bundle.get("selected_d_features") or [])
     family = str(policy["family"])
-    alpha = float(policy["alpha"])
-    tau = float(policy["tau"])
+    disabled = bool(policy.get("disabled")) or family == "noop"
+    alpha = float(policy.get("alpha", 0.0))
+    tau = float(policy.get("tau", 0.0))
     candidate_filter = str(args.candidate_filter)
     if candidate_filter == "auto":
         candidate_filter = str(bundle.get("candidate_filter") or "all")
@@ -96,7 +99,7 @@ def main() -> None:
         )
         route = "method"
         can_route = pcp.is_route_candidate(row, candidate_filter)
-        if can_route and score is not None and float(score) >= float(tau):
+        if not disabled and can_route and score is not None and float(score) >= float(tau):
             route = "baseline"
         final_text = str(row.get("intervention_text", ""))
         final_source = "method"
@@ -135,15 +138,18 @@ def main() -> None:
             }
         )
 
-    evaluation = pcp.evaluate_policy(
-        rows,
-        c_features=c_features,
-        d_features=d_features,
-        family=family,
-        alpha=alpha,
-        tau=tau,
-        candidate_filter=candidate_filter,
-    )
+    if disabled:
+        evaluation = pcp.evaluate_noop_policy(rows)
+    else:
+        evaluation = pcp.evaluate_policy(
+            rows,
+            c_features=c_features,
+            d_features=d_features,
+            family=family,
+            alpha=alpha,
+            tau=tau,
+            candidate_filter=candidate_filter,
+        )
 
     out_dir = os.path.abspath(args.out_dir)
     os.makedirs(out_dir, exist_ok=True)

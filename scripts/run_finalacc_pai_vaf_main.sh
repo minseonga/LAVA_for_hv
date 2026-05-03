@@ -58,6 +58,7 @@ QWEN_MODEL="${QWEN_MODEL:-/home/kms/models/Qwen2.5-VL-7B-Instruct}"
 C_COLS="${C_COLS:-cheap_lp_content_min,cheap_lp_content_std,cheap_entropy_content_mean,cheap_first_target_gap,cheap_target_gap_content_min}"
 D_COLS="${D_COLS:-cheap_decision_candidate_minus_alt,cheap_decision_candidate_prob_binary,cheap_decision_candidate_label_lp,cheap_decision_candidate_kl_uniform}"
 MAX_HELP_RECALL="${MAX_HELP_RECALL:-1.0}"
+ALLOW_NOOP_POLICY="${ALLOW_NOOP_POLICY:-true}"
 ALPHA_GRID="${ALPHA_GRID:-$("$CAL_PY" - <<'PY'
 print(",".join(f"{i/40:.3f}" for i in range(1, 40)))
 PY
@@ -398,6 +399,7 @@ build_policy() {
     --max_baseline_rate 1.0 \
     --min_selected_count 5 \
     --max_help_recall "$MAX_HELP_RECALL" \
+    --allow_noop_policy "$ALLOW_NOOP_POLICY" \
     --candidate_filter changed_answer \
     --out_dir "$out_dir"
 
@@ -576,6 +578,7 @@ echo "APPLY_ROOT=$APPLY_ROOT"
 echo "RAW_GPU=$RAW_GPU FEAT_GPU=$FEAT_GPU"
 echo "DISC_IMG=$DISC_IMG"
 echo "MAX_HELP_RECALL=$MAX_HELP_RECALL"
+echo "ALLOW_NOOP_POLICY=$ALLOW_NOOP_POLICY"
 echo "TARGETS=$TARGETS"
 
 check_file "$CAL/scripts/run_multibackbone_method_prediction.sh"
