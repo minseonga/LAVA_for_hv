@@ -20,6 +20,7 @@ set -euo pipefail
 # Example:
 #   bash scripts/run_finalacc_pai_vaf_main.sh
 #   TARGETS="qwen25_vaf qwen25_pai_attn" FEAT_GPU=2 RAW_GPU=2 bash scripts/run_finalacc_pai_vaf_main.sh
+#   MAX_HELP_RECALL=0.25 TARGETS="qwen25_vaf qwen25_pai_attn" bash scripts/run_finalacc_pai_vaf_main.sh
 
 CAL="${CAL:-/home/kms/LLaVA_calibration}"
 CAL_PY="${CAL_PY:-/home/kms/miniconda3/envs/vga_base/bin/python}"
@@ -53,6 +54,7 @@ QWEN_MODEL="${QWEN_MODEL:-/home/kms/models/Qwen2.5-VL-7B-Instruct}"
 
 C_COLS="${C_COLS:-cheap_lp_content_min,cheap_lp_content_std,cheap_entropy_content_mean,cheap_first_target_gap,cheap_target_gap_content_min}"
 D_COLS="${D_COLS:-cheap_decision_candidate_minus_alt,cheap_decision_candidate_prob_binary,cheap_decision_candidate_label_lp,cheap_decision_candidate_kl_uniform}"
+MAX_HELP_RECALL="${MAX_HELP_RECALL:-1.0}"
 ALPHA_GRID="${ALPHA_GRID:-$("$CAL_PY" - <<'PY'
 print(",".join(f"{i/40:.3f}" for i in range(1, 40)))
 PY
@@ -392,6 +394,7 @@ build_policy() {
     --min_baseline_rate 0.0 \
     --max_baseline_rate 1.0 \
     --min_selected_count 5 \
+    --max_help_recall "$MAX_HELP_RECALL" \
     --candidate_filter changed_answer \
     --out_dir "$out_dir"
 
@@ -565,6 +568,7 @@ echo "CAL=$CAL"
 echo "RUN_ROOT=$RUN_ROOT"
 echo "RAW_GPU=$RAW_GPU FEAT_GPU=$FEAT_GPU"
 echo "DISC_IMG=$DISC_IMG"
+echo "MAX_HELP_RECALL=$MAX_HELP_RECALL"
 echo "TARGETS=$TARGETS"
 
 check_file "$CAL/scripts/run_multibackbone_method_prediction.sh"

@@ -245,6 +245,7 @@ def evaluate_policy(
         "selected_harm_precision": precision,
         "selected_help_precision": base.safe_div(float(selected_help), float(max(1, selected))),
         "selected_harm_recall": recall,
+        "selected_help_recall": base.safe_div(float(selected_help), float(max(1, total_help))),
         "selected_harm_recall_in_scope": base.safe_div(float(selected_harm), float(max(1, route_candidate_harm))),
         "selected_help_recall_in_scope": base.safe_div(float(selected_help), float(max(1, route_candidate_help))),
         "selected_harm_f1": f1,
@@ -315,6 +316,7 @@ def search_family(
     min_selected_count: int,
     min_harm_precision: float,
     min_harm_recall: float,
+    max_help_recall: float,
     candidate_filter: str,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     candidates: List[Dict[str, Any]] = []
@@ -367,6 +369,8 @@ def search_family(
             if float(result["selected_harm_precision"]) < float(min_harm_precision):
                 continue
             if float(result["selected_harm_recall"]) < float(min_harm_recall):
+                continue
+            if float(result["selected_help_recall"]) > float(max_help_recall):
                 continue
             if best is None or selection_key(result, objective, lambda_gain) > selection_key(best, objective, lambda_gain):
                 best = result
@@ -432,6 +436,12 @@ def main() -> None:
         help="Minimum selected_harm / total_harm required during tau/family selection.",
     )
     ap.add_argument(
+        "--max_help_recall",
+        type=float,
+        default=1.0,
+        help="Maximum selected_help / total_help allowed during tau/family selection.",
+    )
+    ap.add_argument(
         "--candidate_filter",
         type=str,
         default="all",
@@ -488,6 +498,7 @@ def main() -> None:
             min_selected_count=int(args.min_selected_count),
             min_harm_precision=float(args.min_harm_precision),
             min_harm_recall=float(args.min_harm_recall),
+            max_help_recall=float(args.max_help_recall),
             candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
@@ -508,6 +519,7 @@ def main() -> None:
             min_selected_count=int(args.min_selected_count),
             min_harm_precision=float(args.min_harm_precision),
             min_harm_recall=float(args.min_harm_recall),
+            max_help_recall=float(args.max_help_recall),
             candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
@@ -528,6 +540,7 @@ def main() -> None:
             min_selected_count=int(args.min_selected_count),
             min_harm_precision=float(args.min_harm_precision),
             min_harm_recall=float(args.min_harm_recall),
+            max_help_recall=float(args.max_help_recall),
             candidate_filter=candidate_filter,
         )
         sweep_rows.extend(cand)
@@ -581,6 +594,7 @@ def main() -> None:
                 "min_selected_count": int(args.min_selected_count),
                 "min_harm_precision": float(args.min_harm_precision),
                 "min_harm_recall": float(args.min_harm_recall),
+                "max_help_recall": float(args.max_help_recall),
                 "candidate_filter": candidate_filter,
             },
             "counts": {

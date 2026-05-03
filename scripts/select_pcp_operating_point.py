@@ -72,6 +72,12 @@ def safe_div(num: float, den: float) -> float:
     return float(num / den) if float(den) != 0.0 else 0.0
 
 
+def help_recall(row: Dict[str, Any]) -> float:
+    selected_help = float(maybe_float(row.get("selected_help")) or 0.0)
+    total_help = float(maybe_float(row.get("total_help")) or 0.0)
+    return safe_div(selected_help, total_help)
+
+
 def gain_preserving_score(row: Dict[str, Any], lambda_gain: float) -> float:
     selected_harm = float(maybe_float(row.get("selected_harm")) or 0.0)
     selected_help = float(maybe_float(row.get("selected_help")) or 0.0)
@@ -154,6 +160,7 @@ def main() -> None:
     ap.add_argument("--min_selected_count", type=int, default=0)
     ap.add_argument("--min_harm_precision", type=float, default=0.0)
     ap.add_argument("--min_harm_recall", type=float, default=0.0)
+    ap.add_argument("--max_help_recall", type=float, default=1.0)
     ap.add_argument("--min_baseline_rate", type=float, default=0.0)
     ap.add_argument("--max_baseline_rate", type=float, default=1.0)
     args = ap.parse_args()
@@ -173,6 +180,8 @@ def main() -> None:
         if float(maybe_float(row.get("selected_harm_precision")) or 0.0) < float(args.min_harm_precision):
             continue
         if float(maybe_float(row.get("selected_harm_recall")) or 0.0) < float(args.min_harm_recall):
+            continue
+        if help_recall(row) > float(args.max_help_recall):
             continue
         baseline_rate = float(maybe_float(row.get("baseline_rate")) or 0.0)
         if baseline_rate < float(args.min_baseline_rate) or baseline_rate > float(args.max_baseline_rate):
@@ -204,6 +213,7 @@ def main() -> None:
         "min_selected_count": int(args.min_selected_count),
         "min_harm_precision": float(args.min_harm_precision),
         "min_harm_recall": float(args.min_harm_recall),
+        "max_help_recall": float(args.max_help_recall),
         "min_baseline_rate": float(args.min_baseline_rate),
         "max_baseline_rate": float(args.max_baseline_rate),
         "n_candidates": int(len(candidates)),
