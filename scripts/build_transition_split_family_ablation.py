@@ -235,10 +235,55 @@ def summarize_variant(
     out_csv: Path,
 ) -> Dict[str, Any]:
     write_csv(out_csv, route_rows)
-    return split_calib.summarize_from_existing_deployment(
+    summary = split_calib.summarize_from_existing_deployment(
         old_deploy=old_deploy,
         route_rows_csv=out_csv,
     )
+    total_harm = sum(int(base.maybe_int(row.get("harm")) or 0) for row in route_rows)
+    total_help = sum(int(base.maybe_int(row.get("help")) or 0) for row in route_rows)
+    selected = [row for row in route_rows if str(row.get("route", "")).strip() == "baseline"]
+    selected_harm = sum(int(base.maybe_int(row.get("harm")) or 0) for row in selected)
+    selected_help = sum(int(base.maybe_int(row.get("help")) or 0) for row in selected)
+    selected_neutral = max(0, len(selected) - selected_harm - selected_help)
+
+    n = int(old_deploy.get("n", 0) or 0)
+    baseline_acc = float(old_deploy.get("baseline_acc", 0.0) or 0.0)
+    intervention_acc_from_rows = baseline_acc + float(total_help - total_harm) / float(n) if n else 0.0
+    pcp_acc_from_rows = intervention_acc_from_rows + float(selected_harm - selected_help) / float(n) if n else 0.0
+
+    stale_intervention_acc = abs(
+        float(old_deploy.get("intervention_acc", intervention_acc_from_rows) or 0.0) - intervention_acc_from_rows
+    ) > 1e-9
+    summary.update(
+        {
+            "baseline_acc": baseline_acc,
+            "intervention_acc": intervention_acc_from_rows,
+            "pcp_deploy_acc": pcp_acc_from_rows,
+            "delta_vs_intervention": pcp_acc_from_rows - intervention_acc_from_rows,
+            "total_harm": int(total_harm),
+            "total_help": int(total_help),
+            "selected_harm": int(selected_harm),
+            "selected_help": int(selected_help),
+            "selected_neutral": int(selected_neutral),
+            "baseline_generated": int(len(selected)),
+            "actual_fallback": int(len(selected)),
+            "flagged_unchanged": int(selected_neutral),
+            "net": int(selected_harm - selected_help),
+        }
+    )
+    if stale_intervention_acc:
+        summary["source_summary_warning"] = (
+            "source deployment_summary intervention_acc does not match rows_csv H/G totals; "
+            "accuracy and H/G metrics were recomputed from rows_csv totals and baseline_acc."
+        )
+        for key in (
+            "intervention_f1",
+            "pcp_deploy_f1",
+            "delta_f1_vs_intervention",
+            "delta_f1_vs_baseline",
+        ):
+            summary[key] = None
+    return summary
 
 
 def metric_value(summary: Dict[str, Any], key: str) -> float:
