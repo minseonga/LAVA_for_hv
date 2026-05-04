@@ -44,8 +44,10 @@ SEED="${SEED:-17}"
 REUSE_IF_EXISTS="${REUSE_IF_EXISTS:-true}"
 
 RUN_RAW="${RUN_RAW:-true}"
+RUN_BASELINES="${RUN_BASELINES:-true}"
 RUN_OURS="${RUN_OURS:-true}"
 RUN_SUMMARY="${RUN_SUMMARY:-true}"
+BASELINE_BACKBONES="${BASELINE_BACKBONES:-llava_next qwen25}"
 
 LLAVA15_MODEL="${LLAVA15_MODEL:-liuhaotian/llava-v1.5-7b}"
 LLAVA_NEXT_MODEL="${LLAVA_NEXT_MODEL:-/home/kms/models/llama3-llava-next-8b}"
@@ -71,6 +73,7 @@ SELECT_MAX_DELTA_CHAIR_I="${SELECT_MAX_DELTA_CHAIR_I:-0.0}"
 SELECT_MAX_DELTA_CHAIR_S="${SELECT_MAX_DELTA_CHAIR_S:-0.0}"
 
 LLAVA15_VGA_SOURCE="${LLAVA15_VGA_SOURCE:-$SOURCE_SPLIT_ROOT}"
+LLAVA15_BASELINE_CHAIR="${LLAVA15_BASELINE_CHAIR:-$LLAVA15_VGA_SOURCE/test/chair_baseline.json}"
 LLAVA15_VGA_RAW_CHAIR="${LLAVA15_VGA_RAW_CHAIR:-$LLAVA15_VGA_SOURCE/test/chair_origin_entropy_simg.json}"
 LLAVA15_VGA_OURS_CSV="${LLAVA15_VGA_OURS_CSV:-$CAL_ROOT/experiments/rapic_generative_v84_valcalib_vga_token_suppression/test_apply_next_token_yesno_yp0.6/summary/chair_v82_object_token_suppression_max8_vocab_first_token_bias-1.0_yp0.6.csv}"
 INCLUDE_EXISTING_LLAVA15_VGA_IN_SUMMARY="${INCLUDE_EXISTING_LLAVA15_VGA_IN_SUMMARY:-true}"
@@ -213,6 +216,98 @@ configure_target() {
   esac
 }
 
+configure_baseline() {
+  local backbone_key="$1"
+  BACKBONE=""
+  METHOD=baseline
+  PRED_BASENAME=pred_baseline_caption.jsonl
+  MODEL_PATH=""
+  CONV_MODE=""
+  EXTRA_ENV=()
+  case "$backbone_key" in
+    llava15)
+      BACKBONE=llava15
+      MODEL_PATH="$LLAVA15_MODEL"
+      CONV_MODE=llava_v1
+      ;;
+    llava_next)
+      BACKBONE=llava_next
+      MODEL_PATH="$LLAVA_NEXT_MODEL"
+      CONV_MODE=llava_llama_3
+      EXTRA_ENV=(LLAVA_NEXT_TORCH_TYPE="$LLAVA_NEXT_TORCH_TYPE" LLAVA_NEXT_ATTN_IMPLEMENTATION="$LLAVA_NEXT_ATTN_IMPLEMENTATION")
+      ;;
+    qwen25)
+      BACKBONE=qwen25_vl
+      MODEL_PATH="$QWEN25_MODEL"
+      CONV_MODE=llava_v1
+      EXTRA_ENV=(VGA_TORCH_TYPE="$QWEN25_TORCH_TYPE" VGA_ATTN_TYPE="$QWEN25_ATTN_TYPE" QWEN25_DEVICE_MAP="$QWEN25_DEVICE_MAP" QWEN25_MODEL_BACKEND=official)
+      ;;
+    *)
+      echo "[error] unknown baseline backbone: $backbone_key" >&2
+      exit 2
+      ;;
+  esac
+}
+
+run_raw_baseline_split() {
+  local backbone_key="$1"
+  local split="$2"
+  configure_baseline "$backbone_key"
+
+  local target="baseline_${backbone_key}"
+  local source_dir="$RAW_ROOT/$target"
+  copy_limited_split "$split" "$source_dir"
+  mkdir -p "$source_dir/$split"
+  local q="$source_dir/splits/${split}_caption_q_limited${SOURCE_LIMIT}.jsonl"
+  local pred="$source_dir/$split/$PRED_BASENAME"
+  local chair="$source_dir/$split/chair_${target}.json"
+  local chair_input="$source_dir/$split/chair_input_${target}.jsonl"
+  local log="$source_dir/$split/run_${target}.log"
+
+  if reuse_file "$chair"; then
+    echo "[reuse] $chair"
+    return
+  fi
+
+  echo "== raw $target/$split -> $pred"
+  env \
+    GPU="$RAW_GPU" \
+    CUDA_VISIBLE_DEVICES="$RAW_GPU" \
+    PYTHONPATH="$CAL_ROOT:${PYTHONPATH:-}" \
+    CAL_ROOT="$CAL_ROOT" \
+    VGA_ROOT="$VGA_ROOT" \
+    PAI_ROOT="$PAI_ROOT" \
+    LLAVA_NEXT_ROOT="$LLAVA_NEXT_ROOT" \
+    CLEARSIGHT_ROOT="$CLEARSIGHT_ROOT" \
+    EAZY_ROOT="$EAZY_ROOT" \
+    CAL_PYTHON_BIN="$CAL_PYTHON_BIN" \
+    VGA_PYTHON_BIN="$VGA_PYTHON_BIN" \
+    LLAVA_NEXT_PYTHON_BIN="$LLAVA_NEXT_PYTHON_BIN" \
+    QWEN25_PYTHON_BIN="$QWEN25_PYTHON_BIN" \
+    PAI_PYTHON_BIN="$PAI_PYTHON_BIN" \
+    EAZY_PYTHON_BIN="$EAZY_PYTHON_BIN" \
+    TASK=chair \
+    BACKBONE="$BACKBONE" \
+    METHOD=baseline \
+    OUT_ROOT="$source_dir/$split" \
+    MODEL_PATH="$MODEL_PATH" \
+    IMAGE_FOLDER="$IMAGE_FOLDER" \
+    QUESTION_FILE="$q" \
+    PRED_JSONL="$pred" \
+    METRICS_JSON="$chair" \
+    CHAIR_INPUT_JSONL="$chair_input" \
+    COCO_ANN_ROOT="$COCO_ANN_ROOT" \
+    CHAIR_CACHE="$CHAIR_CACHE" \
+    MAX_NEW_TOKENS="$MAX_NEW_TOKENS" \
+    LIMIT=0 \
+    CONV_MODE="$CONV_MODE" \
+    SEED="$SEED" \
+    REUSE_IF_EXISTS="$REUSE_IF_EXISTS" \
+    "${EXTRA_ENV[@]}" \
+    bash "$CAL_ROOT/scripts/run_multibackbone_method_prediction.sh" \
+    2>&1 | tee "$log"
+}
+
 run_raw_target_split() {
   local target="$1"
   local split="$2"
@@ -326,7 +421,16 @@ run_ours_target() {
 echo "[settings] out=$OUT_ROOT"
 echo "[settings] source_split_root=$SOURCE_SPLIT_ROOT"
 echo "[settings] targets=$TARGETS"
+echo "[settings] baseline_backbones=$BASELINE_BACKBONES run_baselines=$RUN_BASELINES"
 echo "[settings] raw_gpu=$RAW_GPU ours_gpu=$OURS_GPU"
+
+if [[ "$RUN_BASELINES" == "true" ]]; then
+  for backbone_key in $BASELINE_BACKBONES; do
+    for split in $SPLITS; do
+      run_raw_baseline_split "$backbone_key" "$split"
+    done
+  done
+fi
 
 if [[ "$RUN_RAW" == "true" ]]; then
   for target in $TARGETS; do
@@ -344,6 +448,15 @@ fi
 
 if [[ "$RUN_SUMMARY" == "true" ]]; then
   summary_args=()
+  if [[ -f "$LLAVA15_BASELINE_CHAIR" ]]; then
+    summary_args+=(--baseline_entry "llava15::$LLAVA15_BASELINE_CHAIR")
+  fi
+  if [[ -f "$RAW_ROOT/baseline_llava_next/test/chair_baseline_llava_next.json" ]]; then
+    summary_args+=(--baseline_entry "llava_next::$RAW_ROOT/baseline_llava_next/test/chair_baseline_llava_next.json")
+  fi
+  if [[ -f "$RAW_ROOT/baseline_qwen25/test/chair_baseline_qwen25.json" ]]; then
+    summary_args+=(--baseline_entry "qwen25::$RAW_ROOT/baseline_qwen25/test/chair_baseline_qwen25.json")
+  fi
   if [[ "$INCLUDE_EXISTING_LLAVA15_VGA_IN_SUMMARY" == "true" && -f "$LLAVA15_VGA_RAW_CHAIR" ]]; then
     existing="llava15_vga::VGA / LLaVA-1.5::$LLAVA15_VGA_RAW_CHAIR"
     if [[ -f "$LLAVA15_VGA_OURS_CSV" ]]; then
@@ -358,6 +471,7 @@ if [[ "$RUN_SUMMARY" == "true" ]]; then
     --raw_root "$RAW_ROOT" \
     --ours_root "$OURS_ROOT" \
     "${summary_args[@]}" \
+    --delta_metric CHAIRi \
     --out_csv "$SUMMARY_DIR/chair_multibackbone_method_ours_panel.csv" \
     --out_md "$SUMMARY_DIR/chair_multibackbone_method_ours_panel.md"
 fi

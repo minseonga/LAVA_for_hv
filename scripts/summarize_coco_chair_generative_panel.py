@@ -22,6 +22,12 @@ TARGETS: Dict[str, Tuple[str, str]] = {
     "qwen25_vaf": ("Qwen2.5-VL", "VAF"),
 }
 
+BACKBONE_TO_BASELINE_KEY = {
+    "LLaVA-1.5": "llava15",
+    "LLaVA-NeXT": "llava_next",
+    "Qwen2.5-VL": "qwen25",
+}
+
 
 def normalize_rate(value: Any) -> float:
     try:
@@ -54,6 +60,16 @@ def compute_object_pr(sentences: List[Dict[str, Any]]) -> Tuple[Optional[float],
     return n_supported_unique / n_generated_unique, n_supported_unique / n_gt_objects
 
 
+def sentence_image_id(row: Dict[str, Any]) -> str:
+    value = str(row.get("image_id", "")).strip()
+    if value:
+        try:
+            return str(int(value))
+        except Exception:
+            return value
+    return ""
+
+
 def load_chair_json(path: Path) -> Tuple[Dict[str, float], int]:
     obj = json.load(open(path, "r", encoding="utf-8"))
     overall = obj.get("overall_metrics", {})
@@ -83,6 +99,51 @@ def load_chair_json(path: Path) -> Tuple[Dict[str, float], int]:
     )
 
 
+def load_sentence_metric_map(path: Path, metric: str) -> Dict[str, float]:
+    obj = json.load(open(path, "r", encoding="utf-8"))
+    out: Dict[str, float] = {}
+    for row in obj.get("sentences", []):
+        image_id = sentence_image_id(row)
+        if not image_id:
+            continue
+        metrics = row.get("metrics", {})
+        if metric not in metrics:
+            continue
+        try:
+            out[image_id] = float(metrics[metric])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def chair_delta_counts(baseline_path: Path, target_path: Path, metric: str, eps: float) -> Dict[str, Any]:
+    base = load_sentence_metric_map(baseline_path, metric)
+    target = load_sentence_metric_map(target_path, metric)
+    common = sorted(set(base) & set(target))
+    harm = 0
+    gain = 0
+    neutral = 0
+    utility = 0.0
+    for image_id in common:
+        delta = float(base[image_id]) - float(target[image_id])
+        utility += delta
+        if delta > float(eps):
+            gain += 1
+        elif delta < -float(eps):
+            harm += 1
+        else:
+            neutral += 1
+    return {
+        "delta_metric": metric,
+        "delta_n": len(common),
+        "harm": harm,
+        "gain": gain,
+        "neutral": neutral,
+        "net": gain - harm,
+        "mean_utility": utility / max(1, len(common)),
+    }
+
+
 def load_ours_csv(path: Path) -> Tuple[Dict[str, float], int]:
     rows = list(csv.DictReader(open(path, "r", encoding="utf-8")))
     chosen = None
@@ -105,6 +166,16 @@ def load_ours_csv(path: Path) -> Tuple[Dict[str, float], int]:
     )
 
 
+def load_ours_chair_json(path: Path) -> Optional[Path]:
+    rows = list(csv.DictReader(open(path, "r", encoding="utf-8")))
+    for row in rows:
+        if row.get("method") == "object_token_suppression":
+            chair_json = str(row.get("chair_json", "")).strip()
+            if chair_json:
+                return Path(chair_json).expanduser().resolve()
+    return None
+
+
 def latest_match(pattern: str) -> Optional[Path]:
     paths = [Path(p) for p in glob.glob(pattern)]
     paths = [p for p in paths if p.is_file()]
@@ -122,7 +193,26 @@ def parse_existing(spec: str) -> Tuple[str, str, Path, Optional[Path]]:
     return target.strip(), label.strip(), Path(raw).expanduser().resolve(), ours
 
 
-def add_metric_row(rows: List[Dict[str, Any]], *, target: str, backbone: str, method: str, variant: str, metrics: Dict[str, float], n: int, source: Path) -> None:
+def parse_baseline_entry(spec: str) -> Tuple[str, Path]:
+    parts = spec.split("::", 1)
+    if len(parts) != 2:
+        raise ValueError("baseline entry must be baseline_key::chair_json")
+    return parts[0].strip(), Path(parts[1]).expanduser().resolve()
+
+
+def add_metric_row(
+    rows: List[Dict[str, Any]],
+    *,
+    target: str,
+    backbone: str,
+    method: str,
+    variant: str,
+    metrics: Dict[str, float],
+    n: int,
+    source: Path,
+    delta: Optional[Dict[str, Any]] = None,
+) -> None:
+    delta = delta or {}
     rows.append(
         {
             "target": target,
@@ -130,6 +220,12 @@ def add_metric_row(rows: List[Dict[str, Any]], *, target: str, backbone: str, me
             "Method": method if variant == "raw" else f"Ours ({method})",
             "Variant": variant,
             "n": n,
+            "Harm": int(delta.get("harm", 0)),
+            "Gain": int(delta.get("gain", 0)),
+            "Neutral": int(delta.get("neutral", 0)),
+            "Net": int(delta.get("net", 0)),
+            "delta_n": int(delta.get("delta_n", 0)),
+            "mean_utility": float(delta.get("mean_utility", 0.0)),
             "CHAIRs": metrics["CHAIRs"],
             "CHAIRi": metrics["CHAIRi"],
             "Recall": metrics["Recall"],
@@ -147,7 +243,26 @@ def fmt_pct(value: Any) -> str:
 
 def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    cols = ["target", "Backbone", "Method", "Variant", "n", "CHAIRs", "CHAIRi", "Recall", "Precision", "F1", "Len", "source"]
+    cols = [
+        "target",
+        "Backbone",
+        "Method",
+        "Variant",
+        "n",
+        "Harm",
+        "Gain",
+        "Neutral",
+        "Net",
+        "delta_n",
+        "mean_utility",
+        "CHAIRs",
+        "CHAIRi",
+        "Recall",
+        "Precision",
+        "F1",
+        "Len",
+        "source",
+    ]
     with open(path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=cols)
         writer.writeheader()
@@ -157,12 +272,13 @@ def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
 def write_md(path: Path, rows: List[Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "| Backbone | Method | Variant | CHAIRs ↓ | CHAIRi ↓ | Recall ↑ | Precision ↑ | F1 ↑ | n |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Backbone | Method | Variant | H/G/Net | CHAIRs ↓ | CHAIRi ↓ | Recall ↑ | Precision ↑ | F1 ↑ | n |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
             f"| {row['Backbone']} | {row['Method']} | {row['Variant']} | "
+            f"{row['Harm']}/{row['Gain']}/{row['Net']} | "
             f"{fmt_pct(row['CHAIRs'])} | {fmt_pct(row['CHAIRi'])} | {fmt_pct(row['Recall'])} | "
             f"{fmt_pct(row['Precision'])} | {fmt_pct(row['F1'])} | {row['n']} |"
         )
@@ -175,6 +291,9 @@ def main() -> None:
     ap.add_argument("--ours_root", required=True)
     ap.add_argument("--target", action="append", default=[])
     ap.add_argument("--existing_entry", action="append", default=[], help="target::label::raw_chair_json[::ours_csv]")
+    ap.add_argument("--baseline_entry", action="append", default=[], help="baseline_key::chair_json, e.g. llava_next::/path/chair.json")
+    ap.add_argument("--delta_metric", default="CHAIRi")
+    ap.add_argument("--epsilon", type=float, default=1e-12)
     ap.add_argument("--out_csv", required=True)
     ap.add_argument("--out_md", required=True)
     args = ap.parse_args()
@@ -182,6 +301,10 @@ def main() -> None:
     raw_root = Path(args.raw_root).expanduser().resolve()
     ours_root = Path(args.ours_root).expanduser().resolve()
     targets = args.target or list(TARGETS)
+    baseline_paths: Dict[str, Path] = {}
+    for spec in args.baseline_entry:
+        key, path = parse_baseline_entry(spec)
+        baseline_paths[key] = path
 
     rows: List[Dict[str, Any]] = []
     seen_existing: set[str] = set()
@@ -192,10 +315,18 @@ def main() -> None:
         if " / " in label:
             method, backbone = label.split(" / ", 1)
         metrics, n = load_chair_json(raw_path)
-        add_metric_row(rows, target=target, backbone=backbone, method=method, variant="raw", metrics=metrics, n=n, source=raw_path)
+        baseline = baseline_paths.get(BACKBONE_TO_BASELINE_KEY.get(backbone, ""))
+        delta = chair_delta_counts(baseline, raw_path, args.delta_metric, args.epsilon) if baseline and baseline.exists() else None
+        add_metric_row(rows, target=target, backbone=backbone, method=method, variant="raw", metrics=metrics, n=n, source=raw_path, delta=delta)
         if ours_csv is not None and ours_csv.exists():
             metrics, n = load_ours_csv(ours_csv)
-            add_metric_row(rows, target=target, backbone=backbone, method=method, variant="ours", metrics=metrics, n=n, source=ours_csv)
+            ours_chair = load_ours_chair_json(ours_csv)
+            delta = (
+                chair_delta_counts(baseline, ours_chair, args.delta_metric, args.epsilon)
+                if baseline and baseline.exists() and ours_chair and ours_chair.exists()
+                else None
+            )
+            add_metric_row(rows, target=target, backbone=backbone, method=method, variant="ours", metrics=metrics, n=n, source=ours_csv, delta=delta)
         seen_existing.add(target)
 
     missing: List[str] = []
@@ -207,16 +338,24 @@ def main() -> None:
             continue
         backbone, method = TARGETS[target]
         raw_path = raw_root / target / "test" / f"chair_{target}.json"
+        baseline = baseline_paths.get(BACKBONE_TO_BASELINE_KEY.get(backbone, ""))
         if raw_path.exists():
             metrics, n = load_chair_json(raw_path)
-            add_metric_row(rows, target=target, backbone=backbone, method=method, variant="raw", metrics=metrics, n=n, source=raw_path)
+            delta = chair_delta_counts(baseline, raw_path, args.delta_metric, args.epsilon) if baseline and baseline.exists() else None
+            add_metric_row(rows, target=target, backbone=backbone, method=method, variant="raw", metrics=metrics, n=n, source=raw_path, delta=delta)
         else:
             missing.append(f"{target}: missing raw {raw_path}")
 
         ours_csv = latest_match(str(ours_root / target / "test_apply_*" / "summary" / "*.csv"))
         if ours_csv is not None:
             metrics, n = load_ours_csv(ours_csv)
-            add_metric_row(rows, target=target, backbone=backbone, method=method, variant="ours", metrics=metrics, n=n, source=ours_csv)
+            ours_chair = load_ours_chair_json(ours_csv)
+            delta = (
+                chair_delta_counts(baseline, ours_chair, args.delta_metric, args.epsilon)
+                if baseline and baseline.exists() and ours_chair and ours_chair.exists()
+                else None
+            )
+            add_metric_row(rows, target=target, backbone=backbone, method=method, variant="ours", metrics=metrics, n=n, source=ours_csv, delta=delta)
         else:
             missing.append(f"{target}: missing ours under {ours_root / target}")
 
