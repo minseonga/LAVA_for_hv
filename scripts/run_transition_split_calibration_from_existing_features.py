@@ -250,6 +250,10 @@ def build_direction_policy(
     direction: str,
     min_selected_count: int,
     allow_noop_policy: bool,
+    tau_objective: Optional[str],
+    lambda_gain: Optional[float],
+    min_harm_precision: Optional[float],
+    min_harm_recall: Optional[float],
     max_help_recall: float,
 ) -> None:
     if (out_dir / "selected_policy.json").exists():
@@ -294,7 +298,9 @@ def build_direction_policy(
         "--alpha_grid",
         ",".join(str(x) for x in (inputs.get("alpha_grid") or [])),
         "--tau_objective",
-        str(inputs.get("tau_objective", "final_acc")),
+        str(tau_objective or inputs.get("tau_objective", "final_acc")),
+        "--lambda_gain",
+        str(float(lambda_gain) if lambda_gain is not None else inputs.get("lambda_gain", 1.0)),
         "--min_baseline_rate",
         str(inputs.get("min_baseline_rate", 0.0)),
         "--max_baseline_rate",
@@ -302,9 +308,9 @@ def build_direction_policy(
         "--min_selected_count",
         str(min_selected_count),
         "--min_harm_precision",
-        str(inputs.get("min_harm_precision", 0.0)),
+        str(float(min_harm_precision) if min_harm_precision is not None else inputs.get("min_harm_precision", 0.0)),
         "--min_harm_recall",
-        str(inputs.get("min_harm_recall", 0.0)),
+        str(float(min_harm_recall) if min_harm_recall is not None else inputs.get("min_harm_recall", 0.0)),
         "--max_help_recall",
         str(max_help_recall),
         "--allow_noop_policy",
@@ -556,6 +562,30 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--min_selected_count", type=int, default=int(os.environ.get("MIN_SELECTED_COUNT", "5")))
     ap.add_argument("--max_help_recall", type=float, default=float(os.environ.get("MAX_HELP_RECALL", "1.0")))
     ap.add_argument(
+        "--tau_objective",
+        choices=["final_acc", "net", "harm_precision", "harm_recall", "harm_f1", "gain_preserving_harm_recall"],
+        default=os.environ.get("TAU_OBJECTIVE", "") or None,
+        help="Override the discovery threshold/family selection objective. Default reuses the source policy objective.",
+    )
+    ap.add_argument(
+        "--lambda_gain",
+        type=float,
+        default=(float(os.environ["LAMBDA_GAIN"]) if os.environ.get("LAMBDA_GAIN") else None),
+        help="Penalty for tau_objective=gain_preserving_harm_recall.",
+    )
+    ap.add_argument(
+        "--min_harm_precision",
+        type=float,
+        default=(float(os.environ["MIN_HARM_PRECISION"]) if os.environ.get("MIN_HARM_PRECISION") else None),
+        help="Override minimum selected harm precision during discovery selection.",
+    )
+    ap.add_argument(
+        "--min_harm_recall",
+        type=float,
+        default=(float(os.environ["MIN_HARM_RECALL"]) if os.environ.get("MIN_HARM_RECALL") else None),
+        help="Override minimum selected harm recall during discovery selection.",
+    )
+    ap.add_argument(
         "--allow_noop_policy",
         default=os.environ.get("ALLOW_NOOP_POLICY", "true").lower() in {"1", "true", "yes", "y", "on"},
         action=argparse.BooleanOptionalAction,
@@ -604,6 +634,10 @@ def main() -> None:
                 direction=direction,
                 min_selected_count=int(args.min_selected_count),
                 allow_noop_policy=bool(args.allow_noop_policy),
+                tau_objective=args.tau_objective,
+                lambda_gain=args.lambda_gain,
+                min_harm_precision=args.min_harm_precision,
+                min_harm_recall=args.min_harm_recall,
                 max_help_recall=float(args.max_help_recall),
             )
             built.add(key)
