@@ -259,7 +259,48 @@ Feature-transfer diagnostic:
 | decision prob delta | 0.665 | 0.418 | 0.582 |
 | content lp mean delta | 0.649 | 0.377 | 0.623 |
 
-Use this as failure analysis if pairwise panel is inconsistent.
+Full pairwise replay panel:
+
+| Method / Backbone | Dataset | Base | Method | Pairwise RaPiC | dMethod | dBase | Fallback | H/G/Net | Hrec | Grec |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| PAI-attn / LLaVA-1.5 | MSCOCO | 85.22 | 83.99 | 85.78 | +1.79 | +0.56 | 455 | 308/147/161 | 71.63 | 46.08 |
+| PAI-attn / LLaVA-1.5 | AOKVQA | 78.98 | 77.04 | 78.90 | +1.86 | -0.08 | 329 | 248/81/167 | 62.78 | 36.65 |
+| PAI-attn / LLaVA-1.5 | GQA | 76.61 | 75.06 | 77.27 | +2.21 | +0.66 | 375 | 287/88/199 | 82.00 | 41.90 |
+| VAF / LLaVA-1.5 | MSCOCO | 85.22 | 86.47 | 86.50 | +0.03 | +1.28 | 441 | 222/219/3 | 58.27 | 44.42 |
+| VAF / LLaVA-1.5 | AOKVQA | 78.98 | 81.32 | 82.02 | +0.70 | +3.04 | 325 | 194/131/63 | 54.34 | 23.06 |
+| VAF / LLaVA-1.5 | GQA | 76.61 | 80.58 | 80.82 | +0.24 | +4.21 | 256 | 139/117/22 | 47.12 | 17.94 |
+| PAI-attn / LLaVA-NeXT | MSCOCO | 89.17 | 89.38 | 89.28 | -0.10 | +0.11 | 31 | 11/20/-9 | 26.83 | 33.33 |
+| PAI-attn / LLaVA-NeXT | AOKVQA | 85.23 | 85.64 | 85.43 | -0.21 | +0.20 | 53 | 17/36/-19 | 38.64 | 44.44 |
+| PAI-attn / LLaVA-NeXT | GQA | 83.19 | 83.67 | 83.51 | -0.16 | +0.32 | 52 | 19/33/-14 | 61.29 | 44.59 |
+| VAF / LLaVA-NeXT | MSCOCO | 89.17 | 88.22 | 88.84 | +0.62 | -0.32 | 284 | 170/114/56 | 69.67 | 71.70 |
+| VAF / LLaVA-NeXT | AOKVQA | 85.23 | 82.54 | 84.59 | +2.04 | -0.64 | 274 | 229/45/184 | 77.36 | 83.33 |
+| VAF / LLaVA-NeXT | GQA | 83.19 | 80.16 | 82.66 | +2.50 | -0.53 | 297 | 261/36/225 | 79.09 | 63.16 |
+| PAI-attn / Qwen2.5-VL-7B | MSCOCO | 83.77 | 83.79 | 83.77 | -0.02 | +0.00 | 40 | 19/21/-2 | 100.00 | 100.00 |
+| PAI-attn / Qwen2.5-VL-7B | AOKVQA | 85.00 | 85.26 | 85.00 | -0.26 | +0.00 | 89 | 33/56/-23 | 100.00 | 100.00 |
+| PAI-attn / Qwen2.5-VL-7B | GQA | 84.96 | 85.33 | 84.96 | -0.38 | +0.00 | 122 | 44/78/-34 | 100.00 | 100.00 |
+| VAF / Qwen2.5-VL-7B | MSCOCO | 83.77 | 85.21 | 83.77 | -1.44 | +0.00 | 224 | 47/177/-130 | 100.00 | 100.00 |
+| VAF / Qwen2.5-VL-7B | AOKVQA | 85.00 | 86.24 | 85.00 | -1.24 | +0.00 | 284 | 86/198/-112 | 100.00 | 100.00 |
+| VAF / Qwen2.5-VL-7B | GQA | 84.96 | 87.03 | 84.96 | -2.08 | +0.00 | 345 | 79/266/-187 | 100.00 | 100.00 |
+| VGA / LLaVA-1.5 | MSCOCO | 85.22 | 84.74 | 85.16 | +0.41 | -0.07 | 415 | 226/189/37 | 65.32 | 40.13 |
+| VGA / LLaVA-1.5 | AOKVQA | 78.98 | 81.04 | 80.97 | -0.08 | +1.99 | 505 | 249/256/-7 | 78.06 | 50.69 |
+| VGA / LLaVA-1.5 | GQA | 76.61 | 80.08 | 78.43 | -1.64 | +1.82 | 512 | 182/330/-148 | 70.82 | 58.00 |
+| VGA / LLaVA-NeXT | MSCOCO | 89.17 | 89.68 | 89.84 | +0.17 | +0.68 | 119 | 67/52/15 | 47.18 | 27.66 |
+| VGA / LLaVA-NeXT | AOKVQA | 85.23 | 85.96 | 86.39 | +0.43 | +1.16 | 117 | 78/39/39 | 47.56 | 17.03 |
+| VGA / LLaVA-NeXT | GQA | 83.19 | 84.70 | 85.11 | +0.41 | +1.92 | 153 | 95/58/37 | 53.37 | 18.47 |
+| VGA / Qwen2.5-VL-7B | MSCOCO | 83.77 | 82.89 | 83.68 | +0.79 | -0.09 | 81 | 76/5/71 | 71.03 | 17.86 |
+| VGA / Qwen2.5-VL-7B | AOKVQA | 85.00 | 84.88 | 85.42 | +0.54 | +0.42 | 103 | 76/27/49 | 75.25 | 30.00 |
+| VGA / Qwen2.5-VL-7B | GQA | 84.96 | 85.08 | 85.24 | +0.17 | +0.29 | 31 | 23/8/15 | 40.35 | 11.76 |
+
+Interpretation:
+
+- Pairwise replay is not a uniformly better main controller.
+- It helps PAI-attn / LLaVA-1.5 and some VGA settings.
+- It hurts PAI-attn / LLaVA-NeXT, Qwen PAI/VAF, and VGA / LLaVA-1.5 on
+  AOKVQA/GQA.
+- It improves VAF / LLaVA-NeXT over the intervention but still does not recover
+  the baseline, so it does not solve the calibration mismatch.
+- Therefore pairwise replay should be reported as an appendix diagnostic and
+  possible future extension, not as the main RaPiC method.
 
 ## 3. Method: RaPiC
 
@@ -722,18 +763,18 @@ Pairwise replay exposes additional evidence but requires stable calibration.
 
 ## 8. Immediate Writing Tasks
 
-1. Freeze the main discriminative table after the pairwise panel finishes.
-2. Decide whether pairwise replay is:
-   - main method extension, if broadly positive;
-   - appendix diagnostic, if inconsistent.
+1. Freeze the main discriminative table around transition-split RaPiC.
+2. Keep pairwise replay as an appendix diagnostic rather than the main
+   controller, because the full panel is mixed.
 3. Write Analysis section first using harm/help/transition statistics.
-4. Write Method with transition-split RaPiC as the main protocol.
+4. Write Method with transition-split RaPiC as the main discriminative protocol.
 5. Add generative CHAIR as a clean validation-calibrated result.
-6. Move all test-calibrated or oracle results to appendix diagnostics.
+6. Move all test-calibrated, oracle, and pairwise-delta variants to appendix
+   diagnostics unless a later version adds an explicit stability criterion.
 
 ## 9. Current Recommendation
 
-Until the pairwise panel finishes, the safest main method is:
+Given the completed pairwise panel, the safest main method is:
 
 ```text
 Transition-split RaPiC with intervention-answer replay features.
@@ -749,14 +790,7 @@ NeXT/Qwen failure cases are analyzed as calibration mismatch and abstention
 boundaries.
 ```
 
-If the pairwise panel improves most method/backbone settings, revise Method to:
-
-```text
-Transition-split RaPiC with replay support features, including optional
-baseline-vs-intervention pairwise replay deltas.
-```
-
-If pairwise only helps selected cases, keep it in Analysis/Appendix:
+Pairwise only helps selected cases, so keep it in Analysis/Appendix:
 
 ```text
 Pairwise replay provides evidence that stronger visual support signals can
