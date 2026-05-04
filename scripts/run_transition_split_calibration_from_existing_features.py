@@ -383,19 +383,28 @@ def format_policy_pair(yes_policy: Dict[str, Any], no_policy: Dict[str, Any]) ->
 
 def format_table(rows: List[Dict[str, Any]]) -> str:
     lines = [
-        "| Method / Backbone | Dataset | Policies | Base | Method | Split-Calib RaPiC | dMethod | dBase | Fallback | H/G/Net | Hrec | Grec |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Method / Backbone | Dataset | Policies | Base | Method | Split-Calib RaPiC | dMethod | dBase | Method H/G/Net | Fallback H/G/Net | Final H/G/Net | Fallback | Hrec | Grec |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         d = row["deployment"]
         hrec = float(d["selected_harm"]) / float(d["total_harm"]) if int(d["total_harm"]) else 0.0
         grec = float(d["selected_help"]) / float(d["total_help"]) if int(d["total_help"]) else 0.0
+        method_h = int(d["total_harm"])
+        method_g = int(d["total_help"])
+        fallback_h = int(d["selected_harm"])
+        fallback_g = int(d["selected_help"])
+        final_h = method_h - fallback_h
+        final_g = method_g - fallback_g
         lines.append(
             f"| {row['label']} | {row['dataset']} | {row['policies']} | "
             f"{100*float(d['baseline_acc']):.2f} | {100*float(d['intervention_acc']):.2f} | "
             f"{100*float(d['pcp_deploy_acc']):.2f} | {100*float(d['delta_vs_intervention']):+.2f} | "
             f"{100*(float(d['pcp_deploy_acc']) - float(d['baseline_acc'])):+.2f} | "
-            f"{d['baseline_generated']} | {d['selected_harm']}/{d['selected_help']}/{d['net']} | "
+            f"{method_h}/{method_g}/{method_h - method_g} | "
+            f"{fallback_h}/{fallback_g}/{fallback_h - fallback_g} | "
+            f"{final_h}/{final_g}/{final_h - final_g} | "
+            f"{d['baseline_generated']} | "
             f"{100*hrec:.2f} | {100*grec:.2f} |"
         )
     return "\n".join(lines)
