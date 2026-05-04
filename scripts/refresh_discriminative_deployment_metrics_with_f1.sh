@@ -70,7 +70,7 @@ method_pred_path() {
   local target="$1"
   local dataset="$2"
   if [[ "$target" == "vga_llava15" && "$dataset" == "mscoco" ]]; then
-    echo "${VGA_LLAVA15_MSCOCO_PRED:-$CAL/experiments/pope_full_9000/stage_b_signal_validation_vga/pred_vga.jsonl}"
+    echo "${VGA_LLAVA15_MSCOCO_PRED:-$CAL/experiments/pope_full_9000/all_models_full_strict/vga/pred_vga_9000.jsonl}"
   elif [[ "$target" == "vga_llava15" && "$dataset" == "aokvqa" ]]; then
     echo "$CAL/experiments/paper_raw/pope_transfer_llava15_mscoco_policy/aokvqa/llava15_7b/vga_full9000/pred_vga.jsonl"
   elif [[ "$target" == "vga_llava15" && "$dataset" == "gqa" ]]; then
