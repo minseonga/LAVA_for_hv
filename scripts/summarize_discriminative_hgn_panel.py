@@ -59,8 +59,25 @@ def as_float(obj: Any, key: str) -> float:
         return 0.0
 
 
+def maybe_float(obj: Any, key: str) -> Optional[float]:
+    try:
+        value = obj.get(key)
+        if value is None or str(value).strip() == "":
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
 def pct(value: float) -> str:
     return f"{100.0 * float(value):.2f}"
+
+
+def maybe_pct(value: Optional[float], *, signed: bool = False) -> str:
+    if value is None:
+        return ""
+    out = 100.0 * float(value)
+    return f"{out:+.2f}" if signed else f"{out:.2f}"
 
 
 def signed_pct(value: float) -> str:
@@ -145,6 +162,11 @@ def build_row(path: Path, explicit_run_root: Optional[Path] = None) -> Dict[str,
     base = as_float(d, "baseline_acc")
     method = as_float(d, "intervention_acc")
     ours = as_float(d, "pcp_deploy_acc")
+    base_f1 = maybe_float(d, "baseline_f1")
+    method_f1 = maybe_float(d, "intervention_f1")
+    ours_f1 = maybe_float(d, "pcp_deploy_f1")
+    delta_f1_vs_method = None if method_f1 is None or ours_f1 is None else float(ours_f1 - method_f1)
+    delta_f1_vs_base = None if base_f1 is None or ours_f1 is None else float(ours_f1 - base_f1)
 
     return {
         "target": target,
@@ -156,6 +178,11 @@ def build_row(path: Path, explicit_run_root: Optional[Path] = None) -> Dict[str,
         "ours_acc": ours,
         "delta_vs_method": ours - method,
         "delta_vs_baseline": ours - base,
+        "baseline_f1": base_f1,
+        "method_f1": method_f1,
+        "ours_f1": ours_f1,
+        "delta_f1_vs_method": delta_f1_vs_method,
+        "delta_f1_vs_baseline": delta_f1_vs_base,
         "method_harm": total_h,
         "method_gain": total_g,
         "method_net_h_minus_g": total_h - total_g,
@@ -181,14 +208,17 @@ def sort_key(row: Dict[str, Any]) -> Tuple[str, int, str]:
 
 def markdown(rows: Sequence[Dict[str, Any]]) -> str:
     lines = [
-        "| Method / Backbone | Dataset | Policies | Base | Method | Ours | dMethod | dBase | Method H/G/Net | Fallback H/G/Net | Final H/G/Net | Fallback | Hrec | Grec |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Method / Backbone | Dataset | Policies | Base Acc | Method Acc | Ours Acc | dMethod Acc | dBase Acc | Base F1 | Method F1 | Ours F1 | dMethod F1 | dBase F1 | Method H/G/Net | Fallback H/G/Net | Final H/G/Net | Fallback | Hrec | Grec |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
             f"| {row['method_backbone']} | {row['dataset']} | {row.get('policies') or ''} | "
             f"{pct(row['baseline_acc'])} | {pct(row['method_acc'])} | {pct(row['ours_acc'])} | "
             f"{signed_pct(row['delta_vs_method'])} | {signed_pct(row['delta_vs_baseline'])} | "
+            f"{maybe_pct(row.get('baseline_f1'))} | {maybe_pct(row.get('method_f1'))} | "
+            f"{maybe_pct(row.get('ours_f1'))} | {maybe_pct(row.get('delta_f1_vs_method'), signed=True)} | "
+            f"{maybe_pct(row.get('delta_f1_vs_baseline'), signed=True)} | "
             f"{hgn(int(row['method_harm']), int(row['method_gain']))} | "
             f"{hgn(int(row['fallback_harm']), int(row['fallback_gain']))} | "
             f"{hgn(int(row['final_harm']), int(row['final_gain']))} | "

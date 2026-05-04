@@ -106,10 +106,21 @@ def main() -> None:
         if route == "baseline":
             final_text = str(row.get("baseline_text", "")) or final_text
             final_source = "baseline_cached" if str(row.get("baseline_text", "")).strip() else "method_missing_baseline"
+        baseline_label = str(row.get("baseline_label", "")).strip().lower()
+        intervention_label = str(row.get("intervention_label", "")).strip().lower()
+        if baseline_label not in {"yes", "no"}:
+            baseline_label = pcp.parse_yes_no(row.get("baseline_text", ""))
+        if intervention_label not in {"yes", "no"}:
+            intervention_label = pcp.parse_yes_no(row.get("intervention_text", ""))
+        final_label = baseline_label if route == "baseline" else intervention_label
         route_row = {
             "id": str(row.get("id", "")),
             "image": str(row.get("image", "")),
             "question": str(row.get("question", "")),
+            "gt_label": str(row.get("gt_label", "")).strip().lower(),
+            "baseline_label": baseline_label,
+            "intervention_label": intervention_label,
+            "final_label": final_label,
             "route": route,
             "family": family,
             "alpha": alpha,
@@ -132,6 +143,7 @@ def main() -> None:
                 "id": str(row.get("id", "")),
                 "image": str(row.get("image", "")),
                 "text": final_text,
+                "label": final_label,
                 "route": route,
                 "family": family,
                 "source": final_source,

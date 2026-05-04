@@ -68,6 +68,51 @@ def maybe_int(value: object) -> int:
         return 0
 
 
+def init_binary_counts() -> Dict[str, int]:
+    return {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+
+
+def safe_div(num: float, den: float) -> float:
+    return float(num / den) if float(den) else 0.0
+
+
+def update_binary_counts(counts: Dict[str, int], pred: str, gold: str, delta: int = 1) -> None:
+    if pred == "yes" and gold == "yes":
+        counts["tp"] += int(delta)
+    elif pred == "yes" and gold == "no":
+        counts["fp"] += int(delta)
+    elif pred == "no" and gold == "yes":
+        counts["fn"] += int(delta)
+    elif pred == "no" and gold == "no":
+        counts["tn"] += int(delta)
+
+
+def binary_metrics(counts: Dict[str, int]) -> Dict[str, float]:
+    tp = int(counts.get("tp", 0))
+    fp = int(counts.get("fp", 0))
+    fn = int(counts.get("fn", 0))
+    tn = int(counts.get("tn", 0))
+    n = tp + fp + fn + tn
+    precision = safe_div(float(tp), float(tp + fp))
+    recall = safe_div(float(tp), float(tp + fn))
+    return {
+        "acc": safe_div(float(tp + tn), float(n)),
+        "precision": precision,
+        "recall": recall,
+        "f1": safe_div(float(2.0 * precision * recall), float(precision + recall)),
+        "yes_ratio": safe_div(float(tp + fp), float(n)),
+    }
+
+
+def normalize_counts(obj: Any) -> Optional[Dict[str, int]]:
+    if not isinstance(obj, dict):
+        return None
+    out = init_binary_counts()
+    for key in out:
+        out[key] = maybe_int(obj.get(key))
+    return out
+
+
 def label(row: Dict[str, Any], key: str) -> str:
     return str(row.get(key, "")).strip().lower()
 
@@ -346,12 +391,26 @@ def summarize_from_existing_deployment(
     net = selected_harm - selected_help
     n = int(old_deploy["n"])
     pcp_acc = float(old_deploy["intervention_acc"]) + float(net) / float(n)
-    return {
+    summary = {
         "n": n,
         "baseline_acc": float(old_deploy["baseline_acc"]),
+        "baseline_precision": old_deploy.get("baseline_precision"),
+        "baseline_recall": old_deploy.get("baseline_recall"),
+        "baseline_f1": old_deploy.get("baseline_f1"),
+        "baseline_yes_ratio": old_deploy.get("baseline_yes_ratio"),
         "intervention_acc": float(old_deploy["intervention_acc"]),
+        "intervention_precision": old_deploy.get("intervention_precision"),
+        "intervention_recall": old_deploy.get("intervention_recall"),
+        "intervention_f1": old_deploy.get("intervention_f1"),
+        "intervention_yes_ratio": old_deploy.get("intervention_yes_ratio"),
         "pcp_deploy_acc": float(pcp_acc),
+        "pcp_deploy_precision": old_deploy.get("pcp_deploy_precision"),
+        "pcp_deploy_recall": old_deploy.get("pcp_deploy_recall"),
+        "pcp_deploy_f1": old_deploy.get("pcp_deploy_f1"),
+        "pcp_deploy_yes_ratio": old_deploy.get("pcp_deploy_yes_ratio"),
         "delta_vs_intervention": float(pcp_acc) - float(old_deploy["intervention_acc"]),
+        "delta_f1_vs_intervention": old_deploy.get("delta_f1_vs_intervention"),
+        "delta_f1_vs_baseline": old_deploy.get("delta_f1_vs_baseline"),
         "baseline_generated": int(len(selected)),
         "actual_fallback": int(len(selected)),
         "flagged_unchanged": int(selected_neutral),
@@ -362,6 +421,49 @@ def summarize_from_existing_deployment(
         "selected_neutral": int(selected_neutral),
         "net": int(net),
     }
+    confusion = old_deploy.get("confusion") if isinstance(old_deploy.get("confusion"), dict) else {}
+    base_counts = normalize_counts(confusion.get("baseline"))
+    int_counts = normalize_counts(confusion.get("intervention"))
+    if base_counts is not None and int_counts is not None:
+        final_counts = dict(int_counts)
+        can_adjust = True
+        for row in selected:
+            gt = label(row, "gt_label")
+            baseline = label(row, "baseline_label")
+            intervention = label(row, "intervention_label")
+            if gt not in {"yes", "no"} or baseline not in {"yes", "no"} or intervention not in {"yes", "no"}:
+                can_adjust = False
+                break
+            update_binary_counts(final_counts, intervention, gt, delta=-1)
+            update_binary_counts(final_counts, baseline, gt, delta=1)
+        if can_adjust:
+            base_m = binary_metrics(base_counts)
+            int_m = binary_metrics(int_counts)
+            final_m = binary_metrics(final_counts)
+            summary.update(
+                {
+                    "baseline_precision": base_m["precision"],
+                    "baseline_recall": base_m["recall"],
+                    "baseline_f1": base_m["f1"],
+                    "baseline_yes_ratio": base_m["yes_ratio"],
+                    "intervention_precision": int_m["precision"],
+                    "intervention_recall": int_m["recall"],
+                    "intervention_f1": int_m["f1"],
+                    "intervention_yes_ratio": int_m["yes_ratio"],
+                    "pcp_deploy_precision": final_m["precision"],
+                    "pcp_deploy_recall": final_m["recall"],
+                    "pcp_deploy_f1": final_m["f1"],
+                    "pcp_deploy_yes_ratio": final_m["yes_ratio"],
+                    "delta_f1_vs_intervention": final_m["f1"] - int_m["f1"],
+                    "delta_f1_vs_baseline": final_m["f1"] - base_m["f1"],
+                    "confusion": {
+                        "baseline": base_counts,
+                        "intervention": int_counts,
+                        "pcp_deploy": final_counts,
+                    },
+                }
+            )
+    return summary
 
 
 def selected_policy_summary(policy_dir: Path) -> Dict[str, Any]:
@@ -381,10 +483,20 @@ def format_policy_pair(yes_policy: Dict[str, Any], no_policy: Dict[str, Any]) ->
     return f"Y:{short(yes_policy)} / N:{short(no_policy)}"
 
 
+def fmt_pct(value: Any, *, signed: bool = False) -> str:
+    try:
+        if value is None or str(value).strip() == "":
+            return ""
+        v = 100.0 * float(value)
+    except Exception:
+        return ""
+    return f"{v:+.2f}" if signed else f"{v:.2f}"
+
+
 def format_table(rows: List[Dict[str, Any]]) -> str:
     lines = [
-        "| Method / Backbone | Dataset | Policies | Base | Method | Split-Calib RaPiC | dMethod | dBase | Method H/G/Net | Fallback H/G/Net | Final H/G/Net | Fallback | Hrec | Grec |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Method / Backbone | Dataset | Policies | Base Acc | Method Acc | Ours Acc | dMethod Acc | dBase Acc | Base F1 | Method F1 | Ours F1 | dMethod F1 | dBase F1 | Method H/G/Net | Fallback H/G/Net | Final H/G/Net | Fallback | Hrec | Grec |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         d = row["deployment"]
@@ -398,9 +510,12 @@ def format_table(rows: List[Dict[str, Any]]) -> str:
         final_g = method_g - fallback_g
         lines.append(
             f"| {row['label']} | {row['dataset']} | {row['policies']} | "
-            f"{100*float(d['baseline_acc']):.2f} | {100*float(d['intervention_acc']):.2f} | "
-            f"{100*float(d['pcp_deploy_acc']):.2f} | {100*float(d['delta_vs_intervention']):+.2f} | "
-            f"{100*(float(d['pcp_deploy_acc']) - float(d['baseline_acc'])):+.2f} | "
+            f"{fmt_pct(d.get('baseline_acc'))} | {fmt_pct(d.get('intervention_acc'))} | "
+            f"{fmt_pct(d.get('pcp_deploy_acc'))} | {fmt_pct(d.get('delta_vs_intervention'), signed=True)} | "
+            f"{fmt_pct(float(d.get('pcp_deploy_acc')) - float(d.get('baseline_acc')), signed=True)} | "
+            f"{fmt_pct(d.get('baseline_f1'))} | {fmt_pct(d.get('intervention_f1'))} | "
+            f"{fmt_pct(d.get('pcp_deploy_f1'))} | {fmt_pct(d.get('delta_f1_vs_intervention'), signed=True)} | "
+            f"{fmt_pct(d.get('delta_f1_vs_baseline'), signed=True)} | "
             f"{method_h}/{method_g}/{method_h - method_g} | "
             f"{fallback_h}/{fallback_g}/{fallback_h - fallback_g} | "
             f"{final_h}/{final_g}/{final_h - final_g} | "

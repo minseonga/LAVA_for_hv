@@ -71,6 +71,47 @@ def load_routes(path: str) -> Dict[str, str]:
     return out
 
 
+def init_binary_counts() -> Dict[str, int]:
+    return {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+
+
+def update_binary_counts(counts: Dict[str, int], pred: str, gold: str) -> None:
+    if pred == "yes" and gold == "yes":
+        counts["tp"] += 1
+    elif pred == "yes" and gold == "no":
+        counts["fp"] += 1
+    elif pred == "no" and gold == "yes":
+        counts["fn"] += 1
+    elif pred == "no" and gold == "no":
+        counts["tn"] += 1
+
+
+def safe_div(num: float, den: float) -> float:
+    return float(num / den) if float(den) else 0.0
+
+
+def binary_metrics(counts: Dict[str, int]) -> Dict[str, float]:
+    tp = int(counts["tp"])
+    fp = int(counts["fp"])
+    fn = int(counts["fn"])
+    tn = int(counts["tn"])
+    n = tp + fp + fn + tn
+    precision = safe_div(float(tp), float(tp + fp))
+    recall = safe_div(float(tp), float(tp + fn))
+    return {
+        "n": float(n),
+        "acc": safe_div(float(tp + tn), float(n)),
+        "precision": precision,
+        "recall": recall,
+        "f1": safe_div(float(2.0 * precision * recall), float(precision + recall)),
+        "yes_ratio": safe_div(float(tp + fp), float(n)),
+        "tp": float(tp),
+        "fp": float(fp),
+        "fn": float(fn),
+        "tn": float(tn),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Summarize full POPE deployment metrics from partial PCP route rows.")
     ap.add_argument("--gt_csv", required=True)
@@ -93,6 +134,9 @@ def main() -> None:
     base_correct_total = 0
     int_correct_total = 0
     final_correct_total = 0
+    base_counts = init_binary_counts()
+    int_counts = init_binary_counts()
+    final_counts = init_binary_counts()
     total_harm = 0
     total_help = 0
     selected_harm = 0
@@ -112,6 +156,8 @@ def main() -> None:
         ic = int(i == answer)
         base_correct_total += bc
         int_correct_total += ic
+        update_binary_counts(base_counts, b, answer)
+        update_binary_counts(int_counts, i, answer)
         harm = int(bc == 1 and ic == 0)
         help_ = int(bc == 0 and ic == 1)
         total_harm += harm
@@ -119,6 +165,8 @@ def main() -> None:
 
         route = routes.get(qid, "method")
         use_baseline = route == "baseline"
+        final_label = b if use_baseline else i
+        update_binary_counts(final_counts, final_label, answer)
         if use_baseline:
             selected_count += 1
             selected_harm += harm
@@ -130,12 +178,35 @@ def main() -> None:
         else:
             final_correct_total += ic
 
+    base_metrics = binary_metrics(base_counts)
+    int_metrics = binary_metrics(int_counts)
+    final_metrics = binary_metrics(final_counts)
+
     summary = {
         "n": int(n),
         "baseline_acc": base_correct_total / n if n else 0.0,
+        "baseline_precision": base_metrics["precision"],
+        "baseline_recall": base_metrics["recall"],
+        "baseline_f1": base_metrics["f1"],
+        "baseline_yes_ratio": base_metrics["yes_ratio"],
         "intervention_acc": int_correct_total / n if n else 0.0,
+        "intervention_precision": int_metrics["precision"],
+        "intervention_recall": int_metrics["recall"],
+        "intervention_f1": int_metrics["f1"],
+        "intervention_yes_ratio": int_metrics["yes_ratio"],
         "pcp_deploy_acc": final_correct_total / n if n else 0.0,
+        "pcp_deploy_precision": final_metrics["precision"],
+        "pcp_deploy_recall": final_metrics["recall"],
+        "pcp_deploy_f1": final_metrics["f1"],
+        "pcp_deploy_yes_ratio": final_metrics["yes_ratio"],
         "delta_vs_intervention": (final_correct_total - int_correct_total) / n if n else 0.0,
+        "delta_f1_vs_intervention": final_metrics["f1"] - int_metrics["f1"],
+        "delta_f1_vs_baseline": final_metrics["f1"] - base_metrics["f1"],
+        "confusion": {
+            "baseline": {k: int(v) for k, v in base_counts.items()},
+            "intervention": {k: int(v) for k, v in int_counts.items()},
+            "pcp_deploy": {k: int(v) for k, v in final_counts.items()},
+        },
         "baseline_generated": int(selected_count),
         "actual_fallback": int(actual_fallback),
         "flagged_unchanged": int(flagged_unchanged),
