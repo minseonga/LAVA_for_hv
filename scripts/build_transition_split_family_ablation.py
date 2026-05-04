@@ -84,6 +84,20 @@ def variant_policy_label(policy_root: Path, family: str) -> str:
     return f"Y:{policy_short(yes_policy)} / N:{policy_short(no_policy)}"
 
 
+def policy_provenance(policy_root: Path) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for direction in ("yes_to_no", "no_to_yes"):
+        path = policy_root / direction / "selected_policy.json"
+        if not path.exists():
+            continue
+        bundle = read_json(path)
+        out[f"{direction}_policy_json"] = str(path)
+        out[f"{direction}_rows_csv"] = str(bundle.get("rows_csv", ""))
+        if "testcalib" in str(path).lower() or "testcalib" in str(bundle.get("rows_csv", "")).lower():
+            out[f"{direction}_warning"] = "policy path looks like a test-calibration root"
+    return out
+
+
 def parse_label(row: Dict[str, Any], key: str, text_key: str) -> str:
     label = str(row.get(key, "")).strip().lower()
     if label in {"yes", "no"}:
@@ -369,6 +383,9 @@ def main() -> None:
     rows_csv = rows_csv_from_apply_dir(source_apply_dir)
     old_deploy = read_json(source_apply_dir / "deployment_summary.json")
     rows = pcp.load_rows(str(rows_csv), derive_decision_kl=True)
+    provenance = policy_provenance(policy_root)
+    if any(key.endswith("_warning") for key in provenance):
+        print("[warn] policy root may be test-calibrated:", policy_root)
 
     selected_policy = variant_policy_label(policy_root, "selected")
     random_k = int(args.random_k) if int(args.random_k) > 0 else int(
@@ -438,6 +455,11 @@ def main() -> None:
                 "dataset": str(args.dataset),
                 "variant": label,
                 "policy": policy,
+                "source_apply_dir": str(source_apply_dir),
+                "apply_rows_csv": str(rows_csv),
+                "policy_root": str(policy_root),
+                "yes_to_no_policy_rows_csv": provenance.get("yes_to_no_rows_csv", ""),
+                "no_to_yes_policy_rows_csv": provenance.get("no_to_yes_rows_csv", ""),
                 "random_k": random_k if key == "random" else "",
                 "random_repeats": int(args.random_repeats) if key == "random" else "",
                 "acc": summary.get("pcp_deploy_acc"),
@@ -463,10 +485,25 @@ def main() -> None:
         )
 
     write_csv(out_dir / "family_ablation.csv", csv_rows)
+    write_json(
+        out_dir / "provenance.json",
+        {
+            "source_apply_dir": str(source_apply_dir),
+            "apply_rows_csv": str(rows_csv),
+            "policy_root": str(policy_root),
+            "policy_provenance": provenance,
+        },
+    )
     md = format_md(table_rows)
     header = ""
     if args.label or args.dataset:
         header = f"## {args.label} / {args.dataset}\n\n"
+    header += (
+        f"- Apply rows: `{rows_csv}`\n"
+        f"- Policy root: `{policy_root}`\n"
+        f"- yes->no calibration rows: `{provenance.get('yes_to_no_rows_csv', '')}`\n"
+        f"- no->yes calibration rows: `{provenance.get('no_to_yes_rows_csv', '')}`\n\n"
+    )
     (out_dir / "family_ablation.md").write_text(header + md + "\n", encoding="utf-8")
     print(header + md)
     print("[saved]", out_dir / "family_ablation.md")
