@@ -23,7 +23,7 @@ CAL_PYTHON_BIN="${CAL_PYTHON_BIN:-python}"
 VGA_PYTHON_BIN="${VGA_PYTHON_BIN:-/home/kms/miniconda3/envs/vga_base/bin/python}"
 LLAVA_NEXT_PYTHON_BIN="${LLAVA_NEXT_PYTHON_BIN:-/home/kms/miniconda3/envs/llava_next_official/bin/python}"
 QWEN35_PYTHON_BIN="${QWEN35_PYTHON_BIN:-$CAL_PYTHON_BIN}"
-QWEN25_PYTHON_BIN="${QWEN25_PYTHON_BIN:-$VGA_PYTHON_BIN}"
+QWEN25_PYTHON_BIN="${QWEN25_PYTHON_BIN:-/home/kms/miniconda3/envs/qwen25_vl/bin/python}"
 PAI_PYTHON_BIN="${PAI_PYTHON_BIN:-/home/kms/miniconda3/envs/pai_base/bin/python}"
 
 GPU="${GPU:-${CUDA_VISIBLE_DEVICES:-0}}"
