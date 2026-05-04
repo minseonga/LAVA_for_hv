@@ -252,6 +252,7 @@ def build_direction_policy(
     allow_noop_policy: bool,
     tau_objective: Optional[str],
     lambda_gain: Optional[float],
+    min_feature_auroc: Optional[float],
     min_harm_precision: Optional[float],
     min_harm_recall: Optional[float],
     max_help_recall: float,
@@ -290,7 +291,7 @@ def build_direction_policy(
         "--min_present_rate",
         str(inputs.get("min_present_rate", 0.8)),
         "--min_feature_auroc",
-        str(inputs.get("min_feature_auroc", 0.55)),
+        str(float(min_feature_auroc) if min_feature_auroc is not None else inputs.get("min_feature_auroc", 0.55)),
         "--top_k_c",
         str(inputs.get("top_k_c", 3)),
         "--top_k_d",
@@ -574,6 +575,12 @@ def parse_args() -> argparse.Namespace:
         help="Penalty for tau_objective=gain_preserving_harm_recall.",
     )
     ap.add_argument(
+        "--min_feature_auroc",
+        type=float,
+        default=(float(os.environ["MIN_FEATURE_AUROC"]) if os.environ.get("MIN_FEATURE_AUROC") else None),
+        help="Override minimum single-feature AUROC for C/D feature admission.",
+    )
+    ap.add_argument(
         "--min_harm_precision",
         type=float,
         default=(float(os.environ["MIN_HARM_PRECISION"]) if os.environ.get("MIN_HARM_PRECISION") else None),
@@ -636,6 +643,7 @@ def main() -> None:
                 allow_noop_policy=bool(args.allow_noop_policy),
                 tau_objective=args.tau_objective,
                 lambda_gain=args.lambda_gain,
+                min_feature_auroc=args.min_feature_auroc,
                 min_harm_precision=args.min_harm_precision,
                 min_harm_recall=args.min_harm_recall,
                 max_help_recall=float(args.max_help_recall),
