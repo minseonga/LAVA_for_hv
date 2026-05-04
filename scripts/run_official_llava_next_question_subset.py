@@ -27,6 +27,35 @@ OFFICIAL_TORCH_TYPE_ARG = {
 }
 
 
+def patch_transformers_attn_implementation() -> Any:
+    """Temporarily drop attn_implementation for older LLaVA-NeXT stacks."""
+    try:
+        from transformers.modeling_utils import PreTrainedModel
+    except Exception:
+        return None
+
+    original = PreTrainedModel.from_pretrained
+    original_func = getattr(original, "__func__", original)
+
+    @classmethod
+    def compat_from_pretrained(cls: Any, pretrained_model_name_or_path: Any, *model_args: Any, **kwargs: Any) -> Any:
+        kwargs.pop("attn_implementation", None)
+        return original_func(cls, pretrained_model_name_or_path, *model_args, **kwargs)
+
+    PreTrainedModel.from_pretrained = compat_from_pretrained
+    return original
+
+
+def restore_transformers_from_pretrained(original: Any) -> None:
+    if original is None:
+        return
+    try:
+        from transformers.modeling_utils import PreTrainedModel
+    except Exception:
+        return
+    PreTrainedModel.from_pretrained = original
+
+
 def parse_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -110,14 +139,30 @@ def main() -> None:
         # Official LLaVA-NeXT defaults to flash_attention_2 inside builder.py.
         # Use eager as the explicit no-flash-attn fallback.
         attn_implementation = "eager"
-    load_kwargs["attn_implementation"] = attn_implementation
+    if attn_implementation != "none":
+        load_kwargs["attn_implementation"] = attn_implementation
 
-    tokenizer, model, image_processor, _ = load_pretrained_model(
-        model_path,
-        model_base,
-        model_name,
-        **load_kwargs,
-    )
+    try:
+        tokenizer, model, image_processor, _ = load_pretrained_model(
+            model_path,
+            model_base,
+            model_name,
+            **load_kwargs,
+        )
+    except TypeError as exc:
+        if "attn_implementation" not in str(exc):
+            raise
+        load_kwargs.pop("attn_implementation", None)
+        patch = patch_transformers_attn_implementation()
+        try:
+            tokenizer, model, image_processor, _ = load_pretrained_model(
+                model_path,
+                model_base,
+                model_name,
+                **load_kwargs,
+            )
+        finally:
+            restore_transformers_from_pretrained(patch)
     model.eval()
     if hasattr(model, "tie_weights"):
         model.tie_weights()

@@ -12,7 +12,7 @@ set -euo pipefail
 CAL_ROOT="${CAL_ROOT:-/home/kms/LLaVA_calibration}"
 CAL_PYTHON_BIN="${CAL_PYTHON_BIN:-/home/kms/miniconda3/envs/vga_base/bin/python}"
 VGA_PYTHON_BIN="${VGA_PYTHON_BIN:-/home/kms/miniconda3/envs/vga_base/bin/python}"
-LLAVA_NEXT_PYTHON_BIN="${LLAVA_NEXT_PYTHON_BIN:-$VGA_PYTHON_BIN}"
+LLAVA_NEXT_PYTHON_BIN="${LLAVA_NEXT_PYTHON_BIN:-/home/kms/miniconda3/envs/llava_next_official/bin/python}"
 QWEN25_PYTHON_BIN="${QWEN25_PYTHON_BIN:-$VGA_PYTHON_BIN}"
 PAI_PYTHON_BIN="${PAI_PYTHON_BIN:-/home/kms/miniconda3/envs/pai_base/bin/python}"
 EAZY_PYTHON_BIN="${EAZY_PYTHON_BIN:-/home/kms/miniconda3/envs/eazy_base/bin/python}"
