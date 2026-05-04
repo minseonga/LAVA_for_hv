@@ -17,6 +17,7 @@ CAL_ROOT="${CAL_ROOT:-/home/kms/LLaVA_calibration}"
 VGA_ROOT="${VGA_ROOT:-$CAL_ROOT/VGA_origin}"
 PAI_ROOT="${PAI_ROOT:-/home/kms/PAI}"
 LLAVA_NEXT_ROOT="${LLAVA_NEXT_ROOT:-/home/kms/LLaVA-NeXT}"
+CLEARSIGHT_ROOT="${CLEARSIGHT_ROOT:-$CAL_ROOT/ClearSight}"
 
 CAL_PYTHON_BIN="${CAL_PYTHON_BIN:-python}"
 VGA_PYTHON_BIN="${VGA_PYTHON_BIN:-/home/kms/miniconda3/envs/vga_base/bin/python}"
@@ -383,6 +384,25 @@ run_pai() {
 }
 
 run_vaf() {
+  if [[ "$BACKBONE" == "llava15" ]]; then
+    "$CAL_PYTHON_BIN" "$CAL_ROOT/scripts/run_clearsight_llava15_vaf_question_subset.py" \
+      --clearsight-root "$CLEARSIGHT_ROOT" \
+      --model-path "$MODEL_PATH" \
+      "${MODEL_BASE_ARGS[@]}" \
+      --image-folder "$IMAGE_FOLDER" \
+      --question-file "$QUESTION_FILE" \
+      --answers-file "$PRED_JSONL" \
+      --conv-mode "$CONV_MODE" \
+      --max-new-tokens "$MAX_NEW_TOKENS" \
+      --limit "$LIMIT" \
+      --seed "$SEED" \
+      --use-visaug true \
+      --start-layer "$VAF_START_LAYER" \
+      --end-layer "$VAF_END_LAYER" \
+      --enh-para "$VAF_ENH_PARA" \
+      --sup-para "$VAF_SUP_PARA"
+    return
+  fi
   if [[ "$BACKBONE" == "llava_next" ]]; then
     "$LLAVA_NEXT_PYTHON_BIN" "$CAL_ROOT/scripts/run_llava_next_visual_attn_question_subset.py" \
       --llava-next-root "$LLAVA_NEXT_ROOT" \
@@ -405,7 +425,7 @@ run_vaf() {
     return
   fi
   if [[ "$BACKBONE" != "qwen25_vl" ]]; then
-    echo "[error] METHOD=vaf is implemented for BACKBONE=llava_next and BACKBONE=qwen25_vl. Use native ClearSight for LLaVA-1.5." >&2
+    echo "[error] METHOD=vaf is implemented for BACKBONE=llava15, BACKBONE=llava_next, and BACKBONE=qwen25_vl." >&2
     exit 2
   fi
   "$QWEN25_PYTHON_BIN" "$CAL_ROOT/scripts/run_qwen25_vl_vaf_question_subset.py" \
