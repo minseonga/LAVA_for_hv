@@ -1,7 +1,7 @@
 # RaPiC Method Section Draft
 
 This document is a method-only draft for the RaPiC paper. It intentionally
-excludes the full experimental narrative and test-calibrated oracle results.
+excludes the full experimental narrative and non-deployable diagnostic variants.
 The goal is to provide a clean, defensible method section that can be inserted
 into a NeurIPS-style paper, with detailed appendix-ready implementation notes.
 
@@ -675,23 +675,6 @@ Output:
 The current method should be kept narrow and clean. The following variants are
 diagnostics, not main-method components.
 
-### Test-Calibrated Oracle
-
-Test-calibrated policies fit `family`, `alpha`, and `tau` on the target test
-changed set. They are useful for diagnosing whether replay features contain
-target-distribution signal, but they are not deployable and must not be
-reported as main results.
-
-Paper-facing usage:
-
-```text
-If test-calib succeeds but discovery-calib fails, the feature family has local
-signal but the calibration split is not representative.
-
-If test-calib also fails, the replay features are insufficient for that
-method/backbone setting.
-```
-
 ### Yes-to-No-Only Gate
 
 Restricting fallback to `yes->no` changes can reduce helpful `no->yes`
@@ -759,7 +742,6 @@ The canonical protocol for paper tables should be:
 Do not mix this with:
 
 ```text
-test-calibrated selected_policy.json
 yes->no-only diagnostic
 rate-cap diagnostic
 changed-set-only accuracy
@@ -829,8 +811,8 @@ Grec
 The `Base`, `Method`, and `RaPiC` columns must be full-set accuracies, not
 changed-subset accuracies.
 
-Changed-subset oracle tables must be explicitly labeled as changed-set
-diagnostics.
+Changed-subset diagnostic tables must be explicitly labeled as changed-set
+diagnostics and kept separate from full-test deployment tables.
 
 ### 5.5 Deployment Cost
 
@@ -904,6 +886,5 @@ Avoid these claims:
 RaPiC always improves every intervention.
 RaPiC perfectly distinguishes harm from help.
 RaPiC uses test labels for deployment.
-Test-calibrated oracle results are main results.
 Changed-set accuracy is full-test accuracy.
 ```
