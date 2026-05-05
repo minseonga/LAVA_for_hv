@@ -282,6 +282,8 @@ run_vga_like() {
       --sampling "$VGA_SAMPLING" \
       --torch_type "$VGA_TORCH_TYPE" \
       --attn_type "$VGA_ATTN_TYPE" \
+      --min_pixels "$QWEN25_MIN_PIXELS" \
+      --max_pixels "$QWEN25_MAX_PIXELS" \
       --limit "$LIMIT" \
       --seed "$SEED"
   else

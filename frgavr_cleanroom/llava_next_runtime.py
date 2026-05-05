@@ -55,7 +55,6 @@ def _patch_transformers_attn_implementation() -> Any:
     @classmethod
     def compat_from_pretrained(cls: Any, pretrained_model_name_or_path: Any, *model_args: Any, **kwargs: Any) -> Any:
         kwargs.pop("attn_implementation", None)
-        kwargs["low_cpu_mem_usage"] = False
         return original_func(cls, pretrained_model_name_or_path, *model_args, **kwargs)
 
     PreTrainedModel.from_pretrained = compat_from_pretrained
@@ -70,6 +69,17 @@ def _restore_transformers_from_pretrained(original: Any) -> None:
     except Exception:
         return
     PreTrainedModel.from_pretrained = original
+
+
+def _disable_vendor_debug_breakpoints() -> None:
+    """Avoid interactive pdb traps in local/vendor LLaVA-NeXT checkouts."""
+    os.environ.setdefault("PYTHONBREAKPOINT", "0")
+    try:
+        import pdb
+
+        pdb.set_trace = lambda *args, **kwargs: None  # type: ignore[assignment]
+    except Exception:
+        pass
 
 
 class OfficialLlavaNextRuntime:
@@ -93,6 +103,7 @@ class OfficialLlavaNextRuntime:
         attn_implementation: str = "eager",
     ) -> None:
         _install_llava_next_root(llava_next_root)
+        _disable_vendor_debug_breakpoints()
 
         from llava.mm_utils import get_model_name_from_path
         from llava.model.builder import load_pretrained_model
@@ -107,8 +118,9 @@ class OfficialLlavaNextRuntime:
         model_path = os.path.expanduser(str(model_path))
         model_base = None if not str(model_base or "").strip() else os.path.expanduser(str(model_base))
         model_name = get_model_name_from_path(model_path)
+        load_device_map = os.environ.get("LLAVA_NEXT_LOAD_DEVICE_MAP", str(device or "cuda"))
         load_kwargs = {
-            "device_map": str(device or "cuda"),
+            "device_map": load_device_map,
             "torch_dtype": TORCH_TYPE_ARG[torch_type],
         }
         if attn_implementation != "none":
@@ -141,6 +153,12 @@ class OfficialLlavaNextRuntime:
         self.torch_type = torch_type
         self.dtype = TORCH_DTYPE[torch_type]
         self.teacher_force_forward_mode = str(os.environ.get("CLEANROOM_TF_FORWARD_MODE", "backbone")).strip().lower()
+        self.image_preprocess_mode = str(
+            os.environ.get(
+                "LLAVA_NEXT_IMAGE_PREPROCESS_MODE",
+                os.environ.get("CLEANROOM_IMAGE_PREPROCESS_MODE", "process_images"),
+            )
+        ).strip().lower()
 
     def load_image(self, image_path: str) -> Image.Image:
         return Image.open(image_path).convert("RGB")
@@ -185,9 +203,12 @@ class OfficialLlavaNextRuntime:
         raise TypeError(f"Unsupported processed image type: {type(images)!r}")
 
     def _process_image(self, image: Image.Image) -> Tuple[Any, List[Tuple[int, int]]]:
-        from llava.mm_utils import process_images
+        if self.image_preprocess_mode in {"direct", "preprocess"}:
+            image_tensor = self.image_processor.preprocess(image, return_tensors="pt")["pixel_values"]
+        else:
+            from llava.mm_utils import process_images
 
-        image_tensor = process_images([image], self.image_processor, self.model.config)
+            image_tensor = process_images([image], self.image_processor, self.model.config)
         return self._to_device_images(image_tensor), [image.size]
 
     def _prepare_multimodal_expanded_sequence(

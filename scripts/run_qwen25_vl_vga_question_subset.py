@@ -135,6 +135,24 @@ def patch_generation_cache_position_compat() -> None:
     GenerationMixin._get_initial_cache_position = patched
 
 
+def patch_processor_pixel_bounds(min_pixels: int = 0, max_pixels: int = 0):
+    if int(min_pixels) <= 0 and int(max_pixels) <= 0:
+        return None
+    from transformers import AutoProcessor
+
+    original_from_pretrained = AutoProcessor.from_pretrained
+
+    def patched_from_pretrained(*args, **kwargs):
+        if int(min_pixels) > 0:
+            kwargs["min_pixels"] = int(min_pixels)
+        if int(max_pixels) > 0:
+            kwargs["max_pixels"] = int(max_pixels)
+        return original_from_pretrained(*args, **kwargs)
+
+    AutoProcessor.from_pretrained = patched_from_pretrained
+    return original_from_pretrained
+
+
 def normalize_answers_file(path: str) -> None:
     rows = []
     with open(path, "r", encoding="utf-8") as f:
@@ -162,6 +180,8 @@ def main() -> None:
     ap.add_argument("--answers-file", required=True)
     ap.add_argument("--gt-csv", default="")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--min_pixels", type=int, default=0)
+    ap.add_argument("--max_pixels", type=int, default=0)
     known, _ = ap.parse_known_args()
 
     vga_root = os.path.abspath(os.path.expanduser(known.vga_root))
@@ -178,10 +198,16 @@ def main() -> None:
     argv = drop_arg_with_value(argv, "--vga-root")
     argv = drop_arg_with_value(argv, "--gt-csv")
     argv = drop_arg_with_value(argv, "--limit")
+    argv = drop_arg_with_value(argv, "--min_pixels")
+    argv = drop_arg_with_value(argv, "--max_pixels")
     argv = rewrite_arg(argv, "--model-path", os.path.expanduser(known.model_path))
 
     preload_greedy_sampler(vga_root, os.path.expanduser(known.model_path))
     patch_generation_cache_position_compat()
+    original_processor_from_pretrained = patch_processor_pixel_bounds(
+        min_pixels=int(known.min_pixels),
+        max_pixels=int(known.max_pixels),
+    )
 
     old_argv = sys.argv
     try:
@@ -189,6 +215,10 @@ def main() -> None:
         runpy.run_path(target, run_name="__main__")
     finally:
         sys.argv = old_argv
+        if original_processor_from_pretrained is not None:
+            from transformers import AutoProcessor
+
+            AutoProcessor.from_pretrained = original_processor_from_pretrained
         if tmp_question_file:
             try:
                 os.unlink(tmp_question_file)

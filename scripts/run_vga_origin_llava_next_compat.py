@@ -7,11 +7,29 @@ import json
 import os
 import re
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+
+
+def _compat_has_unfinished_sequences(self: Any, this_peer_finished: Any, synced_gpus: bool, device: Any = None) -> bool:
+    if hasattr(this_peer_finished, "item"):
+        this_peer_finished = bool(this_peer_finished.item())
+    return not bool(this_peer_finished)
+
+
+def install_has_unfinished_sequences(target: Any) -> None:
+    if target is None:
+        return
+    if isinstance(target, type):
+        if not hasattr(target, "_has_unfinished_sequences"):
+            target._has_unfinished_sequences = _compat_has_unfinished_sequences  # type: ignore[attr-defined]
+        return
+    if not hasattr(target, "_has_unfinished_sequences"):
+        target._has_unfinished_sequences = types.MethodType(_compat_has_unfinished_sequences, target)  # type: ignore[attr-defined]
 
 
 def parse_bool(value: Any) -> bool:
@@ -22,13 +40,144 @@ def parse_bool(value: Any) -> bool:
 
 def patch_transformers_compat() -> None:
     import torch
-    import transformers.cache_utils as cache_utils
+    try:
+        import transformers.cache_utils as cache_utils
+    except ModuleNotFoundError:
+        import transformers
+
+        cache_utils = types.ModuleType("transformers.cache_utils")
+        sys.modules["transformers.cache_utils"] = cache_utils
+        setattr(transformers, "cache_utils", cache_utils)
+
+    if not hasattr(cache_utils, "Cache"):
+        class Cache:
+            def update(self, key_states: Any, value_states: Any, layer_idx: int, cache_kwargs: Any = None) -> Any:
+                raise NotImplementedError
+
+            def get_seq_length(self, layer_idx: int = 0) -> int:
+                return 0
+
+            def get_max_length(self) -> Any:
+                return None
+
+            def get_max_cache_shape(self) -> Any:
+                return None
+
+            def to_legacy_cache(self) -> tuple:
+                return ()
+
+        cache_utils.Cache = Cache
+
+    if not hasattr(cache_utils, "DynamicCache"):
+        class DynamicCache(cache_utils.Cache):  # type: ignore[name-defined]
+            def __init__(self) -> None:
+                self.key_cache: list[Any] = []
+                self.value_cache: list[Any] = []
+
+            @classmethod
+            def from_legacy_cache(cls, past_key_values: Any = None) -> Any:
+                if past_key_values is None:
+                    return cls()
+                if isinstance(past_key_values, cache_utils.Cache):
+                    return past_key_values
+                out = cls()
+                for key_states, value_states in past_key_values:
+                    out.key_cache.append(key_states)
+                    out.value_cache.append(value_states)
+                return out
+
+            def update(self, key_states: Any, value_states: Any, layer_idx: int, cache_kwargs: Any = None) -> Any:
+                while len(self.key_cache) <= int(layer_idx):
+                    self.key_cache.append(None)
+                    self.value_cache.append(None)
+                if self.key_cache[int(layer_idx)] is None:
+                    self.key_cache[int(layer_idx)] = key_states
+                    self.value_cache[int(layer_idx)] = value_states
+                else:
+                    self.key_cache[int(layer_idx)] = torch.cat([self.key_cache[int(layer_idx)], key_states], dim=-2)
+                    self.value_cache[int(layer_idx)] = torch.cat([self.value_cache[int(layer_idx)], value_states], dim=-2)
+                return self.key_cache[int(layer_idx)], self.value_cache[int(layer_idx)]
+
+            def get_seq_length(self, layer_idx: int = 0) -> int:
+                if len(self.key_cache) <= int(layer_idx) or self.key_cache[int(layer_idx)] is None:
+                    return 0
+                return int(self.key_cache[int(layer_idx)].shape[-2])
+
+            def get_max_length(self) -> Any:
+                return None
+
+            def get_max_cache_shape(self) -> Any:
+                return None
+
+            def to_legacy_cache(self) -> tuple:
+                return tuple(
+                    (key_states, value_states)
+                    for key_states, value_states in zip(self.key_cache, self.value_cache)
+                    if key_states is not None and value_states is not None
+                )
+
+        cache_utils.DynamicCache = DynamicCache
+
+    if not hasattr(cache_utils, "StaticCache"):
+        class StaticCache(cache_utils.Cache):  # type: ignore[name-defined]
+            pass
+
+        cache_utils.StaticCache = StaticCache
+
+    import transformers.utils as transformers_utils
     import transformers.modeling_utils as modeling_utils
     import transformers.pytorch_utils as pytorch_utils
+    import transformers.generation.configuration_utils as generation_configuration_utils
     import transformers.generation.stopping_criteria as stopping_criteria
+    import transformers.generation.utils as generation_utils
+    from typing import Union as TypingUnion
     from transformers import CLIPVisionModel
     from transformers.generation.stopping_criteria import StoppingCriteria
     from transformers.generation.utils import GenerationMixin
+
+    if not hasattr(transformers_utils, "is_flash_attn_2_available"):
+        transformers_utils.is_flash_attn_2_available = lambda: False
+    if not hasattr(transformers_utils, "is_flash_attn_greater_or_equal_2_10"):
+        transformers_utils.is_flash_attn_greater_or_equal_2_10 = lambda: False
+
+    # Older GenerationConfig objects can be recreated inside generate(), so
+    # instance-level patches are not enough for VGA_origin's copied sampler.
+    for attr, default in (
+        ("output_logits", False),
+        ("output_scores", False),
+        ("output_attentions", False),
+        ("output_hidden_states", False),
+        ("return_dict_in_generate", False),
+    ):
+        if not hasattr(generation_configuration_utils.GenerationConfig, attr):
+            setattr(generation_configuration_utils.GenerationConfig, attr, default)
+
+    # VGA_origin imports the newer generation output aliases added after some
+    # of the pinned environments used for LLaVA-NeXT/VGA. Reuse the older
+    # non-beam output classes when present; otherwise provide a minimal
+    # attribute-access dict that matches the constructor style used downstream.
+    class _CompatGenerateOutput(dict):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(kwargs)
+            self.__dict__.update(kwargs)
+
+    if not hasattr(generation_utils, "GenerateDecoderOnlyOutput"):
+        generation_utils.GenerateDecoderOnlyOutput = getattr(
+            generation_utils,
+            "SampleDecoderOnlyOutput",
+            getattr(generation_utils, "GreedySearchDecoderOnlyOutput", _CompatGenerateOutput),
+        )
+    if not hasattr(generation_utils, "GenerateEncoderDecoderOutput"):
+        generation_utils.GenerateEncoderDecoderOutput = getattr(
+            generation_utils,
+            "SampleEncoderDecoderOutput",
+            getattr(generation_utils, "GreedySearchEncoderDecoderOutput", _CompatGenerateOutput),
+        )
+    if not hasattr(generation_utils, "GenerateNonBeamOutput"):
+        generation_utils.GenerateNonBeamOutput = TypingUnion[
+            generation_utils.GenerateDecoderOnlyOutput,
+            generation_utils.GenerateEncoderDecoderOutput,
+        ]
 
     for name in (
         "apply_chunking_to_forward",
@@ -42,7 +191,7 @@ def patch_transformers_compat() -> None:
         original_from_pretrained = CLIPVisionModel.from_pretrained
 
         def from_pretrained_with_safetensors(cls: Any, pretrained_model_name_or_path: Any, *a: Any, **kw: Any) -> Any:
-            kw.setdefault("use_safetensors", True)
+            kw.setdefault("use_safetensors", False)
             return original_from_pretrained(pretrained_model_name_or_path, *a, **kw)
 
         CLIPVisionModel.from_pretrained = classmethod(from_pretrained_with_safetensors)
@@ -68,6 +217,9 @@ def patch_transformers_compat() -> None:
             continue
         if not hasattr(modeling_utils.PreTrainedModel, name):
             setattr(modeling_utils.PreTrainedModel, name, value)
+
+    install_has_unfinished_sequences(GenerationMixin)
+    install_has_unfinished_sequences(modeling_utils.PreTrainedModel)
 
     if not hasattr(cache_utils.Cache, "seen_tokens"):
         cache_utils.Cache.seen_tokens = property(lambda self: self.get_seq_length())  # type: ignore[attr-defined]
@@ -147,6 +299,48 @@ def ensure_generation_config(model: Any, tokenizer: Any) -> None:
             setattr(model.generation_config, attr, getattr(tokenizer, attr))
     if getattr(model.generation_config, "pad_token_id", None) is None:
         model.generation_config.pad_token_id = getattr(model.generation_config, "eos_token_id", None)
+    for attr, default in (
+        ("output_logits", False),
+        ("output_scores", False),
+        ("output_attentions", False),
+        ("output_hidden_states", False),
+        ("return_dict_in_generate", False),
+    ):
+        if not hasattr(model.generation_config, attr):
+            setattr(model.generation_config, attr, default)
+
+
+def patch_loaded_llava_next_model(model: Any) -> None:
+    install_has_unfinished_sequences(model)
+    install_has_unfinished_sequences(type(model))
+    for cls in getattr(type(model), "__mro__", ()):
+        install_has_unfinished_sequences(cls)
+
+
+def ensure_llama3_chat_template(tokenizer: Any) -> Any:
+    if tokenizer is None or hasattr(tokenizer, "apply_chat_template"):
+        return tokenizer
+
+    def apply_chat_template(
+        messages: Any,
+        tokenize: bool = False,
+        add_generation_prompt: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        rendered = ["<|begin_of_text|>"]
+        for msg in messages:
+            role = str(msg.get("role", "user"))
+            content = str(msg.get("content", ""))
+            rendered.append(f"<|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>")
+        if add_generation_prompt:
+            rendered.append("<|start_header_id|>assistant<|end_header_id|>\n\n")
+        text = "".join(rendered)
+        if tokenize:
+            return tokenizer(text, **kwargs)
+        return text
+
+    tokenizer.apply_chat_template = apply_chat_template
+    return tokenizer
 
 
 def image_id_from_filename(image_name: str) -> str:
@@ -274,8 +468,8 @@ def main() -> None:
 
     def patched_from_pretrained(pretrained_model_name_or_path: Any, *a: Any, **kw: Any) -> Any:
         if str(pretrained_model_name_or_path) in tokenizer_placeholders:
-            return original_from_pretrained(args.model_path, *a, **kw)
-        return original_from_pretrained(pretrained_model_name_or_path, *a, **kw)
+            return ensure_llama3_chat_template(original_from_pretrained(args.model_path, *a, **kw))
+        return ensure_llama3_chat_template(original_from_pretrained(pretrained_model_name_or_path, *a, **kw))
 
     transformers.AutoTokenizer.from_pretrained = patched_from_pretrained
     try:
@@ -293,7 +487,9 @@ def main() -> None:
     def patched_load_pretrained_model(*a: Any, **kw: Any) -> Any:
         nonlocal runtime_tokenizer
         out = original_load_pretrained_model(*a, **kw)
-        runtime_tokenizer = out[0]
+        runtime_tokenizer = ensure_llama3_chat_template(out[0])
+        out = (runtime_tokenizer, *out[1:])
+        patch_loaded_llava_next_model(out[1])
         ensure_generation_config(out[1], out[0])
         return out
 
@@ -302,7 +498,10 @@ def main() -> None:
         if (
             runtime_tokenizer is not None
             and getattr(copied, "sep_style", None) == module.SeparatorStyle.LLAMA_3
-            and getattr(copied, "tokenizer", None) is None
+            and (
+                getattr(copied, "tokenizer", None) is None
+                or not hasattr(getattr(copied, "tokenizer", None), "apply_chat_template")
+            )
         ):
             copied.tokenizer = runtime_tokenizer
         return copied
