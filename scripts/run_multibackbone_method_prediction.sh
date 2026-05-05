@@ -555,6 +555,11 @@ else
   echo "[reuse] $PRED_JSONL"
 fi
 
+if [[ ! -s "$PRED_JSONL" ]]; then
+  echo "[error] prediction file was not created or is empty: $PRED_JSONL" >&2
+  exit 2
+fi
+
 if [[ "$TASK" == "pope" ]]; then
   if [[ -z "${PRED_TEXT_KEY:-}" ]]; then
     PRED_TEXT_KEY="output"
