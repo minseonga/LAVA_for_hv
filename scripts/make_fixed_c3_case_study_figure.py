@@ -344,17 +344,16 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
 def add_panel_caption(ax: plt.Axes, text: str) -> None:
     ax.text(
         0.5,
-        -0.28,
+        -0.20,
         text,
         transform=ax.transAxes,
         ha="center",
         va="top",
-        fontsize=10.2,
-        fontweight="semibold",
+        fontsize=9.6,
     )
 
 
-def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path, title: str) -> None:
+def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path) -> None:
     matplotlib.rcParams.update(
         {
             "font.size": 9.1,
@@ -369,7 +368,6 @@ def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path, title: str) -> N
     panel_accuracy(axes[0], rows)
     panel_gain_harm(axes[1], rows)
     panel_fallback_precision_rate(axes[2], rows)
-    fig.suptitle(title, y=1.05, fontsize=13)
     save_fig(fig, out_path)
 
 
@@ -407,7 +405,7 @@ def main() -> None:
     summary_json = out_dir / f"{prefix}_summary.json"
     fig_path = out_dir / f"{prefix}_figure.png"
     write_csv(metrics_csv, rows)
-    make_figure(rows, fig_path, f"Fixed C3 RAPIC case study: VGA / LLaVA-1.5 / {args.dataset.upper()}")
+    make_figure(rows, fig_path)
     write_json(
         summary_json,
         {
