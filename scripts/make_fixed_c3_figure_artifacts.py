@@ -31,7 +31,9 @@ COLORS = {
     "yes_to_no": "#2563EB",
     "no_to_yes": "#D97706",
 }
-DATASET_PRETTY = {"mscoco": "MSCOCO", "aokvqa": "AOKVQA", "gqa": "GQA"}
+VALUE_FONTSIZE = 10.0
+LEGEND_FONTSIZE = 11.0
+CAPTION_FONTSIZE = 13.2
 
 
 def read_json(path: Path) -> Dict[str, Any]:
@@ -220,11 +222,11 @@ def plot_panel_a(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     ax.hist(harm, bins=bins, density=True, alpha=0.46, color=COLORS["harm"], label=f"Harmful flips (n={len(harm)})")
     ax.set_xlabel("Fixed C3 replay score")
     ax.set_ylabel("Density")
-    ax.set_title("(a) Helpful vs harmful")
-    ax.legend(frameon=False, fontsize=8)
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE)
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    add_panel_caption(ax, "(a) Helpful vs harmful")
 
 
 def plot_panel_b(ax: plt.Axes, sweep: Sequence[Dict[str, Any]]) -> None:
@@ -236,18 +238,18 @@ def plot_panel_b(ax: plt.Axes, sweep: Sequence[Dict[str, Any]]) -> None:
     help_ = np.array([100.0 * float(r["help_lost"]) for r in sweep])
     random = np.array([100.0 * float(r["random_expected"]) for r in sweep])
     order = np.argsort(x)
-    ax.plot(x[order], harm[order], color=COLORS["harm"], linewidth=2.1, label="Harm caught")
-    ax.plot(x[order], help_[order], color=COLORS["help"], linewidth=2.1, label="Help lost")
-    ax.plot(x[order], random[order], color=COLORS["random"], linestyle=":", linewidth=1.6, label="Random")
+    ax.plot(x[order], harm[order], color=COLORS["harm"], linewidth=2.8, label="Harm caught")
+    ax.plot(x[order], help_[order], color=COLORS["help"], linewidth=2.8, label="Help lost")
+    ax.plot(x[order], random[order], color=COLORS["random"], linestyle=":", linewidth=2.2, label="Random")
     ax.set_xlabel("Fallback budget among changed samples (%)")
     ax.set_ylabel("Selected fraction (%)")
-    ax.set_title("(b) Fallback budget curve")
     ax.set_xlim(0, min(100, max(40, float(np.nanmax(x)) + 4)))
     ax.set_ylim(0, 100)
-    ax.legend(frameon=False, fontsize=8, loc="lower right")
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="lower right")
     ax.grid(alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    add_panel_caption(ax, "(b) Fallback budget curve")
 
 
 def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
@@ -258,31 +260,51 @@ def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     x = np.arange(len(bins))
     vals = [100.0 * float(r["harmful_fraction"]) for r in bins]
     overall = 100.0 * float(bins[0]["overall_harmful_fraction"])
-    labels = [str(r["label"]) if not r["risk_label"] else f"{r['label']}\n{r['risk_label']}" for r in bins]
-    ax.plot(x, vals, color=COLORS["harm"], marker="o", linewidth=2.1, markersize=5.5, label="Per-bin harmful fraction")
-    ax.axhline(overall, color=COLORS["overall"], linestyle="--", linewidth=1.5, label=f"Overall ({overall:.1f}%)")
-    for xx, row, val in zip(x, bins, vals):
-        ax.text(xx, val + 1.2, f"{val:.1f}%", ha="center", va="bottom", fontsize=7.4)
-        ax.text(xx, 1.0, f"n={int(row['n'])}", ha="center", va="bottom", fontsize=7.0, color="#475569")
+    labels = [str(r["label"]) for r in bins]
+    ax.plot(x, vals, color=COLORS["harm"], marker="o", linewidth=2.8, markersize=7.2, label="Per-bin harmful fraction")
+    ax.axhline(overall, color=COLORS["overall"], linestyle="--", linewidth=2.0, label=f"Overall ({overall:.1f}%)")
+    for xx, val in zip(x, vals):
+        ax.text(xx, val + 1.2, f"{val:.1f}%", ha="center", va="bottom", fontsize=VALUE_FONTSIZE)
     ax.set_xticks(x, labels)
     ax.set_xlabel("Fixed C3 score quantile")
     ax.set_ylabel("Harmful fraction (%)")
-    ax.set_title("(c) Harm enrichment by score bin")
     ax.set_ylim(0, min(100.0, max(max(vals) + 8.0, overall + 8.0)))
-    ax.legend(frameon=False, fontsize=8, loc="upper left")
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper left")
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    add_panel_caption(ax, "(c) Harm enrichment by score bin")
 
 
-def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path, title: str) -> None:
+def add_panel_caption(ax: plt.Axes, text: str) -> None:
+    ax.text(
+        0.5,
+        -0.22,
+        text,
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=CAPTION_FONTSIZE,
+    )
+
+
+def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path) -> None:
+    matplotlib.rcParams.update(
+        {
+            "font.size": 12.0,
+            "axes.titlesize": 12.0,
+            "axes.labelsize": 12.4,
+            "xtick.labelsize": 11.0,
+            "ytick.labelsize": 11.0,
+            "legend.fontsize": LEGEND_FONTSIZE,
+        }
+    )
     plot_rows = [r for r in rows if str(r["source"]) == "apply" and str(r["outcome"]) in {"harm", "help"}]
     sweep = threshold_sweep(plot_rows)
-    fig, axes = plt.subplots(1, 3, figsize=(14.0, 3.9), gridspec_kw={"wspace": 0.34})
+    fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.8), gridspec_kw={"wspace": 0.42})
     plot_panel_a(axes[0], plot_rows)
     plot_panel_b(axes[1], sweep)
     plot_panel_c(axes[2], plot_rows)
-    fig.suptitle(title, y=1.05, fontsize=13)
     save_fig(fig, out_path)
 
 
@@ -347,8 +369,7 @@ def main() -> None:
     plot_rows = [r for r in score_rows if str(r["source"]) == "apply" and str(r["outcome"]) in {"harm", "help"}]
     write_csv(sweep_csv, threshold_sweep(plot_rows))
     write_csv(enrichment_csv, harm_enrichment_bins(plot_rows))
-    title = f"Fixed C3 RAPIC diagnostics: {args.target} / {DATASET_PRETTY.get(str(args.dataset), str(args.dataset))}"
-    make_figure(score_rows, fig_path, title)
+    make_figure(score_rows, fig_path)
     write_json(
         summary_path,
         {
