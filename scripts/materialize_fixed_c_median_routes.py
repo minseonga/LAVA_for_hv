@@ -46,6 +46,12 @@ def safe_id(row: Dict[str, Any]) -> str:
     return ""
 
 
+def score_cell(value: Any) -> Any:
+    if value is None or value == "":
+        return ""
+    return float(value)
+
+
 def route_rows(
     rows: Iterable[Dict[str, Any]],
     *,
@@ -74,11 +80,11 @@ def route_rows(
                 "question_id": qid,
                 "route": route,
                 "selected_direction": direction,
-                "selected_score": "" if score is None else float(score),
+                "selected_score": score_cell(score),
                 "yes_to_no_route": y_route,
-                "yes_to_no_score": "" if y_score is None else float(y_score),
+                "yes_to_no_score": score_cell(y_score),
                 "no_to_yes_route": n_route,
-                "no_to_yes_score": "" if n_score is None else float(n_score),
+                "no_to_yes_score": score_cell(n_score),
                 "baseline_correct": row.get("baseline_correct", ""),
                 "intervention_correct": row.get("intervention_correct", ""),
                 "harm": row.get("harm", ""),
