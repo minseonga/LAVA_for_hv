@@ -218,11 +218,11 @@ def plot_panel_a(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     harm = [float(r["score"]) for r in rows if int(r["harm"]) == 1]
     help_ = [float(r["score"]) for r in rows if int(r["help"]) == 1]
     bins = bin_edges(harm + help_)
-    ax.hist(help_, bins=bins, density=True, alpha=0.46, color=COLORS["help"], label=f"Help (n={len(help_)})")
-    ax.hist(harm, bins=bins, density=True, alpha=0.46, color=COLORS["harm"], label=f"Harm (n={len(harm)})")
+    ax.hist(help_, bins=bins, density=True, alpha=0.46, color=COLORS["help"], label="Help")
+    ax.hist(harm, bins=bins, density=True, alpha=0.46, color=COLORS["harm"], label="Harm")
     ax.set_xlabel("Fixed C3 replay score")
     ax.set_ylabel("Density")
-    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper left", bbox_to_anchor=(0.18, 0.99), borderaxespad=0.0)
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper left", bbox_to_anchor=(0.02, 0.98), borderaxespad=0.0, handlelength=1.5)
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -263,24 +263,23 @@ def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     labels = [str(r["label"]) for r in bins]
     ax.plot(x, vals, color=COLORS["harm"], marker="o", linewidth=2.8, markersize=7.2, label="Harm fraction")
     ax.axhline(overall, color=COLORS["overall"], linestyle="--", linewidth=2.0, label=f"Overall ({overall:.1f}%)")
+    label_offsets = [(7, 6), (0, -13), (0, 6), (0, -14), (-7, 6)]
+    label_align = [("left", "bottom"), ("center", "top"), ("center", "bottom"), ("center", "top"), ("right", "bottom")]
     for i, (xx, val) in enumerate(zip(x, vals)):
-        ha = "center"
-        x_text = float(xx)
-        y_text = val + 1.2
-        va = "bottom"
-        if i == 0:
-            ha = "left"
-            x_text = float(xx) + 0.04
-        elif i == len(vals) - 1:
-            ha = "right"
-            x_text = float(xx) - 0.04
-        if i > 0 and abs(val - vals[i - 1]) < 4.0:
-            y_text = val - 2.2
-            va = "top"
+        dx, dy = label_offsets[min(i, len(label_offsets) - 1)]
+        ha, va = label_align[min(i, len(label_align) - 1)]
         if abs(val - overall) < 4.5:
-            y_text = val - 2.2
+            dy = -14
             va = "top"
-        ax.text(x_text, y_text, f"{val:.1f}%", ha=ha, va=va, fontsize=VALUE_FONTSIZE)
+        ax.annotate(
+            f"{val:.1f}%",
+            xy=(xx, val),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            ha=ha,
+            va=va,
+            fontsize=VALUE_FONTSIZE,
+        )
     ax.set_xticks(x, labels)
     ax.set_xlabel("Fixed C3 score quantile")
     ax.set_ylabel("Harmful fraction (%)")
