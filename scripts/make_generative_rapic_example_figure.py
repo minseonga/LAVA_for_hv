@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import html
 import json
 from pathlib import Path
 from typing import Any, Sequence
-
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.patches import FancyBboxPatch
-from PIL import Image
 
 
 DEFAULT_IMAGE = "/home/kms/data/pope/val2014/COCO_val2014_000000008170.jpg"
@@ -31,6 +28,49 @@ DEFAULT_REPAIRED_CAPTION = (
     "The kitchen also contains a cabinet and a countertop. "
     "The refrigerator is situated in the corner of the room, and the microwave is placed on top of it."
 )
+
+
+def esc(value: object) -> str:
+    return html.escape(str(value), quote=True)
+
+
+def text(
+    x: float,
+    y: float,
+    value: object,
+    *,
+    size: int = 14,
+    weight: str = "400",
+    anchor: str = "middle",
+    color: str = "#111827",
+) -> str:
+    return (
+        f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" '
+        f'font-family="Arial, Helvetica, sans-serif" font-size="{size}" '
+        f'font-weight="{weight}" fill="{color}">{esc(value)}</text>'
+    )
+
+
+def multiline_text(
+    x: float,
+    y: float,
+    lines: Sequence[str],
+    *,
+    size: int = 14,
+    weight: str = "400",
+    color: str = "#111827",
+    line_gap: float = 1.25,
+) -> str:
+    out = [
+        f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="start" '
+        f'font-family="Arial, Helvetica, sans-serif" font-size="{size}" '
+        f'font-weight="{weight}" fill="{color}">'
+    ]
+    for idx, line in enumerate(lines):
+        dy = "0" if idx == 0 else f"{size * line_gap:.1f}"
+        out.append(f'<tspan x="{x:.1f}" dy="{dy}">{esc(line)}</tspan>')
+    out.append("</text>")
+    return "\n".join(out)
 
 
 def load_json(path: str) -> dict[str, Any]:
@@ -75,9 +115,10 @@ def caption_excerpt(method_caption: str, repaired_caption: str, selected: str) -
 def read_values(values: dict[str, Any], image_path_arg: str) -> dict[str, Any]:
     plot = values.get("plot") if isinstance(values.get("plot"), dict) else {}
     sample = values.get("sample") if isinstance(values.get("sample"), dict) else {}
+    risk = values.get("risk") if isinstance(values.get("risk"), dict) else {}
     objects = list(plot.get("objects") or DEFAULT_OBJECTS)
     support = [float(x) for x in (plot.get("support_probs") or DEFAULT_SUPPORT)]
-    selected = str(plot.get("selected_object") or values.get("risk", {}).get("selected_object") or DEFAULT_SELECTED)
+    selected = str(plot.get("selected_object") or risk.get("selected_object") or DEFAULT_SELECTED)
     tokens = list(plot.get("token_labels") or DEFAULT_TOKENS)
     image_path = str(image_path_arg or sample.get("image_abs_path") or DEFAULT_IMAGE)
     method_caption = str(sample.get("method_caption") or DEFAULT_METHOD_CAPTION)
@@ -95,179 +136,120 @@ def read_values(values: dict[str, Any], image_path_arg: str) -> dict[str, Any]:
     }
 
 
-def load_image_or_placeholder(path: str) -> np.ndarray:
+def image_href(path: str) -> str:
     p = Path(path).expanduser()
-    if p.exists():
-        return np.asarray(Image.open(p).convert("RGB"))
-    image = np.ones((360, 480, 3), dtype=np.float32)
-    image[:, :, :] = np.array([0.95, 0.96, 0.98])
-    return image
+    if not p.exists():
+        return ""
+    suffix = p.suffix.lower()
+    mime = "image/png" if suffix == ".png" else "image/jpeg"
+    data = base64.b64encode(p.read_bytes()).decode("ascii")
+    return f"data:{mime};base64,{data}"
 
 
 def bold_object_list(objects: Sequence[str], selected: str) -> str:
-    parts = []
-    selected_l = selected.lower()
-    for obj in objects:
-        if str(obj).lower() == selected_l:
-            parts.append(rf"$\mathbf{{{obj}}}$")
-        else:
-            parts.append(str(obj))
-    return ", ".join(parts)
+    return ", ".join(f"[{obj}]" if str(obj).lower() == selected.lower() else str(obj) for obj in objects)
 
 
-def repair_card_text(before_sentence: str, after_sentence: str, selected: str) -> tuple[str, str]:
+def repair_card_text(before_sentence: str, after_sentence: str, selected: str) -> tuple[list[str], list[str]]:
     if selected.lower() == "sink":
         return (
-            'Before $c_M$:\n"... contains a [sink], a cabinet,\nand a countertop."',
-            'After $c_R$:\n"... contains a cabinet and\na countertop."',
+            ['Before c_M:', '"... contains a [sink], a cabinet,', 'and a countertop."'],
+            ['After c_R:', '"... contains a cabinet and', 'a countertop."'],
         )
     before = before_sentence.replace(selected, "[" + selected + "]")
     return (
-        f'Before $c_M$:\n"... {before}."',
-        f'After $c_R$:\n"... {after_sentence}."',
+        ["Before c_M:", f'"... {before}."'],
+        ["After c_R:", f'"... {after_sentence}."'],
     )
+
+
+def bar_panel(x0: float, y0: float, objects: Sequence[str], support: Sequence[float], selected: str) -> list[str]:
+    left = x0 + 125
+    top = y0 + 68
+    plot_w = 300
+    row_gap = 64
+    selected_l = selected.lower()
+    out = [
+        text(x0 + 230, y0 + 24, "(b) Object support probe", size=17, weight="700"),
+        text(x0 + 255, y0 + 330, "Visual support p_yes(o | I)", size=14),
+    ]
+    for tick in [0.0, 0.5, 1.0]:
+        tx = left + tick * plot_w
+        out.append(f'<line x1="{tx:.1f}" y1="{top - 20:.1f}" x2="{tx:.1f}" y2="{top + row_gap * (len(objects) - 1) + 32:.1f}" stroke="#E5E7EB" stroke-width="1"/>')
+        out.append(text(tx, top + row_gap * (len(objects) - 1) + 56, f"{tick:.1f}", size=11, color="#4B5563"))
+    for idx, (obj, prob) in enumerate(zip(objects, support)):
+        y = top + idx * row_gap
+        val = max(0.0, min(1.0, float(prob)))
+        color = "#D62728" if str(obj).lower() == selected_l else "#6BAA75"
+        out.append(text(left - 12, y + 5, obj, size=14, anchor="end"))
+        out.append(f'<rect x="{left:.1f}" y="{y - 16:.1f}" width="{val * plot_w:.1f}" height="32" rx="4" fill="{color}"/>')
+        out.append(text(min(left + val * plot_w + 32, left + plot_w + 20), y + 5, f"{val:.3f}", size=13, anchor="start", color=color))
+        if str(obj).lower() == selected_l:
+            out.append(text(left + 70, y + 5, "top-k risk", size=13, weight="700", anchor="start", color="#D62728"))
+    out.append(f'<line x1="{left:.1f}" y1="{top + row_gap * (len(objects) - 1) + 32:.1f}" x2="{left + plot_w:.1f}" y2="{top + row_gap * (len(objects) - 1) + 32:.1f}" stroke="#374151" stroke-width="1.2"/>')
+    return out
+
+
+def figure_svg(values: dict[str, Any]) -> str:
+    objects = [str(x) for x in values["objects"]]
+    support = [float(x) for x in values["support"]]
+    selected = str(values["selected"])
+    tokens = [str(x) for x in values["tokens"]]
+    before_sentence, after_sentence = caption_excerpt(str(values["method_caption"]), str(values["repaired_caption"]), selected)
+    before_lines, after_lines = repair_card_text(before_sentence, after_sentence, selected)
+    href = image_href(str(values["image_path"]))
+    width, height = 1500, 420
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+    ]
+
+    x0, y0 = 30, 26
+    out.append(text(x0 + 225, y0 + 18, "(a) Method caption objects", size=17, weight="700"))
+    out.append(f'<rect x="{x0}" y="{y0 + 38}" width="440" height="258" rx="5" fill="#F1F5F9" stroke="#CBD5E1"/>')
+    if href:
+        out.append(f'<image x="{x0}" y="{y0 + 38}" width="440" height="258" href="{href}" preserveAspectRatio="xMidYMid meet"/>')
+    else:
+        out.append(text(x0 + 220, y0 + 168, "image not found", size=15, color="#64748B"))
+    out.append(multiline_text(x0 + 8, y0 + 322, ['c_M: "... contains a sink, a cabinet,', 'and a countertop."'], size=13))
+    out.append(text(x0 + 8, y0 + 385, f"Objects: {bold_object_list(objects, selected)}", size=13, anchor="start", color="#334155"))
+
+    out.extend(bar_panel(520, 26, objects, support, selected))
+
+    x2, y2 = 930, 26
+    out.append(text(x2 + 270, y2 + 18, "(c) Local residual repair", size=17, weight="700"))
+    out.append(f'<rect x="{x2 + 16}" y="{y2 + 52}" width="520" height="310" rx="14" fill="#F8FAFC" stroke="#334155" stroke-width="1.2"/>')
+    out.append(text(x2 + 48, y2 + 92, f"Selected object: {selected}", size=15, weight="700", anchor="start", color="#D62728"))
+    out.append(text(x2 + 48, y2 + 136, f"Suppress token set T({selected})", size=14, anchor="start", color="#334155"))
+    out.append(text(x2 + 48, y2 + 165, f"{', '.join(tokens)}    bias b = -1.0", size=14, anchor="start", color="#334155"))
+    out.append(multiline_text(x2 + 48, y2 + 215, before_lines, size=14))
+    out.append(multiline_text(x2 + 48, y2 + 305, after_lines, size=14))
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def svg_output_path(path: str) -> Path:
+    out = Path(path)
+    if out.suffix.lower() != ".svg":
+        out = out.with_suffix(".svg")
+    return out
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Make the 3-panel generative RAPIC overview example figure.")
+    ap = argparse.ArgumentParser(description="Make the 3-panel generative RAPIC overview example figure as dependency-free SVG.")
     ap.add_argument("--values_json", default="", help="JSON from scripts/extract_generative_overview_values.py.")
     ap.add_argument("--image_path", default="", help="Override image path. Defaults to values_json sample image path.")
-    ap.add_argument("--out", default="experiments/generative_overview_panels/generative_rapic_example.pdf")
-    ap.add_argument("--out_png", default="", help="Optional PNG copy.")
+    ap.add_argument("--out", default="experiments/generative_overview_panels/generative_rapic_example.svg")
+    ap.add_argument("--out_png", default="", help="Ignored by the dependency-free SVG renderer.")
     args = ap.parse_args()
 
     values = read_values(load_json(args.values_json), args.image_path)
-    objects = values["objects"]
-    support_probs = np.asarray(values["support"], dtype=float)
-    selected_object = str(values["selected"])
-    token_labels = [str(x) for x in values["tokens"]]
-    method_caption = str(values["method_caption"])
-    repaired_caption = str(values["repaired_caption"])
-    before_sentence, after_sentence = caption_excerpt(method_caption, repaired_caption, selected_object)
-    before_text, after_text = repair_card_text(before_sentence, after_sentence, selected_object)
-    image = load_image_or_placeholder(str(values["image_path"]))
-
-    fig, axes = plt.subplots(
-        1,
-        3,
-        figsize=(15, 4.2),
-        gridspec_kw={"width_ratios": [1.2, 1.0, 1.35]},
-    )
-
-    ax = axes[0]
-    ax.imshow(image)
-    ax.axis("off")
-    ax.set_title("(a) Method caption objects", fontsize=12, weight="bold")
-    ax.text(
-        0.02,
-        -0.10,
-        'c_M: "... contains a sink, a cabinet,\nand a countertop."',
-        transform=ax.transAxes,
-        fontsize=9.5,
-        va="top",
-    )
-    ax.text(
-        0.02,
-        -0.28,
-        f"Objects: {bold_object_list(objects, selected_object)}",
-        transform=ax.transAxes,
-        fontsize=9.5,
-        color="#334155",
-        va="top",
-    )
-
-    ax = axes[1]
-    colors = ["#6BAA75" if obj != selected_object else "#D62728" for obj in objects]
-    y = np.arange(len(objects))
-    ax.barh(y, support_probs, color=colors, height=0.55)
-    ax.set_yticks(y)
-    ax.set_yticklabels(objects, fontsize=10)
-    ax.invert_yaxis()
-    ax.set_xlim(0, 1.05)
-    ax.set_xlabel(r"Visual support $p_{\mathrm{yes}}(o\mid I)$", fontsize=10)
-    ax.set_title("(b) Object support probe", fontsize=12, weight="bold")
-    for i, val in enumerate(support_probs):
-        ax.text(min(float(val) + 0.025, 1.02), i, f"{float(val):.3f}", va="center", fontsize=9)
-    risk_idx = objects.index(selected_object) if selected_object in objects else int(np.argmin(support_probs))
-    ax.text(
-        0.20,
-        risk_idx,
-        "top-k risk",
-        va="center",
-        ha="left",
-        fontsize=9,
-        color="#D62728",
-        weight="bold",
-    )
-    ax.grid(axis="x", linestyle="--", alpha=0.25)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-    ax = axes[2]
-    ax.axis("off")
-    ax.set_title("(c) Local residual repair", fontsize=12, weight="bold")
-    box = FancyBboxPatch(
-        (0.02, 0.08),
-        0.96,
-        0.84,
-        boxstyle="round,pad=0.02,rounding_size=0.03",
-        linewidth=1.1,
-        edgecolor="#334155",
-        facecolor="#F8FAFC",
-        transform=ax.transAxes,
-    )
-    ax.add_patch(box)
-    ax.text(
-        0.07,
-        0.82,
-        rf"Selected object: $\mathbf{{{selected_object}}}$",
-        fontsize=10,
-        color="#D62728",
-        transform=ax.transAxes,
-    )
-    ax.text(
-        0.07,
-        0.68,
-        rf"Suppress token set $T(\mathrm{{{selected_object}}})$",
-        fontsize=9.5,
-        color="#334155",
-        transform=ax.transAxes,
-    )
-    ax.text(
-        0.07,
-        0.61,
-        f"{', '.join(token_labels)}    bias b = -1.0",
-        fontsize=9.5,
-        color="#334155",
-        transform=ax.transAxes,
-    )
-    ax.text(
-        0.07,
-        0.50,
-        before_text,
-        fontsize=9.2,
-        transform=ax.transAxes,
-        va="top",
-    )
-    ax.text(
-        0.07,
-        0.25,
-        after_text,
-        fontsize=9.2,
-        transform=ax.transAxes,
-        va="top",
-    )
-
-    plt.subplots_adjust(wspace=0.35, bottom=0.22)
-    out = Path(args.out)
+    out = svg_output_path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out, bbox_inches="tight", pad_inches=0.03)
+    out.write_text(figure_svg(values), encoding="utf-8")
     print("[saved]", out)
     if args.out_png:
-        out_png = Path(args.out_png)
-        out_png.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out_png, dpi=220, bbox_inches="tight", pad_inches=0.03)
-        print("[saved]", out_png)
+        print("[warn] --out_png ignored; this dependency-free renderer writes SVG. Convert SVG externally if PNG/PDF is required.")
 
 
 if __name__ == "__main__":
