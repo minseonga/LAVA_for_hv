@@ -347,7 +347,7 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
 def add_panel_caption(ax: plt.Axes, text: str) -> None:
     ax.text(
         0.5,
-        -0.20,
+        -0.16,
         text,
         transform=ax.transAxes,
         ha="center",
@@ -367,7 +367,7 @@ def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path) -> None:
             "legend.fontsize": LEGEND_FONTSIZE,
         }
     )
-    fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.8), gridspec_kw={"width_ratios": [1.12, 1.0, 1.0], "wspace": 0.42})
+    fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.8), gridspec_kw={"width_ratios": [1.12, 1.0, 1.0], "wspace": 0.25})
     panel_accuracy(axes[0], rows)
     panel_gain_harm(axes[1], rows)
     panel_fallback_precision_rate(axes[2], rows)
