@@ -194,16 +194,24 @@ def suppression_logit_rows(
     decision_pos = first_object_decision_position(tokenizer, pack, selected_object)
     vec = pack.logits[decision_pos].to(torch.float32)
     ids = suppression_token_ids(tokenizer, str(selected_object), str(suppress_mode))
+    after_vec = vec.clone()
+    if ids:
+        after_vec[[int(x) for x in ids]] += float(suppress_bias)
     rows: list[dict[str, Any]] = []
     for token_id in ids:
         tid = int(token_id)
         before = float(vec[tid].item())
+        after = float(after_vec[tid].item())
+        before_rank = int(torch.sum(vec > before).item()) + 1
+        after_rank = int(torch.sum(after_vec > after).item()) + 1
         rows.append(
             {
                 "token_id": tid,
                 "token_text": tokenizer.decode([tid], skip_special_tokens=True),
                 "before_logit": before,
-                "after_logit": float(before + float(suppress_bias)),
+                "after_logit": after,
+                "before_rank": before_rank,
+                "after_rank": after_rank,
                 "suppress_bias": float(suppress_bias),
             }
         )

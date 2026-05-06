@@ -476,20 +476,28 @@ def token_logit_change_panel(
     before: Sequence[float],
     after: Sequence[float],
     *,
-    width: int = 560,
-    height: int = 260,
+    ranks: Sequence[tuple[int | None, int | None]] | None = None,
+    selected_object: str = "",
+    method_caption: str = "",
+    repaired_caption: str = "",
+    width: int = 680,
+    height: int = 285,
 ) -> str:
-    left, right, top, bottom = 86, 56, 44, 46
+    left, right, top, bottom = 86, 150, 70, 48
     plot_w = width - left - right
-    row_gap = 50
+    row_gap = 44
     bar_h = 14
     ymax = max(1.0, *(float(x) for x in before), *(float(x) for x in after))
     ymax = max(1.0, (int(ymax / 5) + 1) * 5)
+    selected = str(selected_object or "").strip()
+    removed = bool(selected and selected.lower() in str(method_caption or "").lower() and selected.lower() not in str(repaired_caption or "").lower())
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
-        text(width / 2, 22, "Token logits before/after suppression", size=15, weight=700),
+        text(width / 2, 22, f"Suppressed {selected or 'object'}-token logits", size=15, weight=700),
     ]
+    if removed:
+        out.append(text(width / 2, 45, f"{selected} appears in c_M, then is removed from c_R", size=11, color=COLORS["muted"]))
     axis_y = top + row_gap * len(token_labels) + 4
     for tick in [0.0, 0.5, 1.0]:
         x = left + tick * plot_w
@@ -497,6 +505,7 @@ def token_logit_change_panel(
         out.append(text(x, axis_y + 18, f"{tick * ymax:.0f}", size=10, color=COLORS["muted"]))
     out.append(f'<line x1="{left}" y1="{axis_y:.1f}" x2="{left + plot_w:.1f}" y2="{axis_y:.1f}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
     out.append(text(left + plot_w / 2, height - 8, "raw logit", size=11, color=COLORS["muted"]))
+    out.append(text(left + plot_w + 36, top - 18, "rank", size=10, anchor="start", color=COLORS["muted"]))
 
     for i, label in enumerate(token_labels):
         y = top + i * row_gap
@@ -513,11 +522,15 @@ def token_logit_change_panel(
             out.append(text(left + w + 7, y + dy + 11, f"{value:.2f}", size=10, anchor="start", color=color))
             if i == 0:
                 out.append(text(left + plot_w - (96 if name == "before" else 36), top - 18 + (0 if name == "before" else 18), name, size=10, anchor="start", color=color))
+        if ranks and i < len(ranks):
+            before_rank, after_rank = ranks[i]
+            if before_rank is not None and after_rank is not None:
+                out.append(text(left + plot_w + 36, y + 12, f"#{before_rank} -> #{after_rank}", size=10, anchor="start", color=COLORS["muted"]))
     out.append("</svg>")
     return "\n".join(out)
 
 
-def raw_suppression_series(values: dict[str, Any]) -> tuple[list[str], list[float], list[float]] | None:
+def raw_suppression_series(values: dict[str, Any]) -> tuple[list[str], list[float], list[float], list[tuple[int | None, int | None]]] | None:
     raw_values = values.get("raw_values", {}) if isinstance(values.get("raw_values"), dict) else {}
     rows = raw_values.get("suppression_token_logits")
     if not isinstance(rows, list) or not rows:
@@ -525,6 +538,7 @@ def raw_suppression_series(values: dict[str, Any]) -> tuple[list[str], list[floa
     labels: list[str] = []
     before: list[float] = []
     after: list[float] = []
+    ranks: list[tuple[int | None, int | None]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -539,7 +553,11 @@ def raw_suppression_series(values: dict[str, Any]) -> tuple[list[str], list[floa
         labels.append(label)
         before.append(b)
         after.append(a)
-    return (labels, before, after) if labels else None
+        try:
+            ranks.append((int(row.get("before_rank")), int(row.get("after_rank"))))
+        except Exception:
+            ranks.append((None, None))
+    return (labels, before, after, ranks) if labels else None
 
 
 def write(path: Path, body: str) -> None:
@@ -616,17 +634,14 @@ def main() -> None:
     before = parse_float_list(args.before) or [float(x) for x in (plot_values.get("before") or preset["before"])]
     after = parse_float_list(args.after) or [float(x) for x in (plot_values.get("after") or preset["after"])]
     raw_series = raw_suppression_series(values)
+    ranks: list[tuple[int | None, int | None]] = []
     if raw_series and not (args.token_labels or args.before or args.after):
-        token_labels, before, after = raw_series
+        token_labels, before, after, ranks = raw_series
     if len(before) != len(token_labels) or len(after) != len(token_labels):
         raise ValueError("--before and --after lengths must match --token_labels length")
     print(f"[bars] token_labels={token_labels}")
     print(f"[bars] before={before}")
     print(f"[bars] after={after}")
-    suppression = token_logit_change_panel(token_labels, before, after)
-    write(out_dir / "object_token_logit_change.svg", suppression)
-    write(out_dir / "object_token_raw_logit_change.svg", suppression)
-
     panel_root = Path(args.panel_root)
     method_caption = str(args.method_caption or "").strip()
     method_path: Path | None = None
@@ -656,6 +671,18 @@ def main() -> None:
             question_id=str(args.question_id),
             prefer_name="pred_object_token_suppression_merged",
         )
+
+    suppression = token_logit_change_panel(
+        token_labels,
+        before,
+        after,
+        ranks=ranks,
+        selected_object=objects[selected_idx] if objects else selected_object,
+        method_caption=method_caption,
+        repaired_caption=repaired_caption,
+    )
+    write(out_dir / "object_token_logit_change.svg", suppression)
+    write(out_dir / "object_token_raw_logit_change.svg", suppression)
 
     if method_caption or repaired_caption:
         print(f"[caption] method_source={method_path or ''}")
