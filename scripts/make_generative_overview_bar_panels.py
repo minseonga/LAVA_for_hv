@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
+import os
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 
 COLORS = {
@@ -29,6 +31,183 @@ def text(x: float, y: float, value: object, *, size: int = 13, weight: int = 400
         f'font-family="Arial, Helvetica, sans-serif" font-size="{size}" '
         f'font-weight="{weight}" fill="{color}">{esc(value)}</text>'
     )
+
+
+def read_jsonl(path: Path) -> Iterable[dict[str, Any]]:
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                yield json.loads(line)
+
+
+def digits_only(value: object) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def row_matches(row: dict[str, Any], *, image: str, question_id: str) -> bool:
+    if question_id:
+        row_qid = str(row.get("question_id") or row.get("id") or "").strip()
+        if row_qid == str(question_id).strip():
+            return True
+
+    image_name = Path(str(image or "")).name
+    image_digits = digits_only(image_name)
+    row_image = Path(str(row.get("image") or row.get("image_path") or "")).name
+    if image_name and row_image == image_name:
+        return True
+
+    row_image_id = row.get("image_id") or row.get("image") or ""
+    return bool(image_digits and digits_only(row_image_id) == image_digits)
+
+
+def caption_text(row: dict[str, Any]) -> str:
+    for key in ("output", "caption", "text", "answer", "prediction", "pred"):
+        value = str(row.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def find_caption_in_file(path: Path, *, image: str, question_id: str) -> tuple[str, dict[str, Any]] | None:
+    try:
+        for row in read_jsonl(path):
+            if row_matches(row, image=image, question_id=question_id):
+                cap = caption_text(row)
+                if cap:
+                    return cap, row
+    except Exception:
+        return None
+    return None
+
+
+def default_raw_pred(panel_root: Path, target: str, split: str) -> Path:
+    name_by_target = {
+        "llava15_vga": "pred_vga_caption.jsonl",
+        "qwen25_vga": "pred_vga_caption.jsonl",
+        "llava15_pai_attn": "pred_pai_attn_caption.jsonl",
+        "qwen25_pai_attn": "pred_pai_attn_caption.jsonl",
+        "llava15_vaf": "pred_vaf_caption.jsonl",
+        "qwen25_vaf": "pred_vaf_caption.jsonl",
+    }
+    return panel_root / "raw_sources" / target / split / name_by_target.get(target, "pred_vga_caption.jsonl")
+
+
+def default_repaired_candidates(panel_root: Path, target: str, split: str, threshold: str) -> list[Path]:
+    th_short = str(float(threshold)).rstrip("0").rstrip(".")
+    th_fixed = f"{float(threshold):.2f}"
+    apply_dir = f"{split}_apply_next_token_yesno_yp{th_short}"
+    names = [
+        f"pred_object_token_suppression_merged_max8_vocab_first_token_bias-1.0_yp{th_fixed}.jsonl",
+        f"pred_object_token_suppression_merged_max8_vocab_first_token_bias-1.0_yp{th_short}.jsonl",
+    ]
+    roots = [
+        panel_root / "ours_oldv84_fixedyp06" / target / apply_dir / split,
+        panel_root / "ours_fixedyp06" / target / apply_dir / split,
+    ]
+    if target == "llava15_vga":
+        roots.append(
+            Path("/home/kms/LLaVA_calibration/experiments/rapic_generative_v84_valcalib_vga_token_suppression")
+            / apply_dir
+            / split
+        )
+    return [root / name for root in roots for name in names]
+
+
+def search_caption(
+    *,
+    explicit_path: str,
+    candidates: Sequence[Path],
+    glob_roots: Sequence[Path],
+    image: str,
+    question_id: str,
+    prefer_name: str,
+) -> tuple[str, Path | None, dict[str, Any] | None]:
+    paths: list[Path] = []
+    if explicit_path:
+        paths.append(Path(explicit_path))
+    paths.extend(candidates)
+    for root in glob_roots:
+        if root.exists():
+            paths.extend(sorted(root.rglob("*.jsonl")))
+
+    seen: set[str] = set()
+    ordered = sorted(
+        [p for p in paths if str(p) not in seen and not seen.add(str(p))],
+        key=lambda p: (prefer_name not in p.name, len(str(p))),
+    )
+    for path in ordered:
+        if not path.exists():
+            continue
+        found = find_caption_in_file(path, image=image, question_id=question_id)
+        if found:
+            cap, row = found
+            return cap, path, row
+    return "", None, None
+
+
+def wrap_words(value: str, *, max_chars: int = 68) -> list[str]:
+    words = str(value or "").split()
+    lines: list[str] = []
+    cur = ""
+    for word in words:
+        nxt = word if not cur else f"{cur} {word}"
+        if len(nxt) <= max_chars:
+            cur = nxt
+        else:
+            if cur:
+                lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines or ["caption not found"]
+
+
+def multiline_text(
+    x: float,
+    y: float,
+    lines: Sequence[str],
+    *,
+    size: int = 13,
+    weight: int = 400,
+    anchor: str = "start",
+    color: str = COLORS["text"],
+    line_gap: float = 1.28,
+) -> str:
+    out = [
+        f'<text x="{x:.1f}" y="{y:.1f}" text-anchor="{anchor}" '
+        f'font-family="Arial, Helvetica, sans-serif" font-size="{size}" '
+        f'font-weight="{weight}" fill="{color}">'
+    ]
+    for idx, line in enumerate(lines):
+        dy = "0" if idx == 0 else f"{size * line_gap:.1f}"
+        out.append(f'<tspan x="{x:.1f}" dy="{dy}">{esc(line)}</tspan>')
+    out.append("</text>")
+    return "\n".join(out)
+
+
+def caption_pair_panel(method_caption: str, repaired_caption: str, *, width: int = 860, height: int = 230) -> str:
+    margin = 24
+    gap = 22
+    box_w = (width - 2 * margin - gap) / 2
+    box_h = height - 58
+    y = 38
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        text(width / 2, 22, "Caption repair example", size=15, weight=700),
+    ]
+    for idx, (title, body, color) in enumerate(
+        [
+            ("Method caption c_M", method_caption, COLORS["before"]),
+            ("Repaired caption c_R", repaired_caption, COLORS["after"]),
+        ]
+    ):
+        x = margin + idx * (box_w + gap)
+        out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{box_w:.1f}" height="{box_h:.1f}" rx="6" fill="#FFFFFF" stroke="{color}" stroke-width="1.8"/>')
+        out.append(text(x + 16, y + 26, title, size=13, weight=700, anchor="start", color=color))
+        out.append(multiline_text(x + 16, y + 54, wrap_words(body, max_chars=46), size=13, anchor="start"))
+    out.append("</svg>")
+    return "\n".join(out)
 
 
 def support_panel(
@@ -130,6 +309,22 @@ def write(path: Path, body: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Create small SVG bar panels for the generative overview figure.")
     ap.add_argument("--out_dir", default="experiments/generative_overview_panels")
+    ap.add_argument(
+        "--panel_root",
+        default=os.environ.get(
+            "PANEL_ROOT",
+            "/home/kms/LLaVA_calibration/experiments/coco_chair_multibackbone_method_ours_panel",
+        ),
+    )
+    ap.add_argument("--target", default="llava15_vga")
+    ap.add_argument("--split", default="test")
+    ap.add_argument("--threshold", default="0.60")
+    ap.add_argument("--image", default="COCO_val2014_000000304819.jpg")
+    ap.add_argument("--question_id", default="")
+    ap.add_argument("--raw_pred_jsonl", default="")
+    ap.add_argument("--repaired_pred_jsonl", default="")
+    ap.add_argument("--method_caption", default="")
+    ap.add_argument("--repaired_caption", default="")
     args = ap.parse_args()
     out_dir = Path(args.out_dir)
 
@@ -142,6 +337,81 @@ def main() -> None:
     before = [1.00, 0.82, 0.64]
     after = [0.28, 0.22, 0.18]
     write(out_dir / "object_token_suppression_bars.svg", suppression_panel(token_labels, before, after))
+
+    panel_root = Path(args.panel_root)
+    method_caption = str(args.method_caption or "").strip()
+    method_path: Path | None = None
+    method_row: dict[str, Any] | None = None
+    if not method_caption:
+        method_caption, method_path, method_row = search_caption(
+            explicit_path=str(args.raw_pred_jsonl or ""),
+            candidates=[default_raw_pred(panel_root, str(args.target), str(args.split))],
+            glob_roots=[panel_root / "raw_sources" / str(args.target)],
+            image=str(args.image),
+            question_id=str(args.question_id),
+            prefer_name="pred_vga_caption",
+        )
+
+    repaired_caption = str(args.repaired_caption or "").strip()
+    repaired_path: Path | None = None
+    repaired_row: dict[str, Any] | None = None
+    if not repaired_caption:
+        repaired_caption, repaired_path, repaired_row = search_caption(
+            explicit_path=str(args.repaired_pred_jsonl or ""),
+            candidates=default_repaired_candidates(panel_root, str(args.target), str(args.split), str(args.threshold)),
+            glob_roots=[
+                panel_root / "ours_oldv84_fixedyp06" / str(args.target),
+                panel_root / "ours_fixedyp06" / str(args.target),
+            ],
+            image=str(args.image),
+            question_id=str(args.question_id),
+            prefer_name="pred_object_token_suppression_merged",
+        )
+
+    if method_caption or repaired_caption:
+        print(f"[caption] method_source={method_path or ''}")
+        print(f"[caption] method={method_caption}")
+        print(f"[caption] repaired_source={repaired_path or ''}")
+        print(f"[caption] repaired={repaired_caption}")
+        write(out_dir / "caption_pair.svg", caption_pair_panel(method_caption, repaired_caption))
+        write(
+            out_dir / "caption_pair.json",
+            json.dumps(
+                {
+                    "target": args.target,
+                    "split": args.split,
+                    "threshold": args.threshold,
+                    "image": args.image,
+                    "question_id": args.question_id,
+                    "method_caption": method_caption,
+                    "method_source": str(method_path) if method_path else "",
+                    "method_row": method_row or {},
+                    "repaired_caption": repaired_caption,
+                    "repaired_source": str(repaired_path) if repaired_path else "",
+                    "repaired_row": repaired_row or {},
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+        write(
+            out_dir / "caption_pair.txt",
+            "\n".join(
+                [
+                    f"image: {args.image}",
+                    f"target: {args.target}",
+                    "",
+                    f"method_caption_source: {method_path or ''}",
+                    f"method_caption: {method_caption}",
+                    "",
+                    f"repaired_caption_source: {repaired_path or ''}",
+                    f"repaired_caption: {repaired_caption}",
+                    "",
+                ]
+            ),
+        )
+    else:
+        print(f"[warn] caption row not found for image={args.image!r} question_id={args.question_id!r}")
 
 
 if __name__ == "__main__":
