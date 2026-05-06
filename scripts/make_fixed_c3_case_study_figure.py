@@ -34,6 +34,7 @@ COLORS = {
     "line": "#94A3B8",
 }
 VALUE_FONTSIZE = 10.0
+BAR_VALUE_FONTSIZE = 8.6
 LEGEND_FONTSIZE = 11.0
 CAPTION_FONTSIZE = 13.2
 
@@ -276,7 +277,7 @@ def panel_accuracy(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
         vals = [100.0 * float(row_map[c][key]) for c in cats]
         bars = ax.bar(x + (idx - 1) * width, vals, width=width, color=color, label=label)
         for rect, val in zip(bars, vals):
-            ax.text(rect.get_x() + rect.get_width() / 2, val + 0.25, f"{val:.1f}", ha="center", va="bottom", fontsize=VALUE_FONTSIZE)
+            ax.text(rect.get_x() + rect.get_width() / 2, val + 0.22, f"{val:.1f}", ha="center", va="bottom", fontsize=BAR_VALUE_FONTSIZE)
     ax.set_xticks(x, [CATEGORY_LABELS[c] for c in cats])
     vals_all = [100.0 * float(row_map[c][k]) for c in cats for k in ("baseline_acc", "method_acc", "rapic_acc")]
     ax.set_ylim(max(0.0, min(vals_all) - 3.0), min(100.0, max(vals_all) + 4.0))
@@ -304,7 +305,7 @@ def panel_gain_harm(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     ax.set_yticks(y, [CATEGORY_LABELS[c] for c in cats])
     ax.set_ylim(-0.45, len(cats) - 0.45)
     vals = raw_vals + rapic_vals
-    ax.set_xlim(max(0.0, min(vals) - 0.2), max(vals) + 0.35)
+    ax.set_xlim(max(0.0, min(vals) - 0.45), max(vals) + 0.45)
     ax.set_xlabel("Helpful gains / harmful flips")
     ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="lower right")
     ax.grid(alpha=0.24, linestyle=":")
@@ -322,7 +323,7 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
 
     bars = ax.bar(x, rate, width=0.48, color=COLORS["fallback_rate"], label="Fallback rate")
     for rect, val in zip(bars, rate):
-        ax.text(rect.get_x() + rect.get_width() / 2, val + 0.04, f"{val:.1f}%", ha="center", va="bottom", fontsize=VALUE_FONTSIZE)
+        ax.text(rect.get_x() + rect.get_width() / 2, max(0.08, val - 0.58), f"{val:.1f}%", ha="center", va="top", fontsize=VALUE_FONTSIZE)
     ax.set_xticks(x, [CATEGORY_LABELS[c] for c in cats])
     ax.set_ylabel("Fallback rate (%)")
     ax.set_ylim(0.0, max(1.0, max(rate) * 1.35) if rate else 1.0)
