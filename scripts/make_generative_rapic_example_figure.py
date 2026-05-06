@@ -184,8 +184,6 @@ def bar_panel(x0: float, y0: float, objects: Sequence[str], support: Sequence[fl
         out.append(text(left - 12, y + 5, obj, size=14, anchor="end"))
         out.append(f'<rect x="{left:.1f}" y="{y - 16:.1f}" width="{val * plot_w:.1f}" height="32" rx="4" fill="{color}"/>')
         out.append(text(min(left + val * plot_w + 32, left + plot_w + 20), y + 5, f"{val:.3f}", size=13, anchor="start", color=color))
-        if str(obj).lower() == selected_l:
-            out.append(text(left + 70, y + 5, "top-k risk", size=13, weight="700", anchor="start", color="#D62728"))
     out.append(f'<line x1="{left:.1f}" y1="{top + row_gap * (len(objects) - 1) + 32:.1f}" x2="{left + plot_w:.1f}" y2="{top + row_gap * (len(objects) - 1) + 32:.1f}" stroke="#374151" stroke-width="1.2"/>')
     return out
 

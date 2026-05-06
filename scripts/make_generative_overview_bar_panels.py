@@ -372,8 +372,6 @@ def support_panel(
         out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h:.1f}" rx="3" fill="{color}"/>')
         out.append(text(x + bar_w / 2, max(top + 12, y - 7), f"{p:.3f}", size=11, color=color))
         out.append(text(x + bar_w / 2, axis_y + 22, obj, size=12))
-    label = objects[selected_idx] if 0 <= selected_idx < len(objects) else "object"
-    out.append(text(width / 2, height - 8, f"Top-k risk object: {label}", size=11, color=COLORS["selected"]))
     out.append("</svg>")
     return "\n".join(out)
 
@@ -480,6 +478,77 @@ def suppression_panel(
     return "\n".join(out)
 
 
+def token_logit_change_panel(
+    token_labels: Sequence[str],
+    before: Sequence[float],
+    after: Sequence[float],
+    *,
+    width: int = 560,
+    height: int = 260,
+) -> str:
+    left, right, top, bottom = 86, 56, 44, 46
+    plot_w = width - left - right
+    row_gap = 50
+    bar_h = 14
+    ymax = max(1.0, *(float(x) for x in before), *(float(x) for x in after))
+    ymax = max(1.0, (int(ymax / 5) + 1) * 5)
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        f'<rect width="{width}" height="{height}" fill="white"/>',
+        text(width / 2, 22, "Token logits before/after suppression", size=15, weight=700),
+    ]
+    axis_y = top + row_gap * len(token_labels) + 4
+    for tick in [0.0, 0.5, 1.0]:
+        x = left + tick * plot_w
+        out.append(f'<line x1="{x:.1f}" y1="{top - 14:.1f}" x2="{x:.1f}" y2="{axis_y:.1f}" stroke="{COLORS["grid"]}" stroke-width="1"/>')
+        out.append(text(x, axis_y + 18, f"{tick * ymax:.0f}", size=10, color=COLORS["muted"]))
+    out.append(f'<line x1="{left}" y1="{axis_y:.1f}" x2="{left + plot_w:.1f}" y2="{axis_y:.1f}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
+    out.append(text(left + plot_w / 2, height - 8, "raw logit", size=11, color=COLORS["muted"]))
+
+    for i, label in enumerate(token_labels):
+        y = top + i * row_gap
+        b = float(before[i])
+        a = float(after[i])
+        out.append(text(left - 12, y + 12, label, size=12, anchor="end"))
+        for dy, value, color, name in [
+            (-8, b, COLORS["before"], "before"),
+            (10, a, COLORS["after"], "after"),
+        ]:
+            v = max(0.0, min(ymax, value))
+            w = (v / ymax) * plot_w
+            out.append(f'<rect x="{left:.1f}" y="{y + dy:.1f}" width="{w:.1f}" height="{bar_h}" rx="3" fill="{color}"/>')
+            out.append(text(left + w + 7, y + dy + 11, f"{value:.2f}", size=10, anchor="start", color=color))
+            if i == 0:
+                out.append(text(left + plot_w - (96 if name == "before" else 36), top - 18 + (0 if name == "before" else 18), name, size=10, anchor="start", color=color))
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def raw_suppression_series(values: dict[str, Any]) -> tuple[list[str], list[float], list[float]] | None:
+    raw_values = values.get("raw_values", {}) if isinstance(values.get("raw_values"), dict) else {}
+    rows = raw_values.get("suppression_token_logits")
+    if not isinstance(rows, list) or not rows:
+        return None
+    labels: list[str] = []
+    before: list[float] = []
+    after: list[float] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("token_text") or row.get("token_id") or "").strip()
+        if not label:
+            continue
+        try:
+            b = float(row.get("before_logit"))
+            a = float(row.get("after_logit"))
+        except Exception:
+            continue
+        labels.append(label)
+        before.append(b)
+        after.append(a)
+    return (labels, before, after) if labels else None
+
+
 def write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
@@ -553,13 +622,17 @@ def main() -> None:
     token_labels = parse_csv_list(args.token_labels) or list(plot_values.get("token_labels") or preset["token_labels"])
     before = parse_float_list(args.before) or [float(x) for x in (plot_values.get("before") or preset["before"])]
     after = parse_float_list(args.after) or [float(x) for x in (plot_values.get("after") or preset["after"])]
+    raw_series = raw_suppression_series(values)
+    if raw_series and not (args.token_labels or args.before or args.after):
+        token_labels, before, after = raw_series
     if len(before) != len(token_labels) or len(after) != len(token_labels):
         raise ValueError("--before and --after lengths must match --token_labels length")
     print(f"[bars] token_labels={token_labels}")
     print(f"[bars] before={before}")
     print(f"[bars] after={after}")
-    suppression = suppression_panel(token_labels, before, after)
+    suppression = token_logit_change_panel(token_labels, before, after)
     write(out_dir / "object_token_logit_change.svg", suppression)
+    write(out_dir / "object_token_raw_logit_change.svg", suppression)
 
     panel_root = Path(args.panel_root)
     method_caption = str(args.method_caption or "").strip()
