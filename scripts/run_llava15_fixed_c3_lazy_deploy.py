@@ -78,7 +78,7 @@ def patch_legacy_transformers_bloom_masks() -> None:
         bloom._make_causal_mask = _make_causal_mask  # type: ignore[attr-defined]
 
 
-def prepare_vga_origin(vga_root: str) -> None:
+def prepare_vga_origin(vga_root: str, model_path: str) -> None:
     root = Path(vga_root)
     if not root.is_absolute():
         root = (REPO_ROOT / root).resolve()
@@ -87,7 +87,21 @@ def prepare_vga_origin(vga_root: str) -> None:
             sys.path.remove(path)
         sys.path.insert(0, path)
     patch_legacy_transformers_bloom_masks()
-    from vcd_utils.greedy_sample import evolve_greedy_sampling
+
+    import transformers
+
+    original_from_pretrained = transformers.AutoTokenizer.from_pretrained
+
+    def patched_from_pretrained(pretrained_model_name_or_path: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(pretrained_model_name_or_path) == "path/to/llava-v1.5-7b":
+            return original_from_pretrained(model_path, *args, **kwargs)
+        return original_from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+    transformers.AutoTokenizer.from_pretrained = patched_from_pretrained
+    try:
+        from vcd_utils.greedy_sample import evolve_greedy_sampling
+    finally:
+        transformers.AutoTokenizer.from_pretrained = original_from_pretrained
 
     evolve_greedy_sampling()
 
@@ -317,7 +331,7 @@ def main() -> None:
         print("[reuse]", summary_json, flush=True)
         return
 
-    prepare_vga_origin(str(args.vga_root))
+    prepare_vga_origin(str(args.vga_root), str(args.model_path))
     controller = FixedCTransitionController.from_fixed_json(
         os.path.abspath(args.fixed_json),
         target=str(args.target),
