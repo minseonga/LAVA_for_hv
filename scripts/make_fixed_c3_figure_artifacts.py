@@ -218,8 +218,8 @@ def plot_panel_a(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     harm = [float(r["score"]) for r in rows if int(r["harm"]) == 1]
     help_ = [float(r["score"]) for r in rows if int(r["help"]) == 1]
     bins = bin_edges(harm + help_)
-    ax.hist(help_, bins=bins, density=True, alpha=0.46, color=COLORS["help"], label="Help")
-    ax.hist(harm, bins=bins, density=True, alpha=0.46, color=COLORS["harm"], label="Harm")
+    ax.hist(help_, bins=bins, density=True, alpha=0.46, color=COLORS["help"], label="Helpful")
+    ax.hist(harm, bins=bins, density=True, alpha=0.46, color=COLORS["harm"], label="Harmful")
     ax.set_xlabel("Fixed C3 replay score")
     ax.set_ylabel("Density")
     ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper left", bbox_to_anchor=(0.02, 0.98), borderaxespad=0.0, handlelength=1.5)
