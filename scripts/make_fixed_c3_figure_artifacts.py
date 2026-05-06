@@ -263,8 +263,21 @@ def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     labels = [str(r["label"]) for r in bins]
     ax.plot(x, vals, color=COLORS["harm"], marker="o", linewidth=2.8, markersize=7.2, label="Per-bin harmful fraction")
     ax.axhline(overall, color=COLORS["overall"], linestyle="--", linewidth=2.0, label=f"Overall ({overall:.1f}%)")
-    for xx, val in zip(x, vals):
-        ax.text(xx, val + 1.2, f"{val:.1f}%", ha="center", va="bottom", fontsize=VALUE_FONTSIZE)
+    for i, (xx, val) in enumerate(zip(x, vals)):
+        ha = "center"
+        x_text = float(xx)
+        y_text = val + 1.2
+        va = "bottom"
+        if i == 0:
+            ha = "left"
+            x_text = float(xx) + 0.04
+        elif i == len(vals) - 1:
+            ha = "right"
+            x_text = float(xx) - 0.04
+        if abs(val - overall) < 4.5:
+            y_text = val - 2.2
+            va = "top"
+        ax.text(x_text, y_text, f"{val:.1f}%", ha=ha, va=va, fontsize=VALUE_FONTSIZE)
     ax.set_xticks(x, labels)
     ax.set_xlabel("Fixed C3 score quantile")
     ax.set_ylabel("Harmful fraction (%)")
