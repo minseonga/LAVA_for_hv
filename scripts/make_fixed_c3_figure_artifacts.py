@@ -26,6 +26,8 @@ COLORS = {
     "harm": "#C62828",
     "help": "#2E7D32",
     "random": "#64748B",
+    "enrichment": "#F87171",
+    "overall": "#111827",
     "yes_to_no": "#2563EB",
     "no_to_yes": "#D97706",
 }
@@ -156,6 +158,44 @@ def threshold_sweep(rows: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def harm_enrichment_bins(rows: Sequence[Dict[str, Any]], n_bins: int = 5) -> List[Dict[str, Any]]:
+    scored = [
+        r
+        for r in rows
+        if (int(r.get("harm", 0)) or int(r.get("help", 0))) and math.isfinite(float(r.get("score", float("nan"))))
+    ]
+    scored = sorted(scored, key=lambda r: float(r["score"]))
+    if not scored:
+        return []
+    total_harm = sum(int(r["harm"]) for r in scored)
+    overall = total_harm / float(max(1, len(scored)))
+    out: List[Dict[str, Any]] = []
+    for bin_idx in range(n_bins):
+        lo = int(round(bin_idx * len(scored) / float(n_bins)))
+        hi = int(round((bin_idx + 1) * len(scored) / float(n_bins)))
+        chunk = scored[lo:hi]
+        if not chunk:
+            continue
+        harm = sum(int(r["harm"]) for r in chunk)
+        help_ = sum(int(r["help"]) for r in chunk)
+        scores = [float(r["score"]) for r in chunk]
+        out.append(
+            {
+                "bin": bin_idx + 1,
+                "label": f"Q{bin_idx + 1}",
+                "risk_label": "low risk" if bin_idx == 0 else "high risk" if bin_idx == n_bins - 1 else "",
+                "n": len(chunk),
+                "harm": harm,
+                "help": help_,
+                "harmful_fraction": harm / float(max(1, len(chunk))),
+                "overall_harmful_fraction": overall,
+                "score_min": min(scores),
+                "score_max": max(scores),
+            }
+        )
+    return out
+
+
 def bin_edges(values: Sequence[float], n: int = 36) -> np.ndarray:
     vals = np.array(finite(values), dtype=float)
     if vals.size == 0:
@@ -211,29 +251,33 @@ def plot_panel_b(ax: plt.Axes, sweep: Sequence[Dict[str, Any]]) -> None:
 
 
 def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
-    all_scores = [float(r["score"]) for r in rows]
-    bins = bin_edges(all_scores)
-    for direction in DIRECTIONS:
-        vals = [float(r["score"]) for r in rows if str(r["direction"]) == direction]
-        if not vals:
-            continue
-        ax.hist(
-            vals,
-            bins=bins,
-            density=True,
-            histtype="step",
-            linewidth=2.0,
-            color=COLORS[direction],
-            label=f"{direction_label(direction)} (n={len(vals)})",
+    bins = harm_enrichment_bins(rows)
+    if not bins:
+        ax.axis("off")
+        return
+    x = np.arange(len(bins))
+    vals = [100.0 * float(r["harmful_fraction"]) for r in bins]
+    overall = 100.0 * float(bins[0]["overall_harmful_fraction"])
+    labels = [str(r["label"]) if not r["risk_label"] else f"{r['label']}\n{r['risk_label']}" for r in bins]
+    bars = ax.bar(x, vals, width=0.62, color=COLORS["enrichment"], label="Harmful fraction")
+    ax.axhline(overall, color=COLORS["overall"], linestyle="--", linewidth=1.5, label=f"Overall ({overall:.1f}%)")
+    for rect, row, val in zip(bars, bins, vals):
+        ax.text(rect.get_x() + rect.get_width() / 2, val + 1.2, f"{val:.1f}%", ha="center", va="bottom", fontsize=7.4)
+        ax.text(
+            rect.get_x() + rect.get_width() / 2,
+            1.0,
+            f"n={int(row['n'])}",
+            ha="center",
+            va="bottom",
+            fontsize=7.0,
+            color="#475569",
         )
-        taus = sorted({float(r["tau"]) for r in rows if str(r["direction"]) == direction and str(r.get("tau", "")) != ""})
-        for tau in taus[:1]:
-            ax.axvline(tau, color=COLORS[direction], linestyle="--", linewidth=1.5)
-            ax.text(tau, ax.get_ylim()[1] * 0.92, f"tau={tau:.2f}", color=COLORS[direction], rotation=90, va="top", ha="right", fontsize=8)
-    ax.set_xlabel("Fixed C3 replay score")
-    ax.set_ylabel("Density")
-    ax.set_title("(c) Transition split")
-    ax.legend(frameon=False, fontsize=8)
+    ax.set_xticks(x, labels)
+    ax.set_xlabel("Fixed C3 score quantile bin")
+    ax.set_ylabel("Harmful fraction among changed samples (%)")
+    ax.set_title("(c) Harm enrichment by score bin")
+    ax.set_ylim(0, min(100.0, max(max(vals) + 8.0, overall + 8.0)))
+    ax.legend(frameon=False, fontsize=8, loc="upper left")
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -304,10 +348,13 @@ def main() -> None:
     prefix = f"{args.target}_{args.dataset}_fixed_c3"
     score_csv = out_dir / f"{prefix}_scores.csv"
     sweep_csv = out_dir / f"{prefix}_budget_curve.csv"
+    enrichment_csv = out_dir / f"{prefix}_harm_enrichment_bins.csv"
     fig_path = out_dir / f"{prefix}_figure.png"
     summary_path = out_dir / f"{prefix}_summary.json"
     write_csv(score_csv, score_rows)
-    write_csv(sweep_csv, threshold_sweep([r for r in score_rows if str(r["source"]) == "apply" and str(r["outcome"]) in {"harm", "help"}]))
+    plot_rows = [r for r in score_rows if str(r["source"]) == "apply" and str(r["outcome"]) in {"harm", "help"}]
+    write_csv(sweep_csv, threshold_sweep(plot_rows))
+    write_csv(enrichment_csv, harm_enrichment_bins(plot_rows))
     title = f"Fixed C3 RAPIC diagnostics: {args.target} / {DATASET_PRETTY.get(str(args.dataset), str(args.dataset))}"
     make_figure(score_rows, fig_path, title)
     write_json(
@@ -322,6 +369,7 @@ def main() -> None:
             "outputs": {
                 "score_csv": str(score_csv),
                 "budget_curve_csv": str(sweep_csv),
+                "harm_enrichment_bins_csv": str(enrichment_csv),
                 "png": str(fig_path),
                 "pdf": str(fig_path.with_suffix(".pdf")),
             },
@@ -331,6 +379,7 @@ def main() -> None:
     print("[saved]", fig_path.with_suffix(".pdf"))
     print("[saved]", score_csv)
     print("[saved]", sweep_csv)
+    print("[saved]", enrichment_csv)
     print("[saved]", summary_path)
 
 
