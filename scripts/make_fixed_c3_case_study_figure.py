@@ -322,8 +322,6 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
     precision = [100.0 * float(row_map[c]["fallback_precision"]) for c in cats]
 
     bars = ax.bar(x, rate, width=0.48, color=COLORS["fallback_rate"], label="Fallback rate")
-    for rect, val in zip(bars, rate):
-        ax.text(rect.get_x() + rect.get_width() / 2, max(0.08, val - 0.58), f"{val:.1f}%", ha="center", va="top", fontsize=VALUE_FONTSIZE)
     ax.set_xticks(x, [CATEGORY_LABELS[c] for c in cats])
     ax.set_ylabel("Fallback rate (%)")
     ax.set_ylim(0.0, max(1.0, max(rate) * 1.35) if rate else 1.0)
@@ -333,8 +331,9 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
 
     ax2 = ax.twinx()
     ax2.plot(x, precision, color=COLORS["fallback_precision"], marker="o", markersize=6.5, linewidth=2.4, label="Fallback precision")
-    for xx, val in zip(x, precision):
-        ax2.text(xx, min(100.0, val + 3.0), f"{val:.0f}%", ha="center", va="bottom", fontsize=VALUE_FONTSIZE, color=COLORS["fallback_precision"])
+    for xx, prec, rt in zip(x, precision, rate):
+        ax2.text(xx, min(100.0, prec + 3.0), f"{prec:.0f}%", ha="center", va="bottom", fontsize=VALUE_FONTSIZE, color=COLORS["fallback_precision"])
+        ax2.text(xx, max(0.0, prec - 4.0), f"{rt:.1f}%", ha="center", va="top", fontsize=VALUE_FONTSIZE, color=COLORS["fallback_precision"])
     ax2.set_ylabel("Fallback precision (%)")
     ax2.set_ylim(0.0, 105.0)
     ax2.spines["top"].set_visible(False)
@@ -368,7 +367,7 @@ def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path) -> None:
             "legend.fontsize": LEGEND_FONTSIZE,
         }
     )
-    fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.8), gridspec_kw={"width_ratios": [1.12, 1.0, 1.0], "wspace": 0.25})
+    fig, axes = plt.subplots(1, 3, figsize=(16.0, 9.0), gridspec_kw={"width_ratios": [1.12, 1.0, 1.0], "wspace": 0.32})
     panel_accuracy(axes[0], rows)
     panel_gain_harm(axes[1], rows)
     panel_fallback_precision_rate(axes[2], rows)
