@@ -635,6 +635,7 @@ def main() -> None:
     baseline_skip_rate = baseline_skipped / denom_rows
     route_baseline_rate = route_baseline / denom_rows
     mean_total_sec = mean_or_none(r.get("elapsed_total_sec") for r in completed_rows)
+    mean_image_load_sec = mean_or_none(r.get("elapsed_image_load_sec") for r in completed_rows)
     mean_method_generated_sec = mean_or_none(
         r.get("elapsed_method_sec") for r in completed_rows if str(r.get("method_generated_live")) in {"1", "1.0"}
     )
@@ -646,9 +647,17 @@ def main() -> None:
     )
     estimated_always_baseline_mean_sec = None
     estimated_always_baseline_total_sec = None
+    estimated_method_only_mean_sec = None
+    estimated_score_only_no_baseline_mean_sec = None
     estimated_speedup_vs_always_baseline = None
     estimated_latency_savings_pct = None
+    estimated_lazy_over_method_only_sec = None
+    if mean_image_load_sec is not None and mean_method_generated_sec is not None:
+        estimated_method_only_mean_sec = mean_image_load_sec + mean_method_generated_sec
+        if mean_total_sec is not None:
+            estimated_lazy_over_method_only_sec = mean_total_sec - estimated_method_only_mean_sec
     if mean_total_sec is not None and mean_baseline_generated_sec is not None:
+        estimated_score_only_no_baseline_mean_sec = mean_total_sec - baseline_trigger_rate * mean_baseline_generated_sec
         estimated_always_baseline_mean_sec = mean_total_sec + baseline_skip_rate * mean_baseline_generated_sec
         estimated_always_baseline_total_sec = total_sec + baseline_skipped * mean_baseline_generated_sec
         if mean_total_sec > 0:
@@ -696,16 +705,20 @@ def main() -> None:
             "timing": {
                 "total_sec": total_sec,
                 "mean_total_sec_per_sample": mean_total_sec,
+                "mean_image_load_sec": mean_image_load_sec,
                 "mean_method_generated_sec": mean_method_generated_sec,
                 "mean_replay_score_sec": mean_replay_score_sec,
                 "mean_baseline_generated_sec": mean_baseline_generated_sec,
                 "baseline_trigger_rate": baseline_trigger_rate,
                 "baseline_skip_rate": baseline_skip_rate,
                 "route_baseline_rate": route_baseline_rate,
+                "estimated_method_only_mean_sec_per_sample": estimated_method_only_mean_sec,
+                "estimated_score_only_no_baseline_mean_sec_per_sample": estimated_score_only_no_baseline_mean_sec,
                 "estimated_always_baseline_mean_sec_per_sample": estimated_always_baseline_mean_sec,
                 "estimated_always_baseline_total_sec": estimated_always_baseline_total_sec,
                 "estimated_speedup_vs_always_baseline": estimated_speedup_vs_always_baseline,
                 "estimated_latency_savings_pct": estimated_latency_savings_pct,
+                "estimated_lazy_over_method_only_sec_per_sample": estimated_lazy_over_method_only_sec,
                 "note": (
                     "Lazy latency includes method generation and replay-score computation for every sample, "
                     "then baseline generation only when either directional score reaches tau. "

@@ -106,6 +106,10 @@ def row_from_summary(path: Path, root: Optional[Path]) -> Dict[str, Any]:
         "method_acc": maybe_float(evaluation.get("method_acc")),
         "final_acc": maybe_float(evaluation.get("final_acc")),
         "delta_vs_method": maybe_float(evaluation.get("delta_vs_method")),
+        "estimated_method_only_mean_sec_per_sample": maybe_float(timing.get("estimated_method_only_mean_sec_per_sample")),
+        "estimated_score_only_no_baseline_mean_sec_per_sample": maybe_float(
+            timing.get("estimated_score_only_no_baseline_mean_sec_per_sample")
+        ),
         "mean_total_sec_per_sample": maybe_float(timing.get("mean_total_sec_per_sample")),
         "mean_method_generated_sec": maybe_float(timing.get("mean_method_generated_sec")),
         "mean_replay_score_sec": maybe_float(timing.get("mean_replay_score_sec")),
@@ -137,8 +141,8 @@ def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:
 
 def markdown(rows: Sequence[Dict[str, Any]]) -> str:
     lines = [
-        "| Run | Target | Dataset | n | Trigger % | Skip % | Route baseline % | Method Acc | Final Acc | Delta | Lazy sec/sample | Always sec/sample | Speedup | Saved latency % |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Run | Target | Dataset | n | Trigger % | Skip % | Route baseline % | Method Acc | Final Acc | Delta | Method-only sec | Score-only sec | Lazy sec | Always sec | Speedup | Saved latency % |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
@@ -146,6 +150,8 @@ def markdown(rows: Sequence[Dict[str, Any]]) -> str:
             f"{pct(row['baseline_trigger_rate'])} | {pct(row['baseline_skip_rate'])} | "
             f"{pct(row['route_baseline_rate'])} | {pct(row['method_acc'])} | "
             f"{pct(row['final_acc'])} | {pct(row['delta_vs_method'])} | "
+            f"{sec(row['estimated_method_only_mean_sec_per_sample'])} | "
+            f"{sec(row['estimated_score_only_no_baseline_mean_sec_per_sample'])} | "
             f"{sec(row['mean_total_sec_per_sample'])} | "
             f"{sec(row['estimated_always_baseline_mean_sec_per_sample'])} | "
             f"{ratio(row['estimated_speedup_vs_always_baseline'])} | "
