@@ -355,6 +355,7 @@ def main() -> None:
     t_total = time.perf_counter()
 
     for idx, sample in enumerate(questions):
+        sample_t0 = time.perf_counter()
         sid = safe_id(sample.get("question_id", sample.get("id")))
         image_name = image_name_from_row(sample)
         question = question_from_row(sample)
@@ -368,6 +369,18 @@ def main() -> None:
             "object_terms": "; ".join(object_terms),
             "gt_label": gt_label,
             "score_error": "",
+            "method_cached": 0,
+            "method_generated_live": 0,
+            "baseline_triggered": 0,
+            "baseline_cached": 0,
+            "baseline_generated_live": 0,
+            "baseline_skipped": 0,
+            "elapsed_image_load_sec": 0.0,
+            "elapsed_method_sec": 0.0,
+            "elapsed_replay_score_sec": 0.0,
+            "elapsed_baseline_sec": 0.0,
+            "elapsed_decision_sec": 0.0,
+            "elapsed_total_sec": 0.0,
         }
         try:
             if not sid:
@@ -379,12 +392,16 @@ def main() -> None:
             image_path = os.path.join(os.path.abspath(args.image_folder), image_name)
             if not os.path.isfile(image_path):
                 raise FileNotFoundError(image_path)
+            t_stage = time.perf_counter()
             image = runtime.load_image(image_path)
+            row["elapsed_image_load_sec"] = time.perf_counter() - t_stage
 
             method_text = str(method_map.get(sid, "")).strip()
             if method_text:
                 n_method_cached += 1
+                row["method_cached"] = 1
             elif str(args.method) == "baseline":
+                t_stage = time.perf_counter()
                 method_text = generate_vga_like(
                     runtime,
                     image=image,
@@ -400,8 +417,11 @@ def main() -> None:
                     attn_norm=bool(args.vga_attn_norm),
                     sampling=bool(args.vga_sampling),
                 )
+                row["elapsed_method_sec"] = time.perf_counter() - t_stage
+                row["method_generated_live"] = 1
                 n_method_generated += 1
             else:
+                t_stage = time.perf_counter()
                 method_text = generate_vga_like(
                     runtime,
                     image=image,
@@ -417,8 +437,11 @@ def main() -> None:
                     attn_norm=bool(args.vga_attn_norm),
                     sampling=bool(args.vga_sampling),
                 )
+                row["elapsed_method_sec"] = time.perf_counter() - t_stage
+                row["method_generated_live"] = 1
                 n_method_generated += 1
 
+            t_stage = time.perf_counter()
             feat = feature_row_for_method_answer(
                 runtime,
                 image=image,
@@ -439,6 +462,8 @@ def main() -> None:
             row["no_to_yes_score"] = score_or_blank(scores.no_to_yes_score)
             row["yes_to_no_tau"] = scores.yes_to_no_tau
             row["no_to_yes_tau"] = scores.no_to_yes_tau
+            row["baseline_triggered"] = int(scores.may_need_baseline)
+            row["elapsed_replay_score_sec"] = time.perf_counter() - t_stage
 
             baseline_text = ""
             baseline_generated = False
@@ -448,7 +473,9 @@ def main() -> None:
                     baseline_text = cached_baseline
                     baseline_generated = True
                     n_baseline_cached += 1
+                    row["baseline_cached"] = 1
                 else:
+                    t_stage = time.perf_counter()
                     baseline_text = generate_vga_like(
                         runtime,
                         image=image,
@@ -464,17 +491,22 @@ def main() -> None:
                         attn_norm=bool(args.vga_attn_norm),
                         sampling=bool(args.vga_sampling),
                     )
+                    row["elapsed_baseline_sec"] = time.perf_counter() - t_stage
+                    row["baseline_generated_live"] = 1
                     baseline_generated = True
                     n_baseline_generated += 1
             else:
+                row["baseline_skipped"] = 1
                 n_baseline_skipped += 1
 
+            t_stage = time.perf_counter()
             decision = controller.decide(
                 method_text=method_text,
                 baseline_text=baseline_text,
                 scores=scores,
                 baseline_generated=baseline_generated,
             )
+            row["elapsed_decision_sec"] = time.perf_counter() - t_stage
             row["baseline_text"] = baseline_text
             row["method_label"] = decision.method_label
             row["intervention_label"] = decision.method_label
@@ -508,6 +540,7 @@ def main() -> None:
             row["final_source"] = "error_method"
             row["final_text"] = str(row.get("method_text", ""))
 
+        row["elapsed_total_sec"] = time.perf_counter() - sample_t0
         feature_rows.append(row)
         route_rows.append(
             {
@@ -522,6 +555,14 @@ def main() -> None:
                 "selected_score": row.get("selected_score", ""),
                 "selected_tau": row.get("selected_tau", ""),
                 "baseline_generated": row.get("baseline_generated", 0),
+                "baseline_triggered": row.get("baseline_triggered", 0),
+                "baseline_cached": row.get("baseline_cached", 0),
+                "baseline_generated_live": row.get("baseline_generated_live", 0),
+                "baseline_skipped": row.get("baseline_skipped", 0),
+                "elapsed_method_sec": row.get("elapsed_method_sec", 0.0),
+                "elapsed_replay_score_sec": row.get("elapsed_replay_score_sec", 0.0),
+                "elapsed_baseline_sec": row.get("elapsed_baseline_sec", 0.0),
+                "elapsed_total_sec": row.get("elapsed_total_sec", 0.0),
                 "decision_reason": row.get("decision_reason", ""),
                 "baseline_label": row.get("baseline_label", ""),
                 "intervention_label": row.get("intervention_label", ""),
@@ -564,6 +605,57 @@ def main() -> None:
         if baseline_rows:
             baseline_acc_on_generated = sum(int(r["baseline_correct"]) for r in baseline_rows) / float(len(baseline_rows))
 
+    def flag_count(key: str) -> int:
+        return sum(1 for r in feature_rows if str(r.get(key, "")).strip().lower() in {"1", "1.0", "true"})
+
+    def finite_float(value: Any) -> Optional[float]:
+        try:
+            out = float(value)
+        except Exception:
+            return None
+        if out != out or out in {float("inf"), float("-inf")}:
+            return None
+        return out
+
+    def mean_or_none(values: Sequence[Any]) -> Optional[float]:
+        nums = [v for v in (finite_float(x) for x in values) if v is not None]
+        return None if not nums else float(sum(nums) / float(len(nums)))
+
+    total_sec = time.perf_counter() - t_total
+    n_rows = len(questions)
+    denom_rows = float(max(1, n_rows))
+    completed_rows = [r for r in feature_rows if not str(r.get("score_error", "")).strip()]
+    n_completed = len(completed_rows)
+    baseline_triggered = flag_count("baseline_triggered")
+    baseline_generated_live = flag_count("baseline_generated_live")
+    baseline_cached = flag_count("baseline_cached")
+    baseline_skipped = flag_count("baseline_skipped")
+    route_baseline = sum(1 for r in route_rows if str(r.get("route")) == "baseline")
+    baseline_trigger_rate = baseline_triggered / denom_rows
+    baseline_skip_rate = baseline_skipped / denom_rows
+    route_baseline_rate = route_baseline / denom_rows
+    mean_total_sec = mean_or_none(r.get("elapsed_total_sec") for r in completed_rows)
+    mean_method_generated_sec = mean_or_none(
+        r.get("elapsed_method_sec") for r in completed_rows if str(r.get("method_generated_live")) in {"1", "1.0"}
+    )
+    mean_replay_score_sec = mean_or_none(r.get("elapsed_replay_score_sec") for r in completed_rows)
+    mean_baseline_generated_sec = mean_or_none(
+        r.get("elapsed_baseline_sec")
+        for r in completed_rows
+        if str(r.get("baseline_generated_live")) in {"1", "1.0"}
+    )
+    estimated_always_baseline_mean_sec = None
+    estimated_always_baseline_total_sec = None
+    estimated_speedup_vs_always_baseline = None
+    estimated_latency_savings_pct = None
+    if mean_total_sec is not None and mean_baseline_generated_sec is not None:
+        estimated_always_baseline_mean_sec = mean_total_sec + baseline_skip_rate * mean_baseline_generated_sec
+        estimated_always_baseline_total_sec = total_sec + baseline_skipped * mean_baseline_generated_sec
+        if mean_total_sec > 0:
+            estimated_speedup_vs_always_baseline = estimated_always_baseline_mean_sec / mean_total_sec
+        if estimated_always_baseline_mean_sec and estimated_always_baseline_mean_sec > 0:
+            estimated_latency_savings_pct = 100.0 * (1.0 - mean_total_sec / estimated_always_baseline_mean_sec)
+
     write_json(
         summary_json,
         {
@@ -582,14 +674,17 @@ def main() -> None:
                 "gt_csv": os.path.abspath(args.gt_csv) if str(args.gt_csv).strip() else "",
             },
             "counts": {
-                "n_rows": len(questions),
+                "n_rows": n_rows,
+                "n_completed": n_completed,
                 "n_errors": n_errors,
                 "n_method_generated": n_method_generated,
                 "n_method_cached": n_method_cached,
                 "n_baseline_generated": n_baseline_generated,
                 "n_baseline_cached": n_baseline_cached,
                 "n_baseline_skipped": n_baseline_skipped,
-                "n_route_baseline": sum(1 for r in route_rows if str(r.get("route")) == "baseline"),
+                "n_baseline_triggered": baseline_triggered,
+                "n_baseline_generated_live": baseline_generated_live,
+                "n_route_baseline": route_baseline,
             },
             "evaluation": {
                 "n_eval": n_eval,
@@ -599,7 +694,24 @@ def main() -> None:
                 "baseline_acc_on_generated_or_cached": baseline_acc_on_generated,
             },
             "timing": {
-                "total_sec": time.perf_counter() - t_total,
+                "total_sec": total_sec,
+                "mean_total_sec_per_sample": mean_total_sec,
+                "mean_method_generated_sec": mean_method_generated_sec,
+                "mean_replay_score_sec": mean_replay_score_sec,
+                "mean_baseline_generated_sec": mean_baseline_generated_sec,
+                "baseline_trigger_rate": baseline_trigger_rate,
+                "baseline_skip_rate": baseline_skip_rate,
+                "route_baseline_rate": route_baseline_rate,
+                "estimated_always_baseline_mean_sec_per_sample": estimated_always_baseline_mean_sec,
+                "estimated_always_baseline_total_sec": estimated_always_baseline_total_sec,
+                "estimated_speedup_vs_always_baseline": estimated_speedup_vs_always_baseline,
+                "estimated_latency_savings_pct": estimated_latency_savings_pct,
+                "note": (
+                    "Lazy latency includes method generation and replay-score computation for every sample, "
+                    "then baseline generation only when either directional score reaches tau. "
+                    "Always-baseline estimates add one observed live baseline-generation cost for each skipped baseline. "
+                    "If baseline predictions are cached, run without --baseline_pred_jsonl for live latency estimates."
+                ),
             },
             "outputs": {
                 "online_feature_rows_csv": feature_csv,
