@@ -218,11 +218,11 @@ def plot_panel_a(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     harm = [float(r["score"]) for r in rows if int(r["harm"]) == 1]
     help_ = [float(r["score"]) for r in rows if int(r["help"]) == 1]
     bins = bin_edges(harm + help_)
-    ax.hist(help_, bins=bins, density=True, alpha=0.46, color=COLORS["help"], label=f"Helpful gains (n={len(help_)})")
-    ax.hist(harm, bins=bins, density=True, alpha=0.46, color=COLORS["harm"], label=f"Harmful flips (n={len(harm)})")
+    ax.hist(help_, bins=bins, density=True, alpha=0.46, color=COLORS["help"], label=f"Help (n={len(help_)})")
+    ax.hist(harm, bins=bins, density=True, alpha=0.46, color=COLORS["harm"], label=f"Harm (n={len(harm)})")
     ax.set_xlabel("Fixed C3 replay score")
     ax.set_ylabel("Density")
-    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE)
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper left", bbox_to_anchor=(0.18, 0.99), borderaxespad=0.0)
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -261,7 +261,7 @@ def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     vals = [100.0 * float(r["harmful_fraction"]) for r in bins]
     overall = 100.0 * float(bins[0]["overall_harmful_fraction"])
     labels = [str(r["label"]) for r in bins]
-    ax.plot(x, vals, color=COLORS["harm"], marker="o", linewidth=2.8, markersize=7.2, label="Per-bin harmful fraction")
+    ax.plot(x, vals, color=COLORS["harm"], marker="o", linewidth=2.8, markersize=7.2, label="Harm fraction")
     ax.axhline(overall, color=COLORS["overall"], linestyle="--", linewidth=2.0, label=f"Overall ({overall:.1f}%)")
     for i, (xx, val) in enumerate(zip(x, vals)):
         ha = "center"
@@ -274,6 +274,9 @@ def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
         elif i == len(vals) - 1:
             ha = "right"
             x_text = float(xx) - 0.04
+        if i > 0 and abs(val - vals[i - 1]) < 4.0:
+            y_text = val - 2.2
+            va = "top"
         if abs(val - overall) < 4.5:
             y_text = val - 2.2
             va = "top"
