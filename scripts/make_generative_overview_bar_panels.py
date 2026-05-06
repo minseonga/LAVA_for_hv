@@ -211,6 +211,74 @@ def caption_pair_panel(method_caption: str, repaired_caption: str, *, width: int
     return "\n".join(out)
 
 
+def sentence_excerpt(value: str, terms: Sequence[str], *, max_chars: int = 78) -> str:
+    clean = " ".join(str(value or "").split())
+    if not clean:
+        return '"caption not found"'
+    sentences = [part.strip() for part in clean.split(".") if part.strip()]
+    if not sentences:
+        sentences = [clean]
+    lowered_terms = [str(term).strip().lower() for term in terms if str(term).strip()]
+    chosen = sentences[0]
+    for sentence in sentences:
+        low = sentence.lower()
+        if any(term in low for term in lowered_terms):
+            chosen = sentence
+            break
+    if len(chosen) > max_chars:
+        chosen = chosen[: max_chars - 3].rstrip() + "..."
+        return f'"... {chosen}"'
+    return f'"... {chosen}."'
+
+
+def repair_caption_panel(
+    method_caption: str,
+    repaired_caption: str,
+    token_labels: Sequence[str],
+    *,
+    selected_object: str,
+    suppress_bias: float = -1.0,
+    width: int = 860,
+    height: int = 250,
+) -> str:
+    margin = 26
+    top = 42
+    row_h = 62
+    inset_w = 245
+    text_w = width - 2 * margin - inset_w - 22
+    selected = str(selected_object or "object").strip()
+    before_excerpt = sentence_excerpt(method_caption, [selected, "contains"])
+    after_terms = ["cabinet", "countertop", "contains"] if selected.lower() == "sink" else ["contains"]
+    after_excerpt = sentence_excerpt(repaired_caption, after_terms)
+    token_text = ", ".join(str(x) for x in token_labels[:4]) or selected
+
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        text(width / 2, 24, "Local object-token suppression", size=16, weight=700),
+    ]
+    rows = [
+        ("Before c_M", before_excerpt, COLORS["before"]),
+        ("After c_R", after_excerpt, COLORS["after"]),
+    ]
+    for idx, (label, excerpt, color) in enumerate(rows):
+        y = top + idx * (row_h + 16)
+        out.append(f'<rect x="{margin}" y="{y}" width="{text_w}" height="{row_h}" rx="6" fill="#FFFFFF" stroke="{color}" stroke-width="1.8"/>')
+        out.append(text(margin + 16, y + 24, label, size=13, weight=700, anchor="start", color=color))
+        out.append(multiline_text(margin + 16, y + 47, wrap_words(excerpt, max_chars=62), size=13, anchor="start"))
+
+    inset_x = margin + text_w + 22
+    inset_y = top
+    inset_h = row_h * 2 + 16
+    out.append(f'<rect x="{inset_x}" y="{inset_y}" width="{inset_w}" height="{inset_h}" rx="6" fill="#F9FAFB" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
+    out.append(text(inset_x + 16, inset_y + 28, f"Suppress token set T({selected})", size=13, weight=700, anchor="start"))
+    out.append(text(inset_x + 16, inset_y + 60, token_text, size=16, weight=700, anchor="start", color=COLORS["selected"]))
+    out.append(text(inset_x + 16, inset_y + 92, f"bias b = {suppress_bias:.1f}", size=13, anchor="start", color=COLORS["muted"]))
+    out.append(text(inset_x + 16, inset_y + 118, "local decoding-time edit", size=12, anchor="start", color=COLORS["muted"]))
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def parse_csv_list(value: str) -> list[str]:
     return [x.strip() for x in str(value or "").split(",") if x.strip()]
 
@@ -224,13 +292,13 @@ def plot_preset(image: str, question_id: str) -> dict[str, Any]:
     qid = str(question_id or "").strip()
     if qid == "8170" or image_name == "COCO_val2014_000000008170.jpg":
         return {
-            "objects": ["refrigerator", "microwave", "cabinet", "sink"],
-            "method_logits": [0.56, 0.61, 0.47, 0.92],
-            "support_probs": [0.93, 0.86, 0.71, 0.04],
+            "objects": ["refrigerator", "microwave", "sink"],
+            "method_logits": [1.0, 0.8233025523097742, 0.0],
+            "support_probs": [0.9852713842581693, 0.9678992896948747, 0.03567855254395119],
             "selected_object": "sink",
-            "token_labels": ["sink", "Sink", "s"],
-            "before": [1.00, 0.78, 0.55],
-            "after": [0.22, 0.18, 0.16],
+            "token_labels": ["sink", "s", "S"],
+            "before": [1.0, 0.5102652480143863, 0.07672710924621609],
+            "after": [0.9232728907537839, 0.4335381387681702, 0.0],
         }
     if image_name == "COCO_val2014_000000304819.jpg":
         return {
@@ -279,7 +347,7 @@ def support_panel(
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
-        text(width / 2, 20, "Support probe", size=15, weight=700),
+        text(width / 2, 20, "Object support probe", size=15, weight=700),
     ]
     for frac in [0.0, 0.5, 1.0]:
         y = axis_y - frac * plot_h
@@ -287,7 +355,13 @@ def support_panel(
         out.append(text(left - 10, y + 4, f"{frac:.1f}", size=10, anchor="end", color=COLORS["muted"]))
     out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{axis_y}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
     out.append(f'<line x1="{left}" y1="{axis_y}" x2="{width-right}" y2="{axis_y}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
-    out.append(text(14, top + plot_h / 2, "p(o | I)", size=12, anchor="middle", color=COLORS["muted"]))
+    label_x = 16
+    label_y = top + plot_h / 2
+    out.append(
+        f'<text x="{label_x}" y="{label_y:.1f}" text-anchor="middle" '
+        f'font-family="Arial, Helvetica, sans-serif" font-size="12" fill="{COLORS["muted"]}" '
+        f'transform="rotate(-90 {label_x} {label_y:.1f})">Visual support p_yes(o | I)</text>'
+    )
 
     for i, (obj, prob) in enumerate(zip(objects, probs)):
         p = max(0.0, min(1.0, float(prob)))
@@ -296,9 +370,10 @@ def support_panel(
         y = axis_y - h
         color = COLORS["selected"] if i == selected_idx else COLORS["support"]
         out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h:.1f}" rx="3" fill="{color}"/>')
-        out.append(text(x + bar_w / 2, max(top + 12, y - 7), f"{p:.2f}", size=11, color=color))
+        out.append(text(x + bar_w / 2, max(top + 12, y - 7), f"{p:.3f}", size=11, color=color))
         out.append(text(x + bar_w / 2, axis_y + 22, obj, size=12))
-    out.append(text(width / 2, height - 8, "select lowest support", size=11, color=COLORS["muted"]))
+    label = objects[selected_idx] if 0 <= selected_idx < len(objects) else "object"
+    out.append(text(width / 2, height - 8, f"Top-k risk object: {label}", size=11, color=COLORS["selected"]))
     out.append("</svg>")
     return "\n".join(out)
 
@@ -462,16 +537,18 @@ def main() -> None:
     if len(support_probs) != len(objects):
         raise ValueError(f"--support_probs length ({len(support_probs)}) must match --objects length ({len(objects)})")
     if len(method_logits) != len(objects):
-        raise ValueError(f"--method_logits length ({len(method_logits)}) must match --objects length ({len(objects)})")
+        method_logits = [0.0 for _ in objects]
     selected_idx = selected_index(objects, selected_object)
     print(f"[bars] support_objects={objects}")
     print(f"[bars] method_logits={method_logits}")
     print(f"[bars] support_probs={support_probs}")
     print(f"[bars] selected_object={objects[selected_idx] if objects else ''}")
+    support = support_panel(objects, support_probs, selected_idx=selected_idx)
+    write(out_dir / "support_probe_bars.svg", support)
+    write(out_dir / "object_support_probe.svg", support)
+    write(out_dir / "support_probe_only_bars.svg", support)
     mismatch = method_support_panel(objects, method_logits, support_probs, selected_idx=selected_idx)
-    write(out_dir / "support_probe_bars.svg", mismatch)
     write(out_dir / "method_support_mismatch_bars.svg", mismatch)
-    write(out_dir / "support_probe_only_bars.svg", support_panel(objects, support_probs, selected_idx=selected_idx))
 
     token_labels = parse_csv_list(args.token_labels) or list(plot_values.get("token_labels") or preset["token_labels"])
     before = parse_float_list(args.before) or [float(x) for x in (plot_values.get("before") or preset["before"])]
@@ -482,7 +559,6 @@ def main() -> None:
     print(f"[bars] before={before}")
     print(f"[bars] after={after}")
     suppression = suppression_panel(token_labels, before, after)
-    write(out_dir / "object_token_suppression_bars.svg", suppression)
     write(out_dir / "object_token_logit_change.svg", suppression)
 
     panel_root = Path(args.panel_root)
@@ -521,6 +597,24 @@ def main() -> None:
         print(f"[caption] repaired_source={repaired_path or ''}")
         print(f"[caption] repaired={repaired_caption}")
         write(out_dir / "caption_pair.svg", caption_pair_panel(method_caption, repaired_caption))
+        write(
+            out_dir / "object_token_suppression_bars.svg",
+            repair_caption_panel(
+                method_caption,
+                repaired_caption,
+                token_labels,
+                selected_object=objects[selected_idx] if objects else selected_object,
+            ),
+        )
+        write(
+            out_dir / "local_suppression_repair.svg",
+            repair_caption_panel(
+                method_caption,
+                repaired_caption,
+                token_labels,
+                selected_object=objects[selected_idx] if objects else selected_object,
+            ),
+        )
         write(
             out_dir / "caption_pair.json",
             json.dumps(
