@@ -278,7 +278,7 @@ def panel_accuracy(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     vals_all = [100.0 * float(row_map[c][k]) for c in cats for k in ("baseline_acc", "method_acc", "rapic_acc")]
     ax.set_ylim(max(0.0, min(vals_all) - 3.0), min(100.0, max(vals_all) + 4.0))
     ax.set_ylabel("Accuracy (%)")
-    ax.legend(frameon=False, fontsize=8, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.13))
+    ax.legend(frameon=False, fontsize=8, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 0.98))
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
