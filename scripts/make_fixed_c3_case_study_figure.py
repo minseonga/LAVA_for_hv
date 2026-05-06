@@ -29,6 +29,8 @@ COLORS = {
     "rapic": "#1D4ED8",
     "harm": "#C62828",
     "help": "#2E7D32",
+    "fallback_rate": "#38BDF8",
+    "fallback_precision": "#111827",
     "line": "#94A3B8",
 }
 
@@ -230,6 +232,10 @@ def compute_rows(
         n = max(1, int(b["n"]))
         final_harm = int(b["method_harm"] - b["selected_harm"])
         final_help = int(b["method_help"] - b["selected_help"])
+        selected_harm = int(b["selected_harm"])
+        selected_help = int(b["selected_help"])
+        fallback = int(b["fallback"])
+        fallback_precision = selected_harm / float(max(1, selected_harm + selected_help))
         rows.append(
             {
                 "category": cat,
@@ -239,11 +245,13 @@ def compute_rows(
                 "rapic_acc": b["rapic_correct"] / float(n),
                 "method_harm": int(b["method_harm"]),
                 "method_help": int(b["method_help"]),
-                "selected_harm": int(b["selected_harm"]),
-                "selected_help": int(b["selected_help"]),
+                "selected_harm": selected_harm,
+                "selected_help": selected_help,
                 "final_harm": final_harm,
                 "final_help": final_help,
-                "fallback": int(b["fallback"]),
+                "fallback": fallback,
+                "fallback_rate": fallback / float(n),
+                "fallback_precision": fallback_precision,
                 "raw_gain_harm_ratio": b["method_help"] / float(max(1, b["method_harm"])),
                 "rapic_gain_harm_ratio": final_help / float(max(1, final_harm)),
             }
@@ -301,25 +309,35 @@ def panel_gain_harm(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     ax.spines["right"].set_visible(False)
 
 
-def panel_selected_hg(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
+def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     cats = list(CATEGORY_ORDER)
     row_map = {r["category"]: r for r in rows}
     x = np.arange(len(cats))
-    width = 0.34
-    harm = [float(row_map[c]["selected_harm"]) for c in cats]
-    help_ = [float(row_map[c]["selected_help"]) for c in cats]
-    bars_h = ax.bar(x - width / 2, harm, width=width, color=COLORS["harm"], label="Harm caught")
-    bars_g = ax.bar(x + width / 2, help_, width=width, color=COLORS["help"], label="Help lost")
-    for bars in (bars_h, bars_g):
-        for rect in bars:
-            ax.text(rect.get_x() + rect.get_width() / 2, rect.get_height() + 1.0, f"{int(rect.get_height())}", ha="center", va="bottom", fontsize=7.4)
+    rate = [100.0 * float(row_map[c]["fallback_rate"]) for c in cats]
+    precision = [100.0 * float(row_map[c]["fallback_precision"]) for c in cats]
+
+    bars = ax.bar(x, rate, width=0.48, color=COLORS["fallback_rate"], label="Fallback rate")
+    for rect, val in zip(bars, rate):
+        ax.text(rect.get_x() + rect.get_width() / 2, val + 0.04, f"{val:.1f}%", ha="center", va="bottom", fontsize=7.4)
     ax.set_xticks(x, [CATEGORY_LABELS[c] for c in cats])
-    ax.set_ylabel("Selected fallbacks")
-    ax.set_title("(c) Selected harm vs lost gain")
-    ax.legend(frameon=False, fontsize=8)
+    ax.set_ylabel("Fallback rate (%)")
+    ax.set_ylim(0.0, max(1.0, max(rate) * 1.35) if rate else 1.0)
+    ax.set_title("(c) Fallback precision vs rate")
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+
+    ax2 = ax.twinx()
+    ax2.plot(x, precision, color=COLORS["fallback_precision"], marker="o", linewidth=1.8, label="Fallback precision")
+    for xx, val in zip(x, precision):
+        ax2.text(xx, min(100.0, val + 3.0), f"{val:.0f}%", ha="center", va="bottom", fontsize=7.4, color=COLORS["fallback_precision"])
+    ax2.set_ylabel("Fallback precision (%)")
+    ax2.set_ylim(0.0, 105.0)
+    ax2.spines["top"].set_visible(False)
+
+    handles1, labels1 = ax.get_legend_handles_labels()
+    handles2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(handles1 + handles2, labels1 + labels2, frameon=False, fontsize=8, loc="upper left")
 
 
 def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path, title: str) -> None:
@@ -336,7 +354,7 @@ def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path, title: str) -> N
     fig, axes = plt.subplots(1, 3, figsize=(14.4, 3.9), gridspec_kw={"width_ratios": [1.12, 1.0, 1.0], "wspace": 0.36})
     panel_accuracy(axes[0], rows)
     panel_gain_harm(axes[1], rows)
-    panel_selected_hg(axes[2], rows)
+    panel_fallback_precision_rate(axes[2], rows)
     fig.suptitle(title, y=1.05, fontsize=13)
     save_fig(fig, out_path)
 
