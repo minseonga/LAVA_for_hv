@@ -33,6 +33,9 @@ COLORS = {
     "fallback_precision": "#111827",
     "line": "#94A3B8",
 }
+VALUE_FONTSIZE = 10.0
+LEGEND_FONTSIZE = 11.0
+CAPTION_FONTSIZE = 13.2
 
 
 def read_csv(path: Path) -> List[Dict[str, str]]:
@@ -273,12 +276,12 @@ def panel_accuracy(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
         vals = [100.0 * float(row_map[c][key]) for c in cats]
         bars = ax.bar(x + (idx - 1) * width, vals, width=width, color=color, label=label)
         for rect, val in zip(bars, vals):
-            ax.text(rect.get_x() + rect.get_width() / 2, val + 0.25, f"{val:.1f}", ha="center", va="bottom", fontsize=7.2)
+            ax.text(rect.get_x() + rect.get_width() / 2, val + 0.25, f"{val:.1f}", ha="center", va="bottom", fontsize=VALUE_FONTSIZE)
     ax.set_xticks(x, [CATEGORY_LABELS[c] for c in cats])
     vals_all = [100.0 * float(row_map[c][k]) for c in cats for k in ("baseline_acc", "method_acc", "rapic_acc")]
     ax.set_ylim(max(0.0, min(vals_all) - 3.0), min(100.0, max(vals_all) + 4.0))
     ax.set_ylabel("Accuracy (%)")
-    ax.legend(frameon=False, fontsize=8, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 0.98))
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 0.99))
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -293,17 +296,17 @@ def panel_gain_harm(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     rapic_vals = [float(row_map[c]["rapic_gain_harm_ratio"]) for c in cats]
     for yy, cat, raw, rapic in zip(y, cats, raw_vals, rapic_vals):
         row = row_map[cat]
-        ax.plot([raw, rapic], [yy, yy], color=COLORS["line"], linewidth=2.0, zorder=1)
-        ax.scatter(raw, yy, color=COLORS["method"], s=56, zorder=2, label="VGA" if cat == cats[0] else None)
-        ax.scatter(rapic, yy, color=COLORS["rapic"], s=56, zorder=3, label="RAPIC" if cat == cats[0] else None)
-        ax.text(raw, yy + 0.14, f"{int(row['method_help'])}/{int(row['method_harm'])}", ha="center", va="bottom", fontsize=7.0, color=COLORS["method"])
-        ax.text(rapic, yy + 0.14, f"{int(row['final_help'])}/{int(row['final_harm'])}", ha="center", va="bottom", fontsize=7.0, color=COLORS["rapic"])
+        ax.plot([raw, rapic], [yy, yy], color=COLORS["line"], linewidth=2.6, zorder=1)
+        ax.scatter(raw, yy, color=COLORS["method"], s=86, zorder=2, label="VGA" if cat == cats[0] else None)
+        ax.scatter(rapic, yy, color=COLORS["rapic"], s=86, zorder=3, label="RAPIC" if cat == cats[0] else None)
+        ax.text(raw, yy + 0.15, f"{int(row['method_help'])}/{int(row['method_harm'])}", ha="center", va="bottom", fontsize=VALUE_FONTSIZE, color=COLORS["method"])
+        ax.text(rapic, yy + 0.15, f"{int(row['final_help'])}/{int(row['final_harm'])}", ha="center", va="bottom", fontsize=VALUE_FONTSIZE, color=COLORS["rapic"])
     ax.set_yticks(y, [CATEGORY_LABELS[c] for c in cats])
     ax.set_ylim(-0.45, len(cats) - 0.45)
     vals = raw_vals + rapic_vals
     ax.set_xlim(max(0.0, min(vals) - 0.2), max(vals) + 0.35)
     ax.set_xlabel("Helpful gains / harmful flips")
-    ax.legend(frameon=False, fontsize=8, loc="lower right")
+    ax.legend(frameon=False, fontsize=LEGEND_FONTSIZE, loc="lower right")
     ax.grid(alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -319,7 +322,7 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
 
     bars = ax.bar(x, rate, width=0.48, color=COLORS["fallback_rate"], label="Fallback rate")
     for rect, val in zip(bars, rate):
-        ax.text(rect.get_x() + rect.get_width() / 2, val + 0.04, f"{val:.1f}%", ha="center", va="bottom", fontsize=7.4)
+        ax.text(rect.get_x() + rect.get_width() / 2, val + 0.04, f"{val:.1f}%", ha="center", va="bottom", fontsize=VALUE_FONTSIZE)
     ax.set_xticks(x, [CATEGORY_LABELS[c] for c in cats])
     ax.set_ylabel("Fallback rate (%)")
     ax.set_ylim(0.0, max(1.0, max(rate) * 1.35) if rate else 1.0)
@@ -328,16 +331,16 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
     ax.spines["right"].set_visible(False)
 
     ax2 = ax.twinx()
-    ax2.plot(x, precision, color=COLORS["fallback_precision"], marker="o", linewidth=1.8, label="Fallback precision")
+    ax2.plot(x, precision, color=COLORS["fallback_precision"], marker="o", markersize=6.5, linewidth=2.4, label="Fallback precision")
     for xx, val in zip(x, precision):
-        ax2.text(xx, min(100.0, val + 3.0), f"{val:.0f}%", ha="center", va="bottom", fontsize=7.4, color=COLORS["fallback_precision"])
+        ax2.text(xx, min(100.0, val + 3.0), f"{val:.0f}%", ha="center", va="bottom", fontsize=VALUE_FONTSIZE, color=COLORS["fallback_precision"])
     ax2.set_ylabel("Fallback precision (%)")
     ax2.set_ylim(0.0, 105.0)
     ax2.spines["top"].set_visible(False)
 
     handles1, labels1 = ax.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(handles1 + handles2, labels1 + labels2, frameon=False, fontsize=8, loc="upper left")
+    ax.legend(handles1 + handles2, labels1 + labels2, frameon=False, fontsize=LEGEND_FONTSIZE, loc="upper left")
     add_panel_caption(ax, "(c) Fallback precision vs rate")
 
 
@@ -349,22 +352,22 @@ def add_panel_caption(ax: plt.Axes, text: str) -> None:
         transform=ax.transAxes,
         ha="center",
         va="top",
-        fontsize=9.6,
+        fontsize=CAPTION_FONTSIZE,
     )
 
 
 def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path) -> None:
     matplotlib.rcParams.update(
         {
-            "font.size": 9.1,
-            "axes.titlesize": 10.2,
-            "axes.labelsize": 9.2,
-            "xtick.labelsize": 8.0,
-            "ytick.labelsize": 8.0,
-            "legend.fontsize": 8.0,
+            "font.size": 12.0,
+            "axes.titlesize": 12.0,
+            "axes.labelsize": 12.4,
+            "xtick.labelsize": 11.0,
+            "ytick.labelsize": 11.0,
+            "legend.fontsize": LEGEND_FONTSIZE,
         }
     )
-    fig, axes = plt.subplots(1, 3, figsize=(14.4, 3.9), gridspec_kw={"width_ratios": [1.12, 1.0, 1.0], "wspace": 0.36})
+    fig, axes = plt.subplots(1, 3, figsize=(15.2, 4.8), gridspec_kw={"width_ratios": [1.12, 1.0, 1.0], "wspace": 0.42})
     panel_accuracy(axes[0], rows)
     panel_gain_harm(axes[1], rows)
     panel_fallback_precision_rate(axes[2], rows)
