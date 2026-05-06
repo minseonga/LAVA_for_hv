@@ -182,7 +182,24 @@ def first_object_decision_position(tokenizer: Any, pack: Any, obj: str) -> int:
     return int(pack.decision_positions[int(start)].item())
 
 
-def suppression_logit_rows(
+def top_vocab_rows(tokenizer: Any, vec: torch.Tensor, *, top_k: int, suppressed_ids: set[int]) -> list[dict[str, Any]]:
+    vals, idxs = torch.topk(vec, k=int(top_k), dim=-1)
+    rows: list[dict[str, Any]] = []
+    for rank, (value, token_id) in enumerate(zip(vals.tolist(), idxs.tolist()), start=1):
+        tid = int(token_id)
+        rows.append(
+            {
+                "rank": int(rank),
+                "token_id": tid,
+                "token_text": tokenizer.decode([tid], skip_special_tokens=True),
+                "logit": float(value),
+                "is_suppressed_token": bool(tid in suppressed_ids),
+            }
+        )
+    return rows
+
+
+def suppression_logit_context(
     tokenizer: Any,
     pack: Any,
     selected_object: str,
@@ -190,10 +207,13 @@ def suppression_logit_rows(
     suppress_mode: str,
     suppress_bias: float,
     max_tokens: int,
-) -> list[dict[str, Any]]:
+    before_top_k: int = 6,
+    after_top_k: int = 4,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     decision_pos = first_object_decision_position(tokenizer, pack, selected_object)
     vec = pack.logits[decision_pos].to(torch.float32)
     ids = suppression_token_ids(tokenizer, str(selected_object), str(suppress_mode))
+    id_set = {int(x) for x in ids}
     after_vec = vec.clone()
     if ids:
         after_vec[[int(x) for x in ids]] += float(suppress_bias)
@@ -216,7 +236,29 @@ def suppression_logit_rows(
             }
         )
     rows = sorted(rows, key=lambda row: safe_float(row.get("before_logit")), reverse=True)
-    return rows[: max(1, int(max_tokens))]
+    rows = rows[: max(1, int(max_tokens))]
+    primary = rows[0] if rows else {}
+    primary_id = int(primary.get("token_id", -1)) if primary else -1
+    after_selected = {}
+    if primary_id >= 0:
+        after_selected = {
+            "rank": int(primary.get("after_rank", 0)),
+            "token_id": primary_id,
+            "token_text": str(primary.get("token_text", "")),
+            "logit": safe_float(primary.get("after_logit"), 0.0),
+            "is_suppressed_token": True,
+        }
+    context = {
+        "selected_object": str(selected_object),
+        "decision_pos": int(decision_pos),
+        "suppress_mode": str(suppress_mode),
+        "suppress_bias": float(suppress_bias),
+        "suppressed_token_ids": sorted(id_set),
+        "before_top_tokens": top_vocab_rows(tokenizer, vec, top_k=int(before_top_k), suppressed_ids=id_set),
+        "after_top_tokens": top_vocab_rows(tokenizer, after_vec, top_k=int(after_top_k), suppressed_ids=id_set),
+        "after_selected_token": after_selected,
+    }
+    return rows, context
 
 
 def main() -> None:
@@ -288,7 +330,7 @@ def main() -> None:
     method_object_rows = object_replay_metrics(runtime.tokenizer, pack, objects)
     method_raw_logits = [safe_float(row.get("target_logit_mean"), 0.0) for row in method_object_rows]
     method_logits_plot = minmax(method_raw_logits)
-    suppression_rows = suppression_logit_rows(
+    suppression_rows, suppression_rank_context = suppression_logit_context(
         runtime.tokenizer,
         pack,
         selected_object,
@@ -332,6 +374,7 @@ def main() -> None:
             "method_logits_metric": "minmax-normalized mean target logits from teacher-forced method-caption replay",
             "support_metric": "yes probability from object yes/no support probe",
             "suppression_token_logits": suppression_rows,
+            "suppression_rank_context": suppression_rank_context,
             "suppression_metric": "same-step token logits before and after adding suppress_bias",
         },
     }

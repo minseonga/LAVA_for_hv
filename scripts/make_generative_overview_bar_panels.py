@@ -560,6 +560,91 @@ def raw_suppression_series(values: dict[str, Any]) -> tuple[list[str], list[floa
     return (labels, before, after, ranks) if labels else None
 
 
+def token_label(value: object) -> str:
+    label = str(value or "").replace("\n", "\\n").replace("\t", "\\t")
+    return label if label.strip() else "<space>"
+
+
+def token_rank_context_panel(
+    values: dict[str, Any],
+    *,
+    width: int = 900,
+    height: int = 360,
+) -> str | None:
+    raw_values = values.get("raw_values", {}) if isinstance(values.get("raw_values"), dict) else {}
+    ctx = raw_values.get("suppression_rank_context")
+    if not isinstance(ctx, dict):
+        return None
+    before_rows = ctx.get("before_top_tokens")
+    after_rows = ctx.get("after_top_tokens")
+    after_selected = ctx.get("after_selected_token")
+    if not isinstance(before_rows, list) or not isinstance(after_rows, list) or not isinstance(after_selected, dict):
+        return None
+    selected_object = str(ctx.get("selected_object") or "object")
+    selected_token_id = after_selected.get("token_id")
+    before_plot = [row for row in before_rows if isinstance(row, dict)][:6]
+    after_plot = [row for row in after_rows if isinstance(row, dict)][:4]
+    if not before_plot or not after_plot:
+        return None
+    include_ellipsis = True
+    if any(row.get("token_id") == selected_token_id for row in after_plot):
+        include_ellipsis = False
+    else:
+        after_plot = [*after_plot, {"ellipsis": True}, after_selected]
+    all_logits = [
+        float(row.get("logit", 0.0))
+        for row in [*before_plot, *after_plot]
+        if isinstance(row, dict) and not row.get("ellipsis")
+    ]
+    xmax = max(1.0, max(all_logits, default=1.0))
+    xmax = max(1.0, (int(xmax / 5) + 1) * 5)
+
+    def panel(x0: float, y0: float, rows: Sequence[dict[str, Any]], title: str) -> list[str]:
+        left = x0 + 88
+        right = x0 + 390
+        plot_w = right - left
+        top = y0 + 48
+        row_gap = 34
+        bar_h = 18
+        out: list[str] = [text(x0 + 210, y0 + 20, title, size=14, weight=700)]
+        axis_y = top + row_gap * len(rows) + 12
+        for tick in [0.0, 0.5, 1.0]:
+            x = left + tick * plot_w
+            out.append(f'<line x1="{x:.1f}" y1="{top - 12:.1f}" x2="{x:.1f}" y2="{axis_y:.1f}" stroke="{COLORS["grid"]}" stroke-width="1"/>')
+            out.append(text(x, axis_y + 17, f"{tick * xmax:.0f}", size=10, color=COLORS["muted"]))
+        out.append(f'<line x1="{left:.1f}" y1="{axis_y:.1f}" x2="{right:.1f}" y2="{axis_y:.1f}" stroke="{COLORS["axis"]}" stroke-width="1.1"/>')
+        for idx, row in enumerate(rows):
+            y = top + idx * row_gap
+            if row.get("ellipsis"):
+                out.append(text(left - 24, y + 6, "...", size=18, weight=700, anchor="end", color=COLORS["muted"]))
+                out.append(text(left + plot_w / 2, y + 6, "...", size=18, weight=700, color=COLORS["muted"]))
+                continue
+            rank = int(row.get("rank", idx + 1))
+            label = token_label(row.get("token_text") or row.get("token_id"))
+            logit = float(row.get("logit", 0.0))
+            is_selected = row.get("token_id") == selected_token_id or bool(row.get("is_suppressed_token"))
+            color = COLORS["selected"] if is_selected else COLORS["before"]
+            out.append(text(left - 12, y + 6, f"#{rank} {label}", size=11, anchor="end", color=COLORS["selected"] if is_selected else COLORS["text"]))
+            w = max(0.0, logit / xmax) * plot_w
+            out.append(f'<rect x="{left:.1f}" y="{y - bar_h / 2:.1f}" width="{w:.1f}" height="{bar_h}" rx="4" fill="{color}"/>')
+            out.append(text(left + w + 7, y + 5, f"{logit:.2f}", size=10, anchor="start", color=color))
+        return out
+
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        text(width / 2, 24, f"Local rank shift after suppressing {selected_object}", size=16, weight=700),
+    ]
+    out.extend(panel(28, 48, before_plot, "Before ours: top-6"))
+    after_title = "After ours: top-4 + suppressed token"
+    if not include_ellipsis:
+        after_title = "After ours: top tokens"
+    out.extend(panel(468, 48, after_plot, after_title))
+    out.append(text(width / 2, height - 10, "raw next-token logit at the selected decoding step", size=11, color=COLORS["muted"]))
+    out.append("</svg>")
+    return "\n".join(out)
+
+
 def write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
@@ -681,6 +766,10 @@ def main() -> None:
         method_caption=method_caption,
         repaired_caption=repaired_caption,
     )
+    rank_context = token_rank_context_panel(values)
+    if rank_context:
+        suppression = rank_context
+        write(out_dir / "object_token_rank_context.svg", rank_context)
     write(out_dir / "object_token_logit_change.svg", suppression)
     write(out_dir / "object_token_raw_logit_change.svg", suppression)
 
