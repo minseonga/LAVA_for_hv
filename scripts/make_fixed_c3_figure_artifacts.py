@@ -259,22 +259,14 @@ def plot_panel_c(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     vals = [100.0 * float(r["harmful_fraction"]) for r in bins]
     overall = 100.0 * float(bins[0]["overall_harmful_fraction"])
     labels = [str(r["label"]) if not r["risk_label"] else f"{r['label']}\n{r['risk_label']}" for r in bins]
-    bars = ax.bar(x, vals, width=0.62, color=COLORS["enrichment"], label="Harmful fraction")
+    ax.plot(x, vals, color=COLORS["harm"], marker="o", linewidth=2.1, markersize=5.5, label="Per-bin harmful fraction")
     ax.axhline(overall, color=COLORS["overall"], linestyle="--", linewidth=1.5, label=f"Overall ({overall:.1f}%)")
-    for rect, row, val in zip(bars, bins, vals):
-        ax.text(rect.get_x() + rect.get_width() / 2, val + 1.2, f"{val:.1f}%", ha="center", va="bottom", fontsize=7.4)
-        ax.text(
-            rect.get_x() + rect.get_width() / 2,
-            1.0,
-            f"n={int(row['n'])}",
-            ha="center",
-            va="bottom",
-            fontsize=7.0,
-            color="#475569",
-        )
+    for xx, row, val in zip(x, bins, vals):
+        ax.text(xx, val + 1.2, f"{val:.1f}%", ha="center", va="bottom", fontsize=7.4)
+        ax.text(xx, 1.0, f"n={int(row['n'])}", ha="center", va="bottom", fontsize=7.0, color="#475569")
     ax.set_xticks(x, labels)
-    ax.set_xlabel("Fixed C3 score quantile bin")
-    ax.set_ylabel("Harmful fraction among changed samples (%)")
+    ax.set_xlabel("Fixed C3 score quantile")
+    ax.set_ylabel("Harmful fraction (%)")
     ax.set_title("(c) Harm enrichment by score bin")
     ax.set_ylim(0, min(100.0, max(max(vals) + 8.0, overall + 8.0)))
     ax.legend(frameon=False, fontsize=8, loc="upper left")
