@@ -430,6 +430,7 @@ def main() -> None:
     ap.add_argument("--repaired_pred_jsonl", default="")
     ap.add_argument("--method_caption", default="")
     ap.add_argument("--repaired_caption", default="")
+    ap.add_argument("--values_json", default="", help="JSON from scripts/extract_generative_overview_values.py.")
     ap.add_argument("--objects", default="", help="Comma-separated object labels for support_probe_bars.svg.")
     ap.add_argument("--method_logits", default="", help="Comma-separated normalized caption-logit scores matching --objects.")
     ap.add_argument("--support_probs", default="", help="Comma-separated p(o|I) values matching --objects.")
@@ -440,11 +441,24 @@ def main() -> None:
     args = ap.parse_args()
     out_dir = Path(args.out_dir)
 
+    values: dict[str, Any] = {}
+    if str(args.values_json or "").strip():
+        with open(os.path.abspath(args.values_json), "r", encoding="utf-8") as f:
+            values = json.load(f)
+        plot_values = values.get("plot", {}) if isinstance(values.get("plot"), dict) else {}
+        sample_values = values.get("sample", {}) if isinstance(values.get("sample"), dict) else {}
+        if not args.method_caption:
+            args.method_caption = str(sample_values.get("method_caption", "") or "")
+        if not args.repaired_caption:
+            args.repaired_caption = str(sample_values.get("repaired_caption", "") or "")
+    else:
+        plot_values = {}
+
     preset = plot_preset(str(args.image), str(args.question_id))
-    objects = parse_csv_list(args.objects) or list(preset["objects"])
-    method_logits = parse_float_list(args.method_logits) or list(preset["method_logits"])
-    support_probs = parse_float_list(args.support_probs) or list(preset["support_probs"])
-    selected_object = str(args.selected_object or preset["selected_object"])
+    objects = parse_csv_list(args.objects) or list(plot_values.get("objects") or preset["objects"])
+    method_logits = parse_float_list(args.method_logits) or [float(x) for x in (plot_values.get("method_logits") or preset["method_logits"])]
+    support_probs = parse_float_list(args.support_probs) or [float(x) for x in (plot_values.get("support_probs") or preset["support_probs"])]
+    selected_object = str(args.selected_object or plot_values.get("selected_object") or preset["selected_object"])
     if len(support_probs) != len(objects):
         raise ValueError(f"--support_probs length ({len(support_probs)}) must match --objects length ({len(objects)})")
     if len(method_logits) != len(objects):
@@ -459,9 +473,9 @@ def main() -> None:
     write(out_dir / "method_support_mismatch_bars.svg", mismatch)
     write(out_dir / "support_probe_only_bars.svg", support_panel(objects, support_probs, selected_idx=selected_idx))
 
-    token_labels = parse_csv_list(args.token_labels) or list(preset["token_labels"])
-    before = parse_float_list(args.before) or list(preset["before"])
-    after = parse_float_list(args.after) or list(preset["after"])
+    token_labels = parse_csv_list(args.token_labels) or list(plot_values.get("token_labels") or preset["token_labels"])
+    before = parse_float_list(args.before) or [float(x) for x in (plot_values.get("before") or preset["before"])]
+    after = parse_float_list(args.after) or [float(x) for x in (plot_values.get("after") or preset["after"])]
     if len(before) != len(token_labels) or len(after) != len(token_labels):
         raise ValueError("--before and --after lengths must match --token_labels length")
     print(f"[bars] token_labels={token_labels}")
