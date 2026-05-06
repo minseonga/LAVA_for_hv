@@ -334,44 +334,37 @@ def support_panel(
     probs: Sequence[float],
     *,
     selected_idx: int,
-    width: int = 430,
-    height: int = 250,
+    width: int = 520,
+    height: int = 240,
 ) -> str:
-    left, right, top, bottom = 58, 24, 32, 46
+    left, right, top, bottom = 128, 58, 40, 50
     plot_w = width - left - right
     plot_h = height - top - bottom
     n = len(objects)
-    gap = 14
-    bar_w = max(18, (plot_w - gap * (n - 1)) / max(1, n))
-    axis_y = top + plot_h
+    row_gap = plot_h / max(1, n)
+    bar_h = min(30, row_gap * 0.55)
+    axis_y = top + plot_h + 8
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
         text(width / 2, 20, "Object support probe", size=15, weight=700),
     ]
     for frac in [0.0, 0.5, 1.0]:
-        y = axis_y - frac * plot_h
-        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="{COLORS["grid"]}" stroke-width="1"/>')
-        out.append(text(left - 10, y + 4, f"{frac:.1f}", size=10, anchor="end", color=COLORS["muted"]))
-    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{axis_y}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
+        x = left + frac * plot_w
+        out.append(f'<line x1="{x:.1f}" y1="{top - 8:.1f}" x2="{x:.1f}" y2="{axis_y:.1f}" stroke="{COLORS["grid"]}" stroke-width="1"/>')
+        out.append(text(x, axis_y + 17, f"{frac:.1f}", size=10, color=COLORS["muted"]))
     out.append(f'<line x1="{left}" y1="{axis_y}" x2="{width-right}" y2="{axis_y}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
-    label_x = 16
-    label_y = top + plot_h / 2
-    out.append(
-        f'<text x="{label_x}" y="{label_y:.1f}" text-anchor="middle" '
-        f'font-family="Arial, Helvetica, sans-serif" font-size="12" fill="{COLORS["muted"]}" '
-        f'transform="rotate(-90 {label_x} {label_y:.1f})">Visual support p_yes(o | I)</text>'
-    )
+    out.append(text(left + plot_w / 2, height - 7, "Visual support p_yes(o | I)", size=11, color=COLORS["muted"]))
 
     for i, (obj, prob) in enumerate(zip(objects, probs)):
         p = max(0.0, min(1.0, float(prob)))
-        x = left + i * (bar_w + gap)
-        h = p * plot_h
-        y = axis_y - h
+        y = top + row_gap * i + row_gap / 2
+        w = p * plot_w
         color = COLORS["selected"] if i == selected_idx else COLORS["support"]
-        out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h:.1f}" rx="3" fill="{color}"/>')
-        out.append(text(x + bar_w / 2, max(top + 12, y - 7), f"{p:.3f}", size=11, color=color))
-        out.append(text(x + bar_w / 2, axis_y + 22, obj, size=12))
+        out.append(text(left - 12, y + 4, obj, size=12, anchor="end"))
+        out.append(f'<rect x="{left:.1f}" y="{y - bar_h / 2:.1f}" width="{w:.1f}" height="{bar_h:.1f}" rx="4" fill="{color}"/>')
+        value_x = min(left + w + 8, width - right + 8)
+        out.append(text(value_x, y + 4, f"{p:.3f}", size=11, anchor="start", color=color))
     out.append("</svg>")
     return "\n".join(out)
 
