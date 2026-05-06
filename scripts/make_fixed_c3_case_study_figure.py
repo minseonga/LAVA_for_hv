@@ -278,11 +278,11 @@ def panel_accuracy(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
     vals_all = [100.0 * float(row_map[c][k]) for c in cats for k in ("baseline_acc", "method_acc", "rapic_acc")]
     ax.set_ylim(max(0.0, min(vals_all) - 3.0), min(100.0, max(vals_all) + 4.0))
     ax.set_ylabel("Accuracy (%)")
-    ax.set_title("(a) Split-wise accuracy")
-    ax.legend(frameon=False, fontsize=8, ncol=3, loc="lower center", bbox_to_anchor=(0.5, -0.28))
+    ax.legend(frameon=False, fontsize=8, ncol=3, loc="upper center", bbox_to_anchor=(0.5, 1.13))
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    add_panel_caption(ax, "(a) Split-wise accuracy")
 
 
 def panel_gain_harm(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
@@ -296,17 +296,18 @@ def panel_gain_harm(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
         ax.plot([raw, rapic], [yy, yy], color=COLORS["line"], linewidth=2.0, zorder=1)
         ax.scatter(raw, yy, color=COLORS["method"], s=56, zorder=2, label="VGA" if cat == cats[0] else None)
         ax.scatter(rapic, yy, color=COLORS["rapic"], s=56, zorder=3, label="RAPIC" if cat == cats[0] else None)
-        ax.text(raw, yy + 0.12, f"{int(row['method_help'])}/{int(row['method_harm'])}", ha="center", va="bottom", fontsize=7.0, color=COLORS["method"])
-        ax.text(rapic, yy - 0.15, f"{int(row['final_help'])}/{int(row['final_harm'])}", ha="center", va="top", fontsize=7.0, color=COLORS["rapic"])
+        ax.text(raw, yy + 0.14, f"{int(row['method_help'])}/{int(row['method_harm'])}", ha="center", va="bottom", fontsize=7.0, color=COLORS["method"])
+        ax.text(rapic, yy + 0.14, f"{int(row['final_help'])}/{int(row['final_harm'])}", ha="center", va="bottom", fontsize=7.0, color=COLORS["rapic"])
     ax.set_yticks(y, [CATEGORY_LABELS[c] for c in cats])
+    ax.set_ylim(-0.45, len(cats) - 0.45)
     vals = raw_vals + rapic_vals
     ax.set_xlim(max(0.0, min(vals) - 0.2), max(vals) + 0.35)
     ax.set_xlabel("Helpful gains / harmful flips")
-    ax.set_title("(b) Gain-to-harm ratio")
     ax.legend(frameon=False, fontsize=8, loc="lower right")
     ax.grid(alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
+    add_panel_caption(ax, "(b) Gain-to-harm ratio")
 
 
 def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) -> None:
@@ -322,7 +323,6 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
     ax.set_xticks(x, [CATEGORY_LABELS[c] for c in cats])
     ax.set_ylabel("Fallback rate (%)")
     ax.set_ylim(0.0, max(1.0, max(rate) * 1.35) if rate else 1.0)
-    ax.set_title("(c) Fallback precision vs rate")
     ax.grid(axis="y", alpha=0.24, linestyle=":")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -338,6 +338,20 @@ def panel_fallback_precision_rate(ax: plt.Axes, rows: Sequence[Dict[str, Any]]) 
     handles1, labels1 = ax.get_legend_handles_labels()
     handles2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(handles1 + handles2, labels1 + labels2, frameon=False, fontsize=8, loc="upper left")
+    add_panel_caption(ax, "(c) Fallback precision vs rate")
+
+
+def add_panel_caption(ax: plt.Axes, text: str) -> None:
+    ax.text(
+        0.5,
+        -0.28,
+        text,
+        transform=ax.transAxes,
+        ha="center",
+        va="top",
+        fontsize=10.2,
+        fontweight="semibold",
+    )
 
 
 def make_figure(rows: Sequence[Dict[str, Any]], out_path: Path, title: str) -> None:
