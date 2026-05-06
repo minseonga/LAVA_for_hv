@@ -210,6 +210,53 @@ def caption_pair_panel(method_caption: str, repaired_caption: str, *, width: int
     return "\n".join(out)
 
 
+def parse_csv_list(value: str) -> list[str]:
+    return [x.strip() for x in str(value or "").split(",") if x.strip()]
+
+
+def parse_float_list(value: str) -> list[float]:
+    return [float(x.strip()) for x in str(value or "").split(",") if x.strip()]
+
+
+def plot_preset(image: str, question_id: str) -> dict[str, Any]:
+    image_name = Path(str(image or "")).name
+    qid = str(question_id or "").strip()
+    if qid == "8170" or image_name == "COCO_val2014_000000008170.jpg":
+        return {
+            "objects": ["refrigerator", "microwave", "cabinet", "sink"],
+            "support_probs": [0.93, 0.86, 0.71, 0.04],
+            "selected_object": "sink",
+            "token_labels": ["sink", "Sink", "s"],
+            "before": [1.00, 0.78, 0.55],
+            "after": [0.22, 0.18, 0.16],
+        }
+    if image_name == "COCO_val2014_000000304819.jpg":
+        return {
+            "objects": ["cat", "table", "laptop", "TV"],
+            "support_probs": [0.91, 0.74, 0.68, 0.22],
+            "selected_object": "TV",
+            "token_labels": ["TV", "tv", "television"],
+            "before": [1.00, 0.82, 0.64],
+            "after": [0.28, 0.22, 0.18],
+        }
+    return {
+        "objects": ["object A", "object B", "object C", "object D"],
+        "support_probs": [0.88, 0.72, 0.61, 0.18],
+        "selected_object": "object D",
+        "token_labels": ["obj", "Obj", "object"],
+        "before": [1.00, 0.76, 0.58],
+        "after": [0.24, 0.18, 0.14],
+    }
+
+
+def selected_index(objects: Sequence[str], selected_object: str) -> int:
+    selected = str(selected_object or "").strip().lower()
+    for idx, obj in enumerate(objects):
+        if str(obj).strip().lower() == selected:
+            return idx
+    return max(0, len(objects) - 1)
+
+
 def support_panel(
     objects: Sequence[str],
     probs: Sequence[float],
@@ -325,17 +372,35 @@ def main() -> None:
     ap.add_argument("--repaired_pred_jsonl", default="")
     ap.add_argument("--method_caption", default="")
     ap.add_argument("--repaired_caption", default="")
+    ap.add_argument("--objects", default="", help="Comma-separated object labels for support_probe_bars.svg.")
+    ap.add_argument("--support_probs", default="", help="Comma-separated p(o|I) values matching --objects.")
+    ap.add_argument("--selected_object", default="", help="Object label to highlight as lowest support.")
+    ap.add_argument("--token_labels", default="", help="Comma-separated token labels for object_token_suppression_bars.svg.")
+    ap.add_argument("--before", default="", help="Comma-separated before-suppression token scores.")
+    ap.add_argument("--after", default="", help="Comma-separated after-suppression token scores.")
     args = ap.parse_args()
     out_dir = Path(args.out_dir)
 
-    objects = ["cat", "table", "laptop", "TV"]
-    support_probs = [0.91, 0.74, 0.68, 0.22]
-    selected_idx = 3
+    preset = plot_preset(str(args.image), str(args.question_id))
+    objects = parse_csv_list(args.objects) or list(preset["objects"])
+    support_probs = parse_float_list(args.support_probs) or list(preset["support_probs"])
+    selected_object = str(args.selected_object or preset["selected_object"])
+    if len(support_probs) != len(objects):
+        raise ValueError(f"--support_probs length ({len(support_probs)}) must match --objects length ({len(objects)})")
+    selected_idx = selected_index(objects, selected_object)
+    print(f"[bars] support_objects={objects}")
+    print(f"[bars] support_probs={support_probs}")
+    print(f"[bars] selected_object={objects[selected_idx] if objects else ''}")
     write(out_dir / "support_probe_bars.svg", support_panel(objects, support_probs, selected_idx=selected_idx))
 
-    token_labels = ["TV", "tv", "television"]
-    before = [1.00, 0.82, 0.64]
-    after = [0.28, 0.22, 0.18]
+    token_labels = parse_csv_list(args.token_labels) or list(preset["token_labels"])
+    before = parse_float_list(args.before) or list(preset["before"])
+    after = parse_float_list(args.after) or list(preset["after"])
+    if len(before) != len(token_labels) or len(after) != len(token_labels):
+        raise ValueError("--before and --after lengths must match --token_labels length")
+    print(f"[bars] token_labels={token_labels}")
+    print(f"[bars] before={before}")
+    print(f"[bars] after={after}")
     write(out_dir / "object_token_suppression_bars.svg", suppression_panel(token_labels, before, after))
 
     panel_root = Path(args.panel_root)
