@@ -16,6 +16,7 @@ COLORS = {
     "axis": "#374151",
     "support": "#6BAA75",
     "selected": "#D12D2D",
+    "caption_logit": "#52637A",
     "before": "#8B95A7",
     "after": "#D12D2D",
 }
@@ -224,6 +225,7 @@ def plot_preset(image: str, question_id: str) -> dict[str, Any]:
     if qid == "8170" or image_name == "COCO_val2014_000000008170.jpg":
         return {
             "objects": ["refrigerator", "microwave", "cabinet", "sink"],
+            "method_logits": [0.56, 0.61, 0.47, 0.92],
             "support_probs": [0.93, 0.86, 0.71, 0.04],
             "selected_object": "sink",
             "token_labels": ["sink", "Sink", "s"],
@@ -233,6 +235,7 @@ def plot_preset(image: str, question_id: str) -> dict[str, Any]:
     if image_name == "COCO_val2014_000000304819.jpg":
         return {
             "objects": ["cat", "table", "laptop", "TV"],
+            "method_logits": [0.88, 0.65, 0.74, 0.91],
             "support_probs": [0.91, 0.74, 0.68, 0.22],
             "selected_object": "TV",
             "token_labels": ["TV", "tv", "television"],
@@ -241,6 +244,7 @@ def plot_preset(image: str, question_id: str) -> dict[str, Any]:
         }
     return {
         "objects": ["object A", "object B", "object C", "object D"],
+        "method_logits": [0.70, 0.62, 0.58, 0.90],
         "support_probs": [0.88, 0.72, 0.61, 0.18],
         "selected_object": "object D",
         "token_labels": ["obj", "Obj", "object"],
@@ -295,6 +299,60 @@ def support_panel(
         out.append(text(x + bar_w / 2, max(top + 12, y - 7), f"{p:.2f}", size=11, color=color))
         out.append(text(x + bar_w / 2, axis_y + 22, obj, size=12))
     out.append(text(width / 2, height - 8, "select lowest support", size=11, color=COLORS["muted"]))
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+def method_support_panel(
+    objects: Sequence[str],
+    method_logits: Sequence[float],
+    support_probs: Sequence[float],
+    *,
+    selected_idx: int,
+    width: int = 520,
+    height: int = 270,
+) -> str:
+    left, right, top, bottom = 58, 24, 36, 60
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+    n = len(objects)
+    group_gap = 18
+    pair_gap = 5
+    bar_w = max(16, (plot_w - group_gap * (n - 1) - pair_gap * n) / max(1, 2 * n))
+    axis_y = top + plot_h
+    out = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        f'<rect width="{width}" height="{height}" fill="white"/>',
+        text(width / 2, 21, "Generation vs visual support", size=15, weight=700),
+    ]
+    for frac in [0.0, 0.5, 1.0]:
+        y = axis_y - frac * plot_h
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="{COLORS["grid"]}" stroke-width="1"/>')
+        out.append(text(left - 10, y + 4, f"{frac:.1f}", size=10, anchor="end", color=COLORS["muted"]))
+    out.append(f'<line x1="{left}" y1="{top}" x2="{left}" y2="{axis_y}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
+    out.append(f'<line x1="{left}" y1="{axis_y}" x2="{width-right}" y2="{axis_y}" stroke="{COLORS["axis"]}" stroke-width="1.2"/>')
+    out.append(text(14, top + plot_h / 2, "normalized score", size=12, anchor="middle", color=COLORS["muted"]))
+
+    for i, obj in enumerate(objects):
+        x0 = left + i * (2 * bar_w + pair_gap + group_gap)
+        vals = [
+            (max(0.0, min(1.0, float(method_logits[i]))), COLORS["caption_logit"]),
+            (max(0.0, min(1.0, float(support_probs[i]))), COLORS["selected"] if i == selected_idx else COLORS["support"]),
+        ]
+        for j, (value, color) in enumerate(vals):
+            h = value * plot_h
+            x = x0 + j * (bar_w + pair_gap)
+            y = axis_y - h
+            out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{h:.1f}" rx="3" fill="{color}"/>')
+        if i == selected_idx:
+            out.append(text(x0 + bar_w + pair_gap / 2, top + 12, "high logit / low support", size=10, color=COLORS["selected"]))
+        out.append(text(x0 + bar_w + pair_gap / 2, axis_y + 22, obj, size=12))
+
+    legend_y = height - 16
+    out.append(f'<rect x="{left+46}" y="{legend_y-9}" width="16" height="8" rx="2" fill="{COLORS["caption_logit"]}"/>')
+    out.append(text(left + 69, legend_y, "caption logit", size=11, anchor="start", color=COLORS["muted"]))
+    out.append(f'<rect x="{left+165}" y="{legend_y-9}" width="16" height="8" rx="2" fill="{COLORS["support"]}"/>')
+    out.append(text(left + 188, legend_y, "visual support", size=11, anchor="start", color=COLORS["muted"]))
     out.append("</svg>")
     return "\n".join(out)
 
@@ -373,6 +431,7 @@ def main() -> None:
     ap.add_argument("--method_caption", default="")
     ap.add_argument("--repaired_caption", default="")
     ap.add_argument("--objects", default="", help="Comma-separated object labels for support_probe_bars.svg.")
+    ap.add_argument("--method_logits", default="", help="Comma-separated normalized caption-logit scores matching --objects.")
     ap.add_argument("--support_probs", default="", help="Comma-separated p(o|I) values matching --objects.")
     ap.add_argument("--selected_object", default="", help="Object label to highlight as lowest support.")
     ap.add_argument("--token_labels", default="", help="Comma-separated token labels for object_token_suppression_bars.svg.")
@@ -383,15 +442,22 @@ def main() -> None:
 
     preset = plot_preset(str(args.image), str(args.question_id))
     objects = parse_csv_list(args.objects) or list(preset["objects"])
+    method_logits = parse_float_list(args.method_logits) or list(preset["method_logits"])
     support_probs = parse_float_list(args.support_probs) or list(preset["support_probs"])
     selected_object = str(args.selected_object or preset["selected_object"])
     if len(support_probs) != len(objects):
         raise ValueError(f"--support_probs length ({len(support_probs)}) must match --objects length ({len(objects)})")
+    if len(method_logits) != len(objects):
+        raise ValueError(f"--method_logits length ({len(method_logits)}) must match --objects length ({len(objects)})")
     selected_idx = selected_index(objects, selected_object)
     print(f"[bars] support_objects={objects}")
+    print(f"[bars] method_logits={method_logits}")
     print(f"[bars] support_probs={support_probs}")
     print(f"[bars] selected_object={objects[selected_idx] if objects else ''}")
-    write(out_dir / "support_probe_bars.svg", support_panel(objects, support_probs, selected_idx=selected_idx))
+    mismatch = method_support_panel(objects, method_logits, support_probs, selected_idx=selected_idx)
+    write(out_dir / "support_probe_bars.svg", mismatch)
+    write(out_dir / "method_support_mismatch_bars.svg", mismatch)
+    write(out_dir / "support_probe_only_bars.svg", support_panel(objects, support_probs, selected_idx=selected_idx))
 
     token_labels = parse_csv_list(args.token_labels) or list(preset["token_labels"])
     before = parse_float_list(args.before) or list(preset["before"])
@@ -401,7 +467,9 @@ def main() -> None:
     print(f"[bars] token_labels={token_labels}")
     print(f"[bars] before={before}")
     print(f"[bars] after={after}")
-    write(out_dir / "object_token_suppression_bars.svg", suppression_panel(token_labels, before, after))
+    suppression = suppression_panel(token_labels, before, after)
+    write(out_dir / "object_token_suppression_bars.svg", suppression)
+    write(out_dir / "object_token_logit_change.svg", suppression)
 
     panel_root = Path(args.panel_root)
     method_caption = str(args.method_caption or "").strip()
