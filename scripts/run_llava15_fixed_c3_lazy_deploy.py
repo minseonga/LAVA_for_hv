@@ -841,6 +841,21 @@ def main() -> None:
         if estimated_always_baseline_mean_sec and estimated_always_baseline_mean_sec > 0:
             estimated_latency_savings_pct = 100.0 * (1.0 - mean_total_sec / estimated_always_baseline_mean_sec)
 
+    if str(args.deployment_order) == "baseline_first_replay_on_changed":
+        timing_note = (
+            "Baseline-first latency includes method and baseline generation for every sample, "
+            "then replay-score computation only when parsed method and baseline answers differ. "
+            "Always-replay estimates add one observed replay-score cost for each replay-skipped sample. "
+            "If predictions are cached, run without --method_pred_jsonl/--baseline_pred_jsonl for live latency estimates."
+        )
+    else:
+        timing_note = (
+            "Score-first lazy latency includes method generation and replay-score computation for every sample, "
+            "then baseline generation only when either directional score reaches tau. "
+            "Always-baseline estimates add one observed live baseline-generation cost for each skipped baseline. "
+            "If baseline predictions are cached, run without --baseline_pred_jsonl for live latency estimates."
+        )
+
     write_json(
         summary_json,
         {
@@ -908,12 +923,7 @@ def main() -> None:
                 "estimated_speedup_vs_always_baseline": estimated_speedup_vs_always_baseline,
                 "estimated_latency_savings_pct": estimated_latency_savings_pct,
                 "estimated_lazy_over_method_only_sec_per_sample": estimated_lazy_over_method_only_sec,
-                "note": (
-                    "Lazy latency includes method generation and replay-score computation for every sample, "
-                    "then baseline generation only when either directional score reaches tau. "
-                    "Always-baseline estimates add one observed live baseline-generation cost for each skipped baseline. "
-                    "If baseline predictions are cached, run without --baseline_pred_jsonl for live latency estimates."
-                ),
+                "note": timing_note,
             },
             "outputs": {
                 "online_feature_rows_csv": feature_csv,
