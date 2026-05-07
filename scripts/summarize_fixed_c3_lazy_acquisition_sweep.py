@@ -130,6 +130,8 @@ def simulate(
     method_correct = 0
     acquired = 0
     route_baseline = 0
+    total_harm = 0
+    total_help = 0
     selected_harm = 0
     selected_help = 0
 
@@ -147,6 +149,9 @@ def simulate(
         if intervention_correct is None:
             continue
 
+        if baseline_correct is not None:
+            total_harm += int(baseline_correct == 1 and intervention_correct == 0)
+            total_help += int(baseline_correct == 0 and intervention_correct == 1)
         method_correct += int(intervention_correct)
         if use_acquisition:
             acquired += 1
@@ -164,6 +169,10 @@ def simulate(
     route_rate = route_baseline / denom
     method_acc = method_correct / denom
     final_acc = final_correct / denom
+    selected_harm_precision = selected_harm / float(max(1, route_baseline))
+    selected_help_precision = selected_help / float(max(1, route_baseline))
+    selected_harm_recall = selected_harm / float(max(1, total_harm))
+    selected_help_recall = selected_help / float(max(1, total_help))
     lazy_mean_sec = None
     speedup = None
     savings = None
@@ -182,9 +191,15 @@ def simulate(
         "method_acc": method_acc,
         "final_acc": final_acc,
         "delta_vs_method": final_acc - method_acc,
+        "total_harm": total_harm,
+        "total_help": total_help,
         "selected_harm": selected_harm,
         "selected_help": selected_help,
         "net": selected_harm - selected_help,
+        "selected_harm_precision": selected_harm_precision,
+        "selected_help_precision": selected_help_precision,
+        "selected_harm_recall": selected_harm_recall,
+        "selected_help_recall": selected_help_recall,
         "lazy_mean_sec_per_sample": lazy_mean_sec,
         "always_mean_sec_per_sample": always_mean_sec,
         "speedup_vs_always": speedup,
@@ -210,14 +225,16 @@ def load_inputs(args: argparse.Namespace) -> tuple[List[Dict[str, Any]], Dict[st
 
 def markdown(rows: Sequence[Dict[str, Any]]) -> str:
     lines = [
-        "| Mode | Param | Generated % | Route % | Final Acc | Delta | Lazy sec | Speedup | Saved % | H/G/Net |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Mode | Param | Generated % | Route % | Final Acc | Delta | Harm recall | Help recall | Harm precision | Lazy sec | Speedup | Saved % | H/G/Net |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
             f"| {row['mode']} | {row['param']} | {fmt_pct(row['baseline_trigger_rate'])} | "
             f"{fmt_pct(row['route_baseline_rate'])} | {fmt_pct(row['final_acc'])} | "
-            f"{fmt_pct(row['delta_vs_method'])} | {fmt_float(row['lazy_mean_sec_per_sample'])} | "
+            f"{fmt_pct(row['delta_vs_method'])} | {fmt_pct(row['selected_harm_recall'])} | "
+            f"{fmt_pct(row['selected_help_recall'])} | {fmt_pct(row['selected_harm_precision'])} | "
+            f"{fmt_float(row['lazy_mean_sec_per_sample'])} | "
             f"{fmt_float(row['speedup_vs_always'], 3)} | {fmt_float(row['latency_savings_pct'], 2)} | "
             f"{row['selected_harm']}/{row['selected_help']}/{row['net']} |"
         )
