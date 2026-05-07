@@ -94,14 +94,21 @@ def row_from_summary(path: Path, root: Optional[Path]) -> Dict[str, Any]:
         "target": inputs.get("target", ""),
         "dataset": inputs.get("dataset", ""),
         "method": inputs.get("method", ""),
+        "deployment_order": inputs.get("deployment_order", ""),
         "n_rows": n_rows,
         "n_completed": maybe_int(counts.get("n_completed", n_rows)),
         "n_errors": maybe_int(counts.get("n_errors")),
         "n_baseline_triggered": n_baseline_triggered,
         "n_baseline_skipped": n_baseline_skipped,
         "n_route_baseline": n_route_baseline,
+        "n_replay_score_computed": maybe_int(counts.get("n_replay_score_computed")),
+        "n_replay_score_skipped": maybe_int(counts.get("n_replay_score_skipped")),
+        "n_answer_changed": maybe_int(counts.get("n_answer_changed")),
         "baseline_trigger_rate": maybe_float(timing.get("baseline_trigger_rate", n_baseline_triggered / denom)),
         "baseline_skip_rate": maybe_float(timing.get("baseline_skip_rate", n_baseline_skipped / denom)),
+        "replay_score_compute_rate": maybe_float(timing.get("replay_score_compute_rate")),
+        "replay_score_skip_rate": maybe_float(timing.get("replay_score_skip_rate")),
+        "answer_changed_rate": maybe_float(timing.get("answer_changed_rate")),
         "route_baseline_rate": maybe_float(timing.get("route_baseline_rate", n_route_baseline / denom)),
         "method_acc": maybe_float(evaluation.get("method_acc")),
         "final_acc": maybe_float(evaluation.get("final_acc")),
@@ -119,6 +126,11 @@ def row_from_summary(path: Path, root: Optional[Path]) -> Dict[str, Any]:
         ),
         "estimated_speedup_vs_always_baseline": maybe_float(timing.get("estimated_speedup_vs_always_baseline")),
         "estimated_latency_savings_pct": maybe_float(timing.get("estimated_latency_savings_pct")),
+        "estimated_always_replay_mean_sec_per_sample": maybe_float(
+            timing.get("estimated_always_replay_mean_sec_per_sample")
+        ),
+        "estimated_speedup_vs_always_replay": maybe_float(timing.get("estimated_speedup_vs_always_replay")),
+        "estimated_replay_skip_savings_pct": maybe_float(timing.get("estimated_replay_skip_savings_pct")),
         "summary_json": str(path.resolve()),
     }
 
@@ -141,21 +153,25 @@ def write_csv(path: Path, rows: Sequence[Dict[str, Any]]) -> None:
 
 def markdown(rows: Sequence[Dict[str, Any]]) -> str:
     lines = [
-        "| Run | Target | Dataset | n | Trigger % | Skip % | Route baseline % | Method Acc | Final Acc | Delta | Method-only sec | Score-only sec | Lazy sec | Always sec | Speedup | Saved latency % |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Run | Order | Target | Dataset | n | Trigger % | Baseline skip % | Replay % | Changed % | Route baseline % | Method Acc | Final Acc | Delta | Method-only sec | Score-only sec | Lazy sec | Always baseline sec | Always replay sec | Speedup | Saved latency % |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
+        speedup = row.get("estimated_speedup_vs_always_replay") or row.get("estimated_speedup_vs_always_baseline")
+        saved = row.get("estimated_replay_skip_savings_pct") or row.get("estimated_latency_savings_pct")
         lines.append(
-            f"| {row['run']} | {row['target']} | {row['dataset']} | {row['n_rows']} | "
+            f"| {row['run']} | {row['deployment_order']} | {row['target']} | {row['dataset']} | {row['n_rows']} | "
             f"{pct(row['baseline_trigger_rate'])} | {pct(row['baseline_skip_rate'])} | "
+            f"{pct(row['replay_score_compute_rate'])} | {pct(row['answer_changed_rate'])} | "
             f"{pct(row['route_baseline_rate'])} | {pct(row['method_acc'])} | "
             f"{pct(row['final_acc'])} | {pct(row['delta_vs_method'])} | "
             f"{sec(row['estimated_method_only_mean_sec_per_sample'])} | "
             f"{sec(row['estimated_score_only_no_baseline_mean_sec_per_sample'])} | "
             f"{sec(row['mean_total_sec_per_sample'])} | "
             f"{sec(row['estimated_always_baseline_mean_sec_per_sample'])} | "
-            f"{ratio(row['estimated_speedup_vs_always_baseline'])} | "
-            f"{ratio(row['estimated_latency_savings_pct'])} |"
+            f"{sec(row['estimated_always_replay_mean_sec_per_sample'])} | "
+            f"{ratio(speedup)} | "
+            f"{ratio(saved)} |"
         )
     return "\n".join(lines)
 
